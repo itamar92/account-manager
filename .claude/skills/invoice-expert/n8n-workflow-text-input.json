@@ -1,0 +1,84 @@
+{
+  "name": "Invoice Expert - Text Input",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": []
+        },
+        "options": {},
+        "bodyParametersJson": "={\n  \"model\": \"claude-sonnet-4-5-20250929\",\n  \"max_tokens\": 4096,\n  \"system\": \"You are an expert assistant that extracts receipt fields for tax tracking in Israel. Your answers will be in Hebrew.\\n\\nExtract and return a single JSON object with the following fields:\\n- \\\"date\\\": Format as YYYY-MM-DD.\\n- \\\"year\\\": the year of the invoice.\\n- \\\"invoiceType\\\": The type of the invoice (חשבונית מס/ חשבונית מס קבלה/ קבלה) dont add the \\\"/\\\" sign if the type is חשבונית מס קבלה.\\n- \\\"merchant\\\": Name of business or company issuing the receipt. If missing, return null.\\n- \\\"category\\\": Infer based on context from this list: עבודות חוץ וקבלני משנה, עלויות אחרות, נסיעות, ביטוחים, שירותים מקצועיים, כלי עבודה ציוד ואחזקה, נסיעות ומוניות, רכב - אחזקה תיקונים וחניה, רכב - דלק, ארנונה וועד בית, פחת, חשמל ומים, השתלמות וספרות מקצועית, פרסום קידום מכירות ואחזקת אתר, כיבודים, דואר ותקשורת, תוכנה, מחשבים ציוד מחשוב וטלפון נייד, רהיטים ואביזרים, ציוד לעסק כלי נגינה וציוד אלקטרוני, תרומות.\\n- \\\"description\\\": A short summary of the service or item purchased. If missing, return null.\\n- \\\"total\\\": Final amount paid (after tax). If missing, return 0.\\n- \\\"finalName\\\": [date]_[invoiceType]_[merchant]_[description]_[total]_[currency].pdf\\n\\nRespond ONLY with a JSON object.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"עבד את החשבונית הבאה:\\n\\n{{ $json.invoiceText }}\"\n    }\n  ]\n}"
+      },
+      "name": "Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 300],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "1",
+          "name": "Anthropic API Key"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's response and extract JSON\nconst response = $input.first().json.content[0].text;\n\nlet invoiceData;\ntry {\n  // Try direct JSON parse\n  invoiceData = JSON.parse(response);\n} catch (error) {\n  // If wrapped in markdown, extract JSON\n  const jsonMatch = response.match(/```json\\n([\\s\\S]*?)\\n```/);\n  if (jsonMatch) {\n    invoiceData = JSON.parse(jsonMatch[1]);\n  } else {\n    // Try to find any JSON object\n    const objMatch = response.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      invoiceData = JSON.parse(objMatch[0]);\n    } else {\n      throw new Error('Could not extract JSON from response');\n    }\n  }\n}\n\n// Add workflow metadata (if available from earlier nodes)\nif ($('Manual Trigger').item.json.id) {\n  invoiceData.id = $('Manual Trigger').item.json.id;\n}\nif ($('Manual Trigger').item.json.threadId) {\n  invoiceData.threadId = $('Manual Trigger').item.json.threadId;\n}\n\nreturn {\n  json: invoiceData\n};"
+      },
+      "name": "Parse JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude API": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

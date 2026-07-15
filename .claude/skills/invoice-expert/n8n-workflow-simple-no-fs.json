@@ -1,0 +1,79 @@
+{
+  "name": "Invoice Parser - Claude Code (Simple - No FS)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "vendor"
+            },
+            {
+              "name": "text",
+              "type": "any"
+            },
+            {
+              "name": "emailId"
+            },
+            {
+              "name": "threadId"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "id": "trigger-node",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "command": "=Set-Location \"C:\\Users\\itama\\Dropbox\\Docs Itamar\\Scripts\\Claude-code\"; $prompt = @\"\nParse this invoice.\n\nVendor data (extract email from any format - JSON string/object/array/plain):\n{{ $json.vendor }}\n\nInvoice text (parse from any format - JSON array string/array/plain):\n{{ $json.text }}\n\nEmailId: {{ $json.emailId }}\nThreadId: {{ $json.threadId }}\n\nInstructions:\n1. Parse vendor field to extract email address (handle JSON strings, objects, arrays)\n2. Parse text field to get clean invoice text (handle JSON array strings, arrays)\n3. Read vendor-parsers/vendor-mapping.json to find matching vendor by email\n4. If vendor found: read and execute the parser file\n5. If vendor not found: create new parser, update mapping, then parse\n6. Return ONLY JSON with invoice data, no explanations\n\"@; echo $prompt | claude --no-stream",
+        "timeout": 120000
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [440, 300],
+      "id": "claude-code-node",
+      "name": "Execute Claude Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get command output\nconst stdout = $input.first().json.stdout || \"\";\nconst stderr = $input.first().json.stderr || \"\";\nconst code = $input.first().json.code || 0;\n\n// Check for errors\nif (code !== 0) {\n  return {\n    json: {\n      error: \"Command failed\",\n      stderr: stderr,\n      stdout: stdout,\n      exitCode: code\n    }\n  };\n}\n\n// Parse JSON from stdout\nlet invoiceData;\ntry {\n  // Try direct JSON parse\n  invoiceData = JSON.parse(stdout);\n} catch (error) {\n  // Try to extract from markdown code block\n  const jsonMatch = stdout.match(/```json\\n([\\s\\S]*?)\\n```/);\n  if (jsonMatch) {\n    try {\n      invoiceData = JSON.parse(jsonMatch[1]);\n    } catch (e) {\n      return {\n        json: {\n          error: \"Could not parse JSON from code block\",\n          rawOutput: stdout,\n          stderr: stderr\n        }\n      };\n    }\n  } else {\n    // Try to find any JSON object in output\n    const objMatch = stdout.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      try {\n        invoiceData = JSON.parse(objMatch[0]);\n      } catch (e) {\n        return {\n          json: {\n            error: \"Could not parse JSON object\",\n            rawOutput: stdout,\n            stderr: stderr\n          }\n        };\n      }\n    } else {\n      return {\n        json: {\n          error: \"No JSON found in output\",\n          rawOutput: stdout,\n          stderr: stderr\n        }\n      };\n    }\n  }\n}\n\nreturn {\n  json: invoiceData\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300],
+      "id": "parse-output-node",
+      "name": "Parse JSON Output"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Execute Claude Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Claude Code": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

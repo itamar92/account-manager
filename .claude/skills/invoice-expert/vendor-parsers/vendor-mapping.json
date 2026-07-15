@@ -1,0 +1,137 @@
+{
+  "vendors": [
+    {
+      "name": "Morning",
+      "displayName": "Morning",
+      "emailPatterns": ["notify@morning.co"],
+      "parserFile": "morning.js",
+      "category": "קבלני משנה"
+    },
+    {
+      "name": "arnona-hod-hasharon",
+      "displayName": "עיריית הוד השרון",
+      "emailPatterns": ["no_replay@orda.co.il"],
+      "parserFile": "arnona-hod-hasharon.js",
+      "category": "ארנונה וועד בית"
+    },
+    {
+      "name": "partner",
+      "displayName": "פרטנר",
+      "emailPatterns": ["Thankyou@partner.net.il"],
+      "parserFile": "partner.js",
+      "category": "דואר ותקשורת"
+    },
+    {
+      "name": "hot-mobile",
+      "displayName": "הוט מובייל בעמ",
+      "emailPatterns": ["HOTmobile@printernet.co.il"],
+      "parserFile": "hot-mobile.js",
+      "category": "סלולרי"
+    },
+    {
+      "name": "iec-hashmal",
+      "displayName": "חברת החשמל לישראל בעמ",
+      "emailPatterns": ["noreplys@iec.co.il"],
+      "parserFile": "iec-hashmal.js",
+      "category": "חשמל ומים"
+    },
+    {
+      "name": "delek-ocr",
+      "displayName": "מנטה קמעונאות דרכים בעמ",
+      "emailPatterns": ["Weezmo"],
+      "parserFile": "delek-ocr.js",
+      "category": "רכב - דלק"
+    },
+    {
+      "name": "10ten",
+      "displayName": "טן חברה לדלק בעמ",
+      "emailPatterns": ["no-reply@10ten.co.il"],
+      "parserFile": "10ten.js",
+      "category": "רכב - דלק"
+    },
+    {
+      "name": "akum",
+      "displayName": "אקו\"ם בע\"מ",
+      "emailPatterns": ["akum"],
+      "parserFile": "akum.js",
+      "category": "קבלני משנה"
+    },
+    {
+      "name": "carrefour-global",
+      "displayName": "קרפור - גלובל דיוטי פרי",
+      "emailPatterns": ["carrefour", "global duty free"],
+      "parserFile": "carrefour-global.js",
+      "category": "כיבודים"
+    },
+    {
+      "name": "heichal-hatarbut",
+      "displayName": "היכל התרבות בע\"מ",
+      "emailPatterns": ["heichal", "התרבות", "היכל"],
+      "parserFile": "heichal-hatarbut.js",
+      "category": "קבלני משנה"
+    },
+    {
+      "name": "liveplay",
+      "displayName": "לייב פליי בע\"מ",
+      "emailPatterns": ["liveplay.co.il", "liveplay"],
+      "parserFile": "liveplay.js",
+      "category": "עבודות חוץ וקבלני משנה"
+    },
+    {
+      "name": "tzmigei-shabtai",
+      "displayName": "צמיגי שבתאי ברק ואור",
+      "emailPatterns": ["558044475", "צמיגי שבתאי"],
+      "parserFile": "tzmigei-shabtai.js",
+      "category": "רכב - אחזקה תיקונים וחניה"
+    },
+    {
+      "name": "bug-holland",
+      "displayName": "באג הולנדיטסנטר",
+      "emailPatterns": ["bug.co.il", "באג"],
+      "parserFile": "bug-holland.js",
+      "category": "כלי עבודה, ציוד ואחזקה"
+    },
+    {
+      "name": "ginzburg-music",
+      "displayName": "גינזבורג מוסיקה בע\"מ",
+      "emailPatterns": ["ginzburg", "גינזבורג"],
+      "parserFile": "ginzburg-music.js",
+      "category": "כלי עבודה, ציוד ואחזקה"
+    },
+    {
+      "name": "kvish6",
+      "displayName": "כביש 6",
+      "emailPatterns": ["kvish6", "כביש 6", "302236799"],
+      "parserFile": "kvish6.js",
+      "category": "נסיעות"
+    },
+    {
+      "name": "or-habarak",
+      "displayName": "מוסך אור הברק",
+      "emailPatterns": ["orhabarak106@gmail.com", "אור הברק", "or habarak"],
+      "parserFile": "or-habarak.js",
+      "category": "רכב - אחזקה תיקונים וחניה"
+    },
+    {
+      "name": "eni-mobile",
+      "displayName": "אני מובייל בעמ",
+      "emailPatterns": ["ENI Mobile", "אני מובייל"],
+      "parserFile": "eni-mobile.js",
+      "category": "רכב - דלק"
+    },
+    {
+      "name": "meta-ads",
+      "displayName": "Meta Platforms",
+      "emailPatterns": ["facebook", "meta", "Meta Platforms"],
+      "parserFile": "meta-ads.js",
+      "category": "פרסום, קידום מכירות ואחזקת אתר"
+    },
+    {
+      "name": "cloudflare",
+      "displayName": "Cloudflare",
+      "emailPatterns": ["billing@cloudflare.com", "cloudflare"],
+      "parserFile": "cloudflare.js",
+      "category": "תוכנה"
+    }
+  ]
+}

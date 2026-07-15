@@ -1,0 +1,100 @@
+{
+  "name": "Invoice Parser - Claude Code (Raw Data)",
+  "nodes": [
+    {
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "vendor"
+            },
+            {
+              "name": "text",
+              "type": "any"
+            },
+            {
+              "name": "emailId"
+            },
+            {
+              "name": "threadId"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300],
+      "id": "trigger-node",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\n// Create temp directory\nconst tempDir = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Scripts\\\\Claude-code\\\\temp\";\nif (!fs.existsSync(tempDir)) {\n  fs.mkdirSync(tempDir, { recursive: true });\n}\n\n// Write raw data to file - NO PARSING AT ALL\nconst timestamp = Date.now();\nconst dataFile = path.join(tempDir, `invoice-data-${timestamp}.json`);\n\n// Save everything exactly as received\nconst rawData = {\n  vendor: $json.vendor,\n  text: $json.text,\n  emailId: $json.emailId,\n  threadId: $json.threadId\n};\n\nfs.writeFileSync(dataFile, JSON.stringify(rawData, null, 2), 'utf8');\n\nreturn {\n  json: {\n    dataFile: dataFile\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "id": "write-data-node",
+      "name": "Write Raw Data to File"
+    },
+    {
+      "parameters": {
+        "command": "Set-Location \"C:\\Users\\itama\\Dropbox\\Docs Itamar\\Scripts\\Claude-code\"; claude -m \"Read the file {{ $json.dataFile }} and parse the invoice. The file contains raw data with vendor and text fields that may be in different formats (JSON strings, arrays, objects, or plain strings). Extract the vendor email, parse the invoice text, identify the vendor from vendor-parsers/vendor-mapping.json, and use the appropriate parser. Return only JSON with the invoice data. After parsing, delete the temp file.\" --no-stream",
+        "timeout": 120000
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [640, 300],
+      "id": "claude-code-node",
+      "name": "Execute Claude Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\n\n// Get command output\nconst stdout = $input.first().json.stdout || \"\";\nconst stderr = $input.first().json.stderr || \"\";\nconst code = $input.first().json.code || 0;\n\n// Clean up temp file if it still exists\nconst dataFile = $('Write Raw Data to File').item.json.dataFile;\nif (dataFile && fs.existsSync(dataFile)) {\n  try {\n    fs.unlinkSync(dataFile);\n  } catch (e) {\n    // Ignore cleanup errors\n  }\n}\n\n// Check for errors\nif (code !== 0) {\n  return {\n    json: {\n      error: \"Command failed\",\n      stderr: stderr,\n      stdout: stdout,\n      exitCode: code\n    }\n  };\n}\n\n// Parse JSON from stdout\nlet invoiceData;\ntry {\n  // Try direct JSON parse\n  invoiceData = JSON.parse(stdout);\n} catch (error) {\n  // Try to extract from markdown code block\n  const jsonMatch = stdout.match(/```json\\n([\\s\\S]*?)\\n```/);\n  if (jsonMatch) {\n    try {\n      invoiceData = JSON.parse(jsonMatch[1]);\n    } catch (e) {\n      return {\n        json: {\n          error: \"Could not parse JSON from code block\",\n          rawOutput: stdout,\n          stderr: stderr\n        }\n      };\n    }\n  } else {\n    // Try to find any JSON object in output\n    const objMatch = stdout.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      try {\n        invoiceData = JSON.parse(objMatch[0]);\n      } catch (e) {\n        return {\n          json: {\n            error: \"Could not parse JSON object\",\n            rawOutput: stdout,\n            stderr: stderr\n          }\n        };\n      }\n    } else {\n      return {\n        json: {\n          error: \"No JSON found in output\",\n          rawOutput: stdout,\n          stderr: stderr\n        }\n      };\n    }\n  }\n}\n\nreturn {\n  json: invoiceData\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 300],
+      "id": "parse-output-node",
+      "name": "Parse JSON Output"
+    }
+  ],
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Write Raw Data to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Raw Data to File": {
+      "main": [
+        [
+          {
+            "node": "Execute Claude Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Claude Code": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

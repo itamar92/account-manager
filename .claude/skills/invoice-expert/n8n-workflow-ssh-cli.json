@@ -1,0 +1,86 @@
+{
+  "name": "Invoice Expert - SSH/CLI Method",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "command": "=cd /path/to/claude-code-project && echo \"{{ $json.invoiceText }}\" | claude -m \"עבד את החשבונית הזו והחזר JSON בלבד. אל תוסיף הסברים נוספים.\" --no-stream",
+        "options": {}
+      },
+      "name": "Execute Command - Text",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [440, 200],
+      "notes": "For text input from PDF extractor"
+    },
+    {
+      "parameters": {
+        "command": "=cd /path/to/claude-code-project && claude -m \"קרא את הקובץ {{ $json.filePath }} (PDF או תמונה סרוקה של חשבונית) וחלץ את כל הנתונים. החזר רק JSON ללא הסברים נוספים.\" --no-stream",
+        "options": {}
+      },
+      "name": "Execute Command - File",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [440, 400],
+      "notes": "For file path input"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude CLI output and extract JSON\nconst cliOutput = $input.first().json.stdout || $input.first().json;\n\nlet invoiceData;\n\ntry {\n  // Try direct JSON parse first\n  invoiceData = JSON.parse(cliOutput);\n} catch (error) {\n  // Extract from markdown code block\n  const jsonMatch = cliOutput.match(/```json\\n([\\s\\S]*?)\\n```/);\n  if (jsonMatch) {\n    invoiceData = JSON.parse(jsonMatch[1]);\n  } else {\n    // Try to find any JSON object in the output\n    const objMatch = cliOutput.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      invoiceData = JSON.parse(objMatch[0]);\n    } else {\n      throw new Error('Could not extract JSON from Claude CLI output: ' + cliOutput);\n    }\n  }\n}\n\n// Add metadata if available\nif ($('Manual Trigger').item.json.id) {\n  invoiceData.id = $('Manual Trigger').item.json.id;\n}\nif ($('Manual Trigger').item.json.threadId) {\n  invoiceData.threadId = $('Manual Trigger').item.json.threadId;\n}\n\nreturn {\n  json: invoiceData\n};"
+      },
+      "name": "Parse CLI Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute Command - Text",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Execute Command - File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Command - Text": {
+      "main": [
+        [
+          {
+            "node": "Parse CLI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Command - File": {
+      "main": [
+        [
+          {
+            "node": "Parse CLI Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

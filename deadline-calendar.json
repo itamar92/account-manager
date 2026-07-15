@@ -1,0 +1,41 @@
+{
+  "as_of": "2026-04-16",
+  "profile": "osek_murshe bi-monthly",
+  "mkdamot_mas_hachnasa_required": false,
+  "mkdamot_note": "No shoverim issued for 2026 — skip. Re-check if Tax Authority sends assessment.",
+  "deadlines_2026": [
+    {
+      "date": "2026-04-15",
+      "type": "bituach_leumi_monthly",
+      "period": "March 2026",
+      "status": "OVERDUE 1d — PAY NOW",
+      "action": "Pay immediately via btl.gov.il or bank. Penalties + interest accrue daily."
+    },
+    {
+      "date": "2026-04-30",
+      "type": "doch_shnati",
+      "period": "Annual report 2025",
+      "status": "ACTIVE — accountant handling",
+      "action": "Nudge Itamar Miron: confirm filing on track, ask if any docs/signatures still needed."
+    },
+    {"date":"2026-05-15","type":"vat_bimonthly","period":"Mar-Apr 2026"},
+    {"date":"2026-05-15","type":"bituach_leumi_monthly","period":"April 2026"},
+    {"date":"2026-06-15","type":"bituach_leumi_monthly","period":"May 2026"},
+    {"date":"2026-07-15","type":"vat_bimonthly","period":"May-Jun 2026"},
+    {"date":"2026-07-15","type":"bituach_leumi_monthly","period":"June 2026"},
+    {"date":"2026-08-15","type":"bituach_leumi_monthly","period":"July 2026","shabbat_adjust":"2026-08-16"},
+    {"date":"2026-09-15","type":"vat_bimonthly","period":"Jul-Aug 2026"},
+    {"date":"2026-09-15","type":"bituach_leumi_monthly","period":"Aug 2026"},
+    {"date":"2026-10-15","type":"bituach_leumi_monthly","period":"Sep 2026"},
+    {"date":"2026-11-15","type":"vat_bimonthly","period":"Sep-Oct 2026","shabbat_adjust":"2026-11-16"},
+    {"date":"2026-11-15","type":"bituach_leumi_monthly","period":"Oct 2026","shabbat_adjust":"2026-11-16"},
+    {"date":"2026-12-15","type":"bituach_leumi_monthly","period":"Nov 2026"},
+    {"date":"2027-01-15","type":"vat_bimonthly","period":"Nov-Dec 2026"},
+    {"date":"2027-01-15","type":"bituach_leumi_monthly","period":"Dec 2026"}
+  ],
+  "turnover_watch": {
+    "current_ytd": 90857,
+    "detailed_vat_report_874_threshold": 500000,
+    "note": "Projected annual ~315K — under 500K, bi-monthly OK."
+  }
+}

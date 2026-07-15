@@ -1,0 +1,11 @@
+# Secrets / local config
+.env
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

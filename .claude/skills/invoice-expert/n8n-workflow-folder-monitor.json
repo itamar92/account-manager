@@ -1,0 +1,112 @@
+{
+  "name": "Invoice Folder Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300],
+      "id": "schedule",
+      "name": "Every 5 Minutes"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst folderPath = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Docs Itamar - Buisness\\\\חשבוניות - קבלות\";\nconst processedFile = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Scripts\\\\Claude-code\\\\temp\\\\processed-invoices.json\";\n\n// Ensure temp dir exists\nconst tempDir = path.dirname(processedFile);\nif (!fs.existsSync(tempDir)) {\n  fs.mkdirSync(tempDir, { recursive: true });\n}\n\n// Load processed files list\nlet processed = [];\nif (fs.existsSync(processedFile)) {\n  try {\n    processed = JSON.parse(fs.readFileSync(processedFile, 'utf8'));\n  } catch (e) {\n    processed = [];\n  }\n}\n\n// Get all PDF files that haven't been processed\nconst files = fs.readdirSync(folderPath)\n  .filter(f => {\n    const fullPath = path.join(folderPath, f);\n    const stat = fs.statSync(fullPath);\n    return stat.isFile() && f.toLowerCase().endsWith('.pdf');\n  })\n  .filter(f => !processed.includes(f));\n\nif (files.length === 0) {\n  return [];\n}\n\n// Return each file as separate item for processing\nreturn files.map(f => ({\n  json: {\n    fileName: f,\n    filePath: path.join(folderPath, f)\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300],
+      "id": "list-files",
+      "name": "List New PDF Files"
+    },
+    {
+      "parameters": {
+        "command": "=cd \"C:\\Users\\itama\\Dropbox\\Docs Itamar\\Scripts\\Claude-code\" && claude -m \"Parse the invoice PDF at: {{ $json.filePath }}. Read the file, extract all text (handle both text PDFs and scanned images), identify the vendor, and use the appropriate parser from vendor-parsers/. Return ONLY JSON with invoice data.\"",
+        "timeout": 180000
+      },
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [640, 300],
+      "id": "claude",
+      "name": "Parse with Claude Code"
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $input.first().json.stdout || \"\";\nconst stderr = $input.first().json.stderr || \"\";\nconst code = $input.first().json.code || 0;\n\nif (code !== 0) {\n  return {\n    json: {\n      error: \"Command failed\",\n      stderr: stderr,\n      fileName: $('List New PDF Files').item.json.fileName,\n      filePath: $('List New PDF Files').item.json.filePath\n    }\n  };\n}\n\nlet invoiceData;\ntry {\n  invoiceData = JSON.parse(stdout);\n} catch (error) {\n  const jsonMatch = stdout.match(/```json\\n([\\s\\S]*?)\\n```/) || stdout.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    try {\n      invoiceData = JSON.parse(jsonMatch[1] || jsonMatch[0]);\n    } catch (e) {\n      return {\n        json: {\n          error: \"Could not parse JSON\",\n          rawOutput: stdout,\n          fileName: $('List New PDF Files').item.json.fileName,\n          filePath: $('List New PDF Files').item.json.filePath\n        }\n      };\n    }\n  } else {\n    return {\n      json: {\n        error: \"No JSON found\",\n        rawOutput: stdout,\n        fileName: $('List New PDF Files').item.json.fileName,\n        filePath: $('List New PDF Files').item.json.filePath\n      }\n    };\n  }\n}\n\n// Add original file info\ninvoiceData.originalFile = $('List New PDF Files').item.json.fileName;\ninvoiceData.originalFilePath = $('List New PDF Files').item.json.filePath;\n\nreturn { json: invoiceData };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 300],
+      "id": "parse-output",
+      "name": "Parse JSON Output"
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst processedFile = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Scripts\\\\Claude-code\\\\temp\\\\processed-invoices.json\";\n\n// Load existing processed list\nlet processed = [];\nif (fs.existsSync(processedFile)) {\n  try {\n    processed = JSON.parse(fs.readFileSync(processedFile, 'utf8'));\n  } catch (e) {\n    processed = [];\n  }\n}\n\n// Add this file to processed list\nconst fileName = $input.first().json.originalFile;\nif (!processed.includes(fileName)) {\n  processed.push(fileName);\n  fs.writeFileSync(processedFile, JSON.stringify(processed, null, 2), 'utf8');\n}\n\n// Pass through the invoice data\nreturn { json: $input.first().json };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1040, 300],
+      "id": "mark-processed",
+      "name": "Mark as Processed"
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "List New PDF Files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List New PDF Files": {
+      "main": [
+        [
+          {
+            "node": "Parse with Claude Code",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse with Claude Code": {
+      "main": [
+        [
+          {
+            "node": "Parse JSON Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JSON Output": {
+      "main": [
+        [
+          {
+            "node": "Mark as Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

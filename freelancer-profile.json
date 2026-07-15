@@ -1,0 +1,21 @@
+{
+  "business_type": "osek_murshe",
+  "vat_filing_frequency": "bi-monthly",
+  "annual_turnover_nis": 400000,
+  "detailed_vat_report_874_required": false,
+  "invoice_allocation_number_required_above_nis": 10000,
+  "invoice_allocation_number_threshold_june_2026": 5000,
+  "industry": "music",
+  "ytd_revenue_2026_nis": 90857,
+  "ytd_revenue_note": "closed type 320+305 invoices as of 2026-04-16. Projected annual ~315K based on 3.5 months; user stated 400K — gap may be 2025 carryover or mid-year uplift.",
+  "green_invoice_account_id": "23d071e6-2f96-02b4-f5af-1f0a68ae79e0",
+  "active_clients": 10,
+  "accountant": {
+    "name": "Itamar Miron",
+    "submission_cadence": null
+  },
+  "osek_patur_threshold_2026_nis": 122833,
+  "vat_rate": 0.18,
+  "profile_created": "2026-04-16",
+  "last_updated": "2026-04-16"
+}

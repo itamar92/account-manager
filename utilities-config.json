@@ -1,0 +1,52 @@
+{
+  "home_office_ratio": 0.15,
+  "home_office_note": "15% of apartment used for business. Apply to electricity, water, arnona for deductible portion. Phone/internet deducted at standard 80% per tax authority guidelines.",
+  "providers": {
+    "electricity": {
+      "name": "IEC",
+      "portal": "https://www.iec.co.il",
+      "login": "teudat_zehut + password OR phone OTP",
+      "deduct_pct": 0.15,
+      "collect_frequency": "bi-monthly",
+      "credentials_env": ["IEC_ID", "IEC_PASSWORD"]
+    },
+    "internet": {
+      "name": "Partner",
+      "portal": "https://www.partner.co.il",
+      "login": "phone + password OR OTP",
+      "deduct_pct": 0.80,
+      "collect_frequency": "monthly",
+      "credentials_env": ["PARTNER_PHONE", "PARTNER_PASSWORD"]
+    },
+    "mobile": {
+      "name": "HOT Mobile",
+      "portal": "https://www.hotmobile.co.il",
+      "login": "phone + password OR OTP",
+      "deduct_pct": 0.80,
+      "collect_frequency": "monthly",
+      "credentials_env": ["HOTMOBILE_PHONE", "HOTMOBILE_PASSWORD"]
+    },
+    "water": {
+      "name": "Mei Hod Hasharon",
+      "portal": "https://www.mei-hh.co.il",
+      "portal_note": "Verify URL — Hod Hasharon water corp. May also be accessed via municipality site.",
+      "login": "account number + ID",
+      "deduct_pct": 0.15,
+      "collect_frequency": "bi-monthly",
+      "credentials_env": ["WATER_ACCOUNT", "WATER_ID"]
+    },
+    "arnona": {
+      "name": "Hod Hasharon Municipality",
+      "portal": "https://www.hod-hasharon.muni.il",
+      "login": "ID + property account OR gov.il identity",
+      "deduct_pct": 0.15,
+      "collect_frequency": "bi-monthly",
+      "credentials_env": ["ARNONA_ID", "ARNONA_PROPERTY"]
+    }
+  },
+  "storage": {
+    "base_dir": "bills",
+    "structure": "bills/YYYY-MM/<provider>/",
+    "filename": "<provider>_<YYYY-MM>.pdf"
+  }
+}
