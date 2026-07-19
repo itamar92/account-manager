@@ -2,6 +2,18 @@
 
 Personal accounting and invoicing automation for an Israeli sole proprietor (עוסק מורשה) — collects utility bills, parses expense receipts, and builds accountant handoff packages ("havila") from Green Invoice.
 
+## Automation design
+
+The full business-automation design (n8n workflows + Cowork agents + Google Sheets data
+layer) lives in `docs/`:
+
+- `docs/ARCHITECTURE.md` — overall design, the six agents, build order, Sheets-vs-DB decision
+- `docs/DATA-SCHEMA.md` — the Google Sheets workbook schema (DB-migration-ready)
+- `docs/N8N-WORKFLOWS.md` — specs for the seven n8n workflows
+- `docs/SETUP-CHECKLIST.md` — phase-by-phase setup steps
+- `.claude/agents/` — runnable Cowork agent definitions (invoice-intake, bank-reconciler,
+  tax-compliance, receivables, payables)
+
 ## Structure
 
 - `scripts/` — automation scripts (see Usage below)
