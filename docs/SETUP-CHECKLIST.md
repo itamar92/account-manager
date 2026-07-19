@@ -1,16 +1,22 @@
 # Setup Checklist (phase by phase)
 
-## Phase 1 — Invoice intake (week 1)
-- [ ] Create Google Sheets workbook "Account Manager 2026" with tabs per `DATA-SCHEMA.md`
-      (start with Expenses, Payables, Clients; add the rest in later phases)
-- [ ] Backfill Expenses tab from `expenses_2026.json` (one-off script or manual import)
-- [ ] n8n instance running (cloud or self-hosted) with credentials configured:
-      Gmail OAuth, Dropbox, Google Sheets, Anthropic API key, Green Invoice ID/secret
-- [ ] Gmail: create labels `invoices/incoming`, `invoices/processed` + filters routing
-      known vendor senders (see `vendor-mapping.json` emailPatterns) and PDF attachments
-- [ ] Build WF-1 (start from `.claude/skills/invoice-expert/n8n-workflow-folder-monitor.json`
-      / `n8n-workflow-pdf-vision.json` templates; add Dropbox + Sheets + GI steps)
-- [ ] Test with 5 real invoices incl. one unknown vendor (needs_review path)
+## Phase 1 — Invoice intake (week 1)  — STATUS 2026-07-19
+- [x] Google Sheets workbook **"Account Manager 2026"** created with all 7 tabs
+      — ID `1uMnbuiN6OnX2CK20zw07G9ZaRcyOenCeSWUSe9Oo6gU`
+- [x] Backfilled: Expenses (49 rows, 1 flagged needs_review — Menta fuel receipt with
+      missing date), Invoices_Issued (19), Clients (10), Deadlines (16), Yearly_Report keys
+- [x] n8n **WF-0 Setup Workbook** created and executed successfully (can be archived)
+- [x] n8n **WF-1 Invoice Intake** created — Gmail poll (unread + PDF + חשבונית/קבלה)
+      → Claude field extraction → Dropbox filing → Expenses append → mark read.
+      Gmail / Google Sheets / Dropbox credentials auto-connected from existing n8n creds.
+- [ ] Add **Anthropic API key** credential in n8n to the "Claude Extract Invoice" node
+- [ ] Verify Dropbox base path in "Save PDF to Dropbox" node matches the real folder
+      (`/Docs Itamar/Docs Itamar - Buisness/חשבוניות - קבלות/<year>/<category>/`)
+- [ ] Activate (publish) WF-1, test with 5 real invoices incl. one unknown vendor
+- [ ] Fill client emails + payment terms in the Clients tab (needed for Phase 4)
+- [ ] Re-authorize the Gmail connector in claude.ai (token expired) so Cowork agents
+      can draft reminders later
+- [ ] Phase 1.5: add Green Invoice push (token → POST expense) after the Sheets append
 
 ## Phase 2 — Bank + reconciliation (week 2)
 - [ ] Choose bank scraper runtime: n8n Execute node with `israeli-bank-scrapers`, or
