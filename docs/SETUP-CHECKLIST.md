@@ -18,15 +18,26 @@
       can draft reminders later
 - [ ] Phase 1.5: add Green Invoice push (token → POST expense) after the Sheets append
 
-## Phase 2 — Bank + reconciliation (week 2)
-- [ ] Choose bank scraper runtime: n8n Execute node with `israeli-bank-scrapers`, or
-      israeli-bank-mcp for interactive use in Cowork
-- [ ] Bank + credit card credentials into n8n credential store ONLY (verify `.env` is
-      git-ignored; never commit)
-- [ ] Add Bank_Transactions + Invoices_Issued tabs; build WF-4 (GI mirror), WF-2 (bank
-      sync), WF-3 (reconcile)
-- [ ] Set up notification channel (Telegram bot is easiest in n8n; or email)
-- [ ] Verify dedupe: run WF-2 twice, confirm no duplicate rows
+## Phase 2 — Bank + reconciliation (week 2)  — STATUS 2026-07-19
+- [x] Scraper architecture: `scripts/bank_scrape.js` (israeli-bank-scrapers) runs via
+      cron on the server and POSTs transactions to an n8n webhook — no shell-exec needed
+      in n8n, and bank credentials never enter n8n (they live in the git-ignored `.env`)
+- [x] n8n **WF-2 Bank Sync & Reconcile** created — webhook → dedupe by txn hash →
+      classify (client_payment / tax_vat / tax_bituach_leumi / tax_income / bank_fee /
+      other) → match credits to open invoices (exact amount, or 94–101% for ניכוי מס
+      במקור) → mark invoices paid → append Bank_Transactions → Hebrew email alert on
+      client payments (reconcile merged into WF-2; no separate WF-3 needed)
+- [x] n8n **WF-4 Green Invoice Mirror** created — daily 06:30, last 90 days of GI
+      documents upserted into Invoices_Issued by document id
+- [x] Notification channel: Gmail (existing n8n credential) → itamar92@gmail.com
+- [ ] On the n8n host: `npm install israeli-bank-scrapers dotenv`, fill
+      `BANK_CONNECTIONS` / `BANK_WEBHOOK_URL` / `BANK_WEBHOOK_SECRET` in `.env`,
+      add the cron entry (`0 7 * * *  node scripts/bank_scrape.js`)
+- [ ] In n8n: set the "Bank Webhook Secret" header-auth credential (name
+      `X-Webhook-Secret`, value = BANK_WEBHOOK_SECRET) and activate WF-2
+- [ ] On the n8n host: export `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` env vars,
+      then activate WF-4 (verify the GI token/search responses in a manual run first)
+- [ ] Verify dedupe: run the scraper twice, confirm no duplicate Bank_Transactions rows
 
 ## Phase 3 — Compliance (week 3)
 - [ ] Add Deadlines + Yearly_Report tabs; import `deadline-calendar.json`
