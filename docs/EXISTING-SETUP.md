@@ -42,16 +42,32 @@ Dropbox root: `/Docs Itamar/Docs Itamar - Buisness/חשבוניות - קבלות
 
 ## Built this session (on the REAL setup)
 
-- **SETUP Payables Tab (run once)** `mUTbbzYAa1AgxReV` — created the `ספקים לתשלום` tab
-  (RTL, Hebrew headers, one example row). Already executed.
-- **Payables Reminder (ספקים)** `VwXrCOcTpz67Awmf` — weekly Sun 08:30 (+ Run Now): reads the
-  tab, buckets open items (סטטוס != שולם) into overdue / due-this-week / due-30, sends a
-  Telegram checklist to 5564386206. Read-only, never pays. Tested — Telegram delivered.
+- **Payables Reminder (ספקים)** `VwXrCOcTpz67Awmf` — weekly Sun 08:30 (+ Run Now). Reads TWO
+  sources, buckets open items by due date (באיחור / השבוע / עד-30 / בהמשך), and sends a Telegram
+  checklist to 5564386206. Read-only, never pays. Tested — reconciles exactly to `סיכום מקוצר`.
+- **SETUP Payables Tab (run once)** `mUTbbzYAa1AgxReV` — created the manual `ספקים לתשלום` tab
+  (RTL, Hebrew headers, one example row) for non-band suppliers. Already executed.
 
-### Payables — how to use / extend
-- Add a row per supplier invoice you owe; set `סטטוס=שולם` once paid (delete the example row).
-- Future: the bank reconciler can flip `סטטוס=שולם` automatically when a matching debit clears;
-  and the invoice-intake pipeline can auto-append קבלנות משנה invoices as payables.
+### Primary source: the band sheet (Moonlight 2026)
+File `18kp7-…`, tab **`הוצאות לפי אירוע`**. Important quirks discovered:
+- Row 1 is a merged "הוצאות" title → the real header row is **row 2**, data from **row 3**.
+  The Google Sheets read node is configured with `headerRow: 2, firstDataRow: 3`.
+- Each supplier is a **checkbox column immediately followed by an amount column** (before VAT):
+  `chekbox singer`→זמר, `chekbox soundman`→סאונדמן, `chekbox lightman`→תאורן,
+  `chekbox soundCompany`→חברת הגברה, `chekbox braclet`→חברת צמידים.
+- The show date is embedded in the `אירוע` cell ("מקום - DD/MM/YYYY").
+- **Payable rule:** a (event × supplier) cell with amount > 0 whose checkbox is not TRUE.
+  **Due = שוטף+30** = last day of the show's month + 30 days.
+- Verified: summing unpaid per supplier reproduces the `סיכום מקוצר` A4:B8 totals exactly
+  (זמר 8,000 / תאורן 4,800 / סאונדמן 6,100 / חברת צמידים 8,100 / חברת הגברה 6,000 = 33,000).
+- To mark paid: tick the supplier's checkbox in the sheet — it drops off the next reminder.
+
+### Secondary source: manual `ספקים לתשלום` tab (non-band suppliers)
+Columns: ספק, תיאור, סכום, תאריך חשבונית, תאריך לתשלום, סטטוס (לתשלום/שולם), תאריך תשלום, הערות.
+
+### Future
+- Bank reconciler could tick paid automatically when a matching debit clears.
+- אקום / שכר אולם columns exist too (usually prepaid) — easy to add to the SUP map if wanted.
 
 ## Parallel greenfield artifacts (left as-is, NOT in use)
 
