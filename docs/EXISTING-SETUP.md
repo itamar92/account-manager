@@ -48,6 +48,20 @@ Dropbox root: `/Docs Itamar/Docs Itamar - Buisness/חשבוניות - קבלות
 - **SETUP Payables Tab (run once)** `mUTbbzYAa1AgxReV` — created the manual `ספקים לתשלום` tab
   (RTL, Hebrew headers, one example row) for non-band suppliers. Already executed.
 
+### Grouping by person (via the "Google Events" tab)
+The reminder resolves each job to the actual **person** and groups the summary by name
+(with a total owed per person + a per-show breakdown), per the user's request.
+- Source: the **"Google Events"** tab in Moonlight 2026 (headers row 2, data row 3). Per show
+  (keyed by `Date`) it holds the person for each job in columns: `סולן`, `תאורן`, `סאונדמן`,
+  `חברת הגברה`. **`סולן` = `זמר`.** `חברת צמידים` has no name column → stays as the job label.
+- Match: expenses `אירוע` date (DD/MM/YYYY) ↔ events `Date`, normalized to YYYY-MM-DD.
+- Verified per-person totals sum to ₪33,000: ניב פלכטמן (תאורן) 4,800 · אורן סודרי (סאונדמן)
+  3,600 · שרון זכרי (סאונדמן) 2,500 · סהר טוויטו (זמר) 6,000 · מייקל רוז (זמר) 2,000 ·
+  א.ד סאונד (חברת הגברה) 6,000 · חברת צמידים 8,100.
+- The full workflow SDK source is saved at `docs/n8n/payables-reminder.workflow.ts`.
+- The "Google Events" tab's `רשימת אנשים` side-table (Name / Title / Email) has each person's
+  email — useful later for the receivables/reminder emails.
+
 ### Primary source: the band sheet (Moonlight 2026)
 File `18kp7-…`, tab **`הוצאות לפי אירוע`**. Important quirks discovered:
 - Row 1 is a merged "הוצאות" title → the real header row is **row 2**, data from **row 3**.
