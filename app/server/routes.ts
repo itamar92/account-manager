@@ -5,6 +5,7 @@ import {
 } from './db.js';
 import {
   createSession, destroySession, login, requireAuth, requireOwner, requireApiKey,
+  loginRateLimit, clearLoginAttempts,
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
@@ -70,11 +71,16 @@ function handleAsync(fn: (req: any, res: any) => Promise<void>) {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+// Unauthenticated liveness probe for the container healthcheck and the keepalive
+// cron. Says nothing about the data behind it.
+router.get('/health', (_req, res) => res.json({ ok: true }));
+
 // ============ auth ============
-router.post('/auth/login', handle((req, res) => {
+router.post('/auth/login', loginRateLimit, handle((req, res) => {
   const { email, password } = req.body || {};
   const user = email && password ? login(email, password) : null;
   if (!user) return res.status(401).json({ error: 'אימייל או סיסמה שגויים' });
+  clearLoginAttempts(req);
   createSession(res, user.id);
   res.json({ user });
 }));

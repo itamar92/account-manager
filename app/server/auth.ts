@@ -89,6 +89,50 @@ export function requireApiKey(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+// ---------- login rate limiting ----------
+// Once the app is reachable from the public internet the login endpoint needs a
+// brake on password guessing. A single process serves everything, so an in-memory
+// window is enough; losing it on restart is fine for an app with four users.
+const LOGIN_MAX_ATTEMPTS = 8;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const loginAttempts = new Map<string, { count: number; first: number }>();
+
+/**
+ * Behind a Cloudflare Tunnel every request arrives from the local cloudflared
+ * container, so the socket address is useless for rate limiting — the real
+ * client is in CF-Connecting-IP, which Cloudflare sets and strips from
+ * client-supplied input.
+ */
+export function clientIp(req: Request): string {
+  const cf = req.headers['cf-connecting-ip'];
+  if (typeof cf === 'string' && cf) return cf;
+  return req.socket.remoteAddress || 'unknown';
+}
+
+export function loginRateLimit(req: Request, res: Response, next: NextFunction) {
+  const now = Date.now();
+  if (loginAttempts.size > 1000) {
+    for (const [k, v] of loginAttempts) if (now - v.first > LOGIN_WINDOW_MS) loginAttempts.delete(k);
+  }
+  const key = clientIp(req);
+  const entry = loginAttempts.get(key);
+  if (!entry || now - entry.first > LOGIN_WINDOW_MS) {
+    loginAttempts.set(key, { count: 1, first: now });
+    return next();
+  }
+  entry.count++;
+  if (entry.count > LOGIN_MAX_ATTEMPTS) {
+    res.setHeader('Retry-After', String(Math.ceil((LOGIN_WINDOW_MS - (now - entry.first)) / 1000)));
+    return res.status(429).json({ error: 'יותר מדי ניסיונות התחברות. נסה שוב בעוד כמה דקות.' });
+  }
+  next();
+}
+
+/** A successful login clears the window, so normal use never trips the limit. */
+export function clearLoginAttempts(req: Request) {
+  loginAttempts.delete(clientIp(req));
+}
+
 export function login(email: string, password: string): SessionUser | null {
   const row = db.prepare('SELECT id, email, name, role, password_hash FROM users WHERE email = ?').get(email) as
     | (SessionUser & { password_hash: string })

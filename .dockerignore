@@ -1,0 +1,20 @@
+# The build context is the repo root (the Dockerfile needs invoices_2026.csv for
+# the first-run seed), so keep everything else out of it.
+.git
+.github
+.claude
+app/node_modules
+app/dist
+app/data
+node_modules
+bills/
+havila/
+docs/
+scripts/
+__pycache__/
+*.pyc
+.env
+**/.env
+*.local
+.DS_Store
+Thumbs.db
