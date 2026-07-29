@@ -1,8 +1,7 @@
 import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import {
-  db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting,
-  getCalendarId, getShowKeyword, getMorningSyncDays,
+  db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
 } from './db.js';
 import {
   createSession, destroySession, login, requireAuth, requireOwner, requireApiKey,
@@ -10,7 +9,17 @@ import {
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
-import { calendarStatus, pullShowsFromCalendar } from './calendarSync.js';
+import { calendarStatus, previewRule, pullShowsFromCalendar } from './calendarSync.js';
+import {
+  createRule, deleteRule, getRule, listRules, updateRule, type CalendarRule,
+} from './calendarRules.js';
+
+/** Stand-in used when previewing a rule that has not been saved yet. */
+const DRAFT_RULE: CalendarRule = {
+  id: 'draft', name: 'טיוטה', target: 'band', calendar_id: 'primary',
+  keywords: '', organizers: '', ignore_words: '', client_name: null,
+  skip_declined: 1, enabled: 1, sort_order: 0,
+};
 
 export const router = Router();
 
@@ -303,11 +312,46 @@ router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (re
   res.json({ result, invoice: getInvoice(req.params.id) });
 }));
 
-/** Pulls shows from Google Calendar into band_events. */
+/** Runs the calendar rules and writes what they draw to their targets. */
 router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req, res) => {
   const monthsBack = req.body?.months_back != null ? parseInt(req.body.months_back, 10) : undefined;
   const monthsAhead = req.body?.months_ahead != null ? parseInt(req.body.months_ahead, 10) : undefined;
-  res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead }) });
+  res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
+}));
+
+// ---- calendar rules: which events to draw, for band and for personal ----
+router.get('/calendar-rules', requireOwner, handle((_req, res) => {
+  res.json({ rules: listRules() });
+}));
+
+router.post('/calendar-rules', requireOwner, handle((req, res) => {
+  res.json({ rule: createRule(req.body || {}) });
+}));
+
+router.put('/calendar-rules/:id', requireOwner, handle((req, res) => {
+  res.json({ rule: updateRule(req.params.id, req.body || {}) });
+}));
+
+router.delete('/calendar-rules/:id', requireOwner, handle((req, res) => {
+  deleteRule(req.params.id);
+  res.json({ ok: true });
+}));
+
+/**
+ * Dry run for a rule — what it would draw and why, writing nothing. Accepts an unsaved
+ * rule body so filters can be tried before they are committed.
+ */
+router.post('/calendar-rules/:id/preview', requireOwner, handleAsync(async (req, res) => {
+  const saved = getRule(req.params.id);
+  if (!saved && req.params.id !== 'draft') return res.status(404).json({ error: 'rule not found' });
+  const rule = { ...(saved ?? DRAFT_RULE), ...(req.body?.rule || {}) };
+  res.json({
+    result: await previewRule(rule, {
+      monthsBack: req.body?.months_back,
+      monthsAhead: req.body?.months_ahead,
+      includeMisses: req.body?.include_misses !== false,
+    }),
+  });
 }));
 
 // ============ settings & admin (owner) ============
@@ -316,22 +360,19 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     settings: {
       vat_percent: getVatPercent(),
       app_name: getSetting('app_name', 'Account Manager'),
-      calendar_id: getCalendarId(),
-      calendar_show_keyword: getShowKeyword(),
       morning_sync_days: getMorningSyncDays(),
     },
     integrations: { morning: morningStatus(), calendar: calendarStatus() },
+    calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
     api_keys: db.prepare('SELECT id, name, key_prefix, created_at, last_used_at FROM api_keys ORDER BY created_at').all(),
   });
 }));
 
 router.post('/settings', requireOwner, handle((req, res) => {
-  const { vat_percent, app_name, calendar_id, calendar_show_keyword, morning_sync_days } = req.body || {};
+  const { vat_percent, app_name, morning_sync_days } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
   if (app_name) setSetting('app_name', app_name);
-  if (calendar_id) setSetting('calendar_id', String(calendar_id).trim());
-  if (calendar_show_keyword != null) setSetting('calendar_show_keyword', String(calendar_show_keyword).trim());
   if (morning_sync_days != null) setSetting('morning_sync_days', String(parseInt(morning_sync_days, 10) || 90));
   res.json({ ok: true });
 }));

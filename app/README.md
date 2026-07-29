@@ -90,17 +90,58 @@ a missing credential is visible rather than silent.
   document and stores the returned id and number. An invoice that already exists in
   Morning is rejected with 409 rather than duplicated.
 
-### Google Calendar → shows
+### Google Calendar → shows and personal work
 
-`POST /api/integrations/calendar/sync` reads the configured calendar and upserts matching
-events into `band_events` on the calendar event id.
+Which events get drawn is configured in **Settings → אילו אירועים למשוך מהיומן** as a list
+of rules. Each rule reads one calendar and sends what it matches to one target, so band
+shows and personal freelance work can be filtered completely differently — and a second
+freelance client is another rule, not a code change.
 
-- Only events whose title or description contains the configured keyword (default `הופעה`)
-  are treated as shows.
-- **Financial columns are never written by the sync** — only venue, date and location. What
-  you enter in the app stays.
-- A show entered by hand is adopted by date rather than duplicated.
-- A cancelled calendar event is removed only while its row is still financially empty.
+| Field | Meaning |
+|-------|---------|
+| מזהה יומן | which calendar to read (`primary`, or a calendar id) |
+| מילות מפתח | drawn if any term appears in the title or description |
+| מיילים של מארגנים | drawn if the organiser is one of these — for events you were **invited** to |
+| מילות התעלמות | never drawn if any term appears; **overrides both include rules** |
+| דלג על אירועים שסירבת להם | skip events you declined in the calendar |
+| לקוח | personal rules only: which client the created works belong to |
+
+An event is included when a keyword matches **or** the organiser is listed. The organiser
+path exists because an invitation you didn't create often doesn't carry the keyword at
+all — a gig from `udi@karni-band.com` is just titled `קרניבנד חוליו איגלסיאס בפרדסיה`.
+Because that same organiser also sends rehearsals, ignore words are checked first and beat
+both include rules.
+
+**Terms are matched as substrings, so a shorter stem catches more word forms.** `חזר`
+matches both `חזרה` and `חזרת`; the full word `חזרה` would miss `חזרת אלטון`. The seeded
+defaults use stems for this reason.
+
+**Targets**
+
+- `band` → upserts into `band_events`. **Financial columns are never written by the sync**
+  — only venue, date and location. A show entered by hand is adopted by date rather than
+  duplicated.
+- `personal` → creates an unpaid **work** with amount 0 under the rule's client, ready for
+  you to price and invoice. An amount you entered is never overwritten, and once the work
+  has been invoiced the sync stops touching it entirely. A rule with no client creates
+  nothing and reports the events as skipped.
+
+A cancelled calendar event is removed only while its row still holds no money.
+
+**Preview before you trust it.** `POST /api/calendar-rules/:id/preview` (the
+**תצוגה מקדימה** button) is a dry run that writes nothing and lists every event in the
+window with the reason it was let in or left out — matched keyword, matched organiser,
+which ignore word caught it, or declined. Pass `:id` as `draft` with a `rule` body to try
+a rule that hasn't been saved yet.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/calendar-rules` | list rules |
+| `POST /api/calendar-rules` | create a rule |
+| `PUT /api/calendar-rules/:id` | update a rule |
+| `DELETE /api/calendar-rules/:id` | delete a rule |
+| `POST /api/calendar-rules/:id/preview` | dry run — what it would draw, and why |
+| `POST /api/integrations/calendar/sync` | run all enabled rules, or one via `rule_id` |
 
 ## External API (`/api/v1`)
 

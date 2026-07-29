@@ -166,6 +166,23 @@ CREATE TABLE IF NOT EXISTS band_general_expenses (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Which calendar events to draw, and where they land. One row per rule so a second
+-- freelance client (its own organizer, its own ignore words) is configuration, not code.
+CREATE TABLE IF NOT EXISTS calendar_rules (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  target TEXT NOT NULL CHECK (target IN ('band','personal')),
+  calendar_id TEXT NOT NULL DEFAULT 'primary',
+  keywords TEXT NOT NULL DEFAULT '',      -- comma separated; matched in title + description
+  organizers TEXT NOT NULL DEFAULT '',    -- comma separated emails; for events you were invited to
+  ignore_words TEXT NOT NULL DEFAULT '',  -- comma separated; wins over every include rule
+  client_name TEXT,                       -- personal target: which client the work belongs to
+  skip_declined INTEGER NOT NULL DEFAULT 1,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
@@ -181,6 +198,8 @@ function addColumnIfMissing(table: string, column: string, definition: string) {
 
 addColumnIfMissing('band_events', 'calendar_event_id', 'TEXT');
 addColumnIfMissing('band_events', 'location', 'TEXT');
+addColumnIfMissing('works', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('works', 'location', 'TEXT');
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing
@@ -196,6 +215,11 @@ for (const [name, sql] of [
     'idx_invoices_external',
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_external
        ON invoices(external_id) WHERE external_id IS NOT NULL`,
+  ],
+  [
+    'idx_works_calendar',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_works_calendar
+       ON works(calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
   ],
 ] as const) {
   try {
@@ -219,19 +243,41 @@ export function getVatPercent(): number {
   return parseFloat(getSetting('vat_percent', '18'));
 }
 
-/** Calendar the show sync reads from. Defaults to the owner's primary calendar. */
-export function getCalendarId(): string {
-  return getSetting('calendar_id', process.env.GOOGLE_CALENDAR_ID || 'primary');
-}
-
-/** Only calendar events whose title contains this word are treated as shows. */
-export function getShowKeyword(): string {
-  return getSetting('calendar_show_keyword', 'הופעה');
-}
-
 /** How far back each Morning pull looks, in days. */
 export function getMorningSyncDays(): number {
   return parseInt(getSetting('morning_sync_days', '90'), 10) || 90;
 }
+
+/**
+ * Gives a database with no rules a starting pair — one for band shows, one for personal
+ * gigs — carrying over whatever single-keyword configuration it had before. Runs on every
+ * boot rather than inside the seed, so a database created earlier gets them too.
+ */
+function seedDefaultCalendarRules() {
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM calendar_rules').get() as { n: number };
+  if (n > 0) return;
+
+  const calendarId = getSetting('calendar_id', process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const keyword = getSetting('calendar_show_keyword', 'הופעה');
+  const insert = db.prepare(
+    `INSERT INTO calendar_rules (id, name, target, calendar_id, keywords, organizers, ignore_words,
+       client_name, skip_declined, enabled, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  // Terms are matched as substrings, so the stem "חזר" catches both חזרה and חזרת —
+  // writing the full word would miss the construct form these invitations actually use.
+  const defaultIgnore = 'חזר, סאונדצ׳ק, מונטאז, מונטז, הקלט';
+  insert.run(
+    randomUUID(), 'הופעות להקה', 'band', calendarId, keyword, '', defaultIgnore, null, 1, 1, 0
+  );
+  // Starts disabled: a personal rule does nothing useful until an organizer or a client
+  // is filled in, and enabling it empty would draw in nothing anyway.
+  insert.run(
+    randomUUID(), 'עבודות פרטיות', 'personal', calendarId, '', '', `${defaultIgnore}, טיפול`,
+    null, 1, 0, 1
+  );
+}
+
+seedDefaultCalendarRules();
 
 export const uuid = () => randomUUID();

@@ -11,6 +11,14 @@
 const TOKEN_URL = process.env.GOOGLE_OAUTH_TOKEN_URL || 'https://oauth2.googleapis.com/token';
 const CALENDAR_API = process.env.GOOGLE_CALENDAR_API_URL || 'https://www.googleapis.com/calendar/v3';
 
+export interface CalendarAttendee {
+  email?: string;
+  displayName?: string;
+  organizer?: boolean;
+  self?: boolean;
+  responseStatus?: string; // 'accepted' | 'declined' | 'tentative' | 'needsAction'
+}
+
 export interface CalendarEvent {
   id: string;
   status?: string; // 'confirmed' | 'tentative' | 'cancelled'
@@ -19,6 +27,9 @@ export interface CalendarEvent {
   location?: string;
   start?: { date?: string; dateTime?: string; timeZone?: string };
   end?: { date?: string; dateTime?: string };
+  organizer?: { email?: string; displayName?: string; self?: boolean };
+  creator?: { email?: string; displayName?: string; self?: boolean };
+  attendees?: CalendarAttendee[];
   htmlLink?: string;
   recurringEventId?: string;
 }

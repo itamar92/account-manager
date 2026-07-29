@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { get, post, del } from '../api';
 import { Button, Card, Input, Modal, Empty } from '../ui';
+import { CalendarRules } from './CalendarRules';
 
 export function Settings() {
   const [data, setData] = useState<any>(null);
@@ -10,8 +11,6 @@ export function Settings() {
   const [userModal, setUserModal] = useState(false);
   const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'band' });
   const [vat, setVat] = useState('');
-  const [calendarId, setCalendarId] = useState('');
-  const [showKeyword, setShowKeyword] = useState('');
   const [syncing, setSyncing] = useState('');
   const [syncResult, setSyncResult] = useState('');
 
@@ -20,8 +19,6 @@ export function Settings() {
       .then((d) => {
         setData(d);
         setVat(String(d.settings.vat_percent));
-        setCalendarId(d.settings.calendar_id);
-        setShowKeyword(d.settings.calendar_show_keyword);
       })
       .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -36,18 +33,12 @@ export function Settings() {
       setSyncResult(
         which === 'morning'
           ? `Morning: ${r.fetched} מסמכים (${r.from} – ${r.to}) · ${r.created} חדשים · ${r.updated} עודכנו`
-          : `יומן: ${r.matched} הופעות מתוך ${r.fetched} אירועים · ${r.created} חדשות · ${r.updated} עודכנו · ${r.linked} שויכו`
+          : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
+            (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
       );
       load();
     } catch (err: any) { setError(err.message); }
     finally { setSyncing(''); }
-  };
-
-  const saveIntegrations = async () => {
-    try {
-      await post('/settings', { calendar_id: calendarId, calendar_show_keyword: showKeyword });
-      load();
-    } catch (err: any) { setError(err.message); }
   };
 
   const createKey = async (e: React.FormEvent) => {
@@ -96,7 +87,7 @@ export function Settings() {
         </p>
 
         {syncResult && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 mb-4 text-sm text-emerald-300">
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 mb-4 text-sm text-emerald-300 whitespace-pre-line">
             {syncResult}
           </div>
         )}
@@ -116,20 +107,15 @@ export function Settings() {
             configured={data.integrations.calendar.configured}
             missingHint="חסרים GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN"
             lastSync={data.integrations.calendar.last_sync}
-            detail={`${data.integrations.calendar.synced_events} הופעות מהיומן · מילת סינון: ${data.integrations.calendar.keyword}`}
+            detail={`${data.integrations.calendar.rules_enabled}/${data.integrations.calendar.rules_total} כללים פעילים · ${data.integrations.calendar.synced_events} הופעות · ${data.integrations.calendar.synced_works} עבודות`}
             busy={syncing === 'calendar'}
             onSync={() => runSync('calendar')}
           />
         </div>
 
-        <div className="grid gap-3 md:grid-cols-3 mt-4 pt-4 border-t border-slate-800">
-          <Input label="מזהה יומן" dir="ltr" value={calendarId} onChange={(e) => setCalendarId(e.target.value)} placeholder="primary" />
-          <Input label="מילת סינון להופעות" value={showKeyword} onChange={(e) => setShowKeyword(e.target.value)} placeholder="הופעה" />
-          <div className="flex items-end">
-            <Button variant="ghost" onClick={saveIntegrations}>שמירה</Button>
-          </div>
-        </div>
       </Card>
+
+      <CalendarRules rules={data.calendar_rules} onChange={load} onError={setError} />
 
       <Card>
         <div className="flex items-center justify-between mb-3">
