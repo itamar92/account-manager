@@ -178,6 +178,9 @@ CREATE TABLE IF NOT EXISTS calendar_rules (
   ignore_words TEXT NOT NULL DEFAULT '',  -- comma separated; wins over every include rule
   client_name TEXT,                       -- personal target: which client the work belongs to
   skip_declined INTEGER NOT NULL DEFAULT 1,
+  -- Off by default: descriptions hold running orders ("20:30 הופעה") that look like
+  -- keywords but say nothing about whose show it is.
+  match_description INTEGER NOT NULL DEFAULT 0,
   enabled INTEGER NOT NULL DEFAULT 1,
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -200,6 +203,7 @@ addColumnIfMissing('band_events', 'calendar_event_id', 'TEXT');
 addColumnIfMissing('band_events', 'location', 'TEXT');
 addColumnIfMissing('works', 'calendar_event_id', 'TEXT');
 addColumnIfMissing('works', 'location', 'TEXT');
+addColumnIfMissing('calendar_rules', 'match_description', 'INTEGER NOT NULL DEFAULT 0');
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing
@@ -264,6 +268,7 @@ function seedDefaultCalendarRules() {
        client_name, skip_declined, enabled, sort_order)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
+  // match_description stays at its column default (off).
   // Terms are matched as substrings, so the stem "חזר" catches both חזרה and חזרת —
   // writing the full word would miss the construct form these invitations actually use.
   const defaultIgnore = 'חזר, סאונדצ׳ק, מונטאז, מונטז, הקלט';

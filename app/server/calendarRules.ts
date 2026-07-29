@@ -11,6 +11,7 @@ export interface CalendarRule {
   ignore_words: string;
   client_name: string | null;
   skip_declined: number;
+  match_description: number;
   enabled: number;
   sort_order: number;
 }
@@ -37,8 +38,8 @@ export function createRule(input: RuleInput): CalendarRule {
   const id = uuid();
   db.prepare(
     `INSERT INTO calendar_rules (id, name, target, calendar_id, keywords, organizers, ignore_words,
-       client_name, skip_declined, enabled, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       client_name, skip_declined, match_description, enabled, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.name?.trim() || 'כלל חדש',
@@ -49,6 +50,7 @@ export function createRule(input: RuleInput): CalendarRule {
     input.ignore_words ?? '',
     input.client_name?.trim() || null,
     input.skip_declined ? 1 : 0,
+    input.match_description ? 1 : 0,
     input.enabled ? 1 : 0,
     input.sort_order ?? 0
   );
@@ -61,7 +63,7 @@ export function updateRule(id: string, input: RuleInput): CalendarRule {
   const merged = { ...existing, ...input };
   db.prepare(
     `UPDATE calendar_rules SET name = ?, target = ?, calendar_id = ?, keywords = ?, organizers = ?,
-       ignore_words = ?, client_name = ?, skip_declined = ?, enabled = ?, sort_order = ?
+       ignore_words = ?, client_name = ?, skip_declined = ?, match_description = ?, enabled = ?, sort_order = ?
      WHERE id = ?`
   ).run(
     String(merged.name).trim() || 'כלל חדש',
@@ -72,6 +74,7 @@ export function updateRule(id: string, input: RuleInput): CalendarRule {
     merged.ignore_words ?? '',
     merged.client_name ? String(merged.client_name).trim() : null,
     merged.skip_declined ? 1 : 0,
+    merged.match_description ? 1 : 0,
     merged.enabled ? 1 : 0,
     merged.sort_order ?? 0,
     id
@@ -87,9 +90,17 @@ export type MatchVerdict =
   | { matched: true; reason: 'keyword' | 'organizer'; term: string }
   | { matched: false; reason: 'ignored' | 'declined' | 'no-match' | 'cancelled'; term?: string };
 
-/** Everything a rule searches for text: the title and the description. */
-function haystack(event: CalendarEvent): string {
-  return `${event.summary || ''}\n${event.description || ''}`.toLowerCase();
+/**
+ * The text a rule searches.
+ *
+ * Titles only unless the rule opts in, because descriptions carry running orders like
+ * "20:30 הופעה" that contain the keyword while saying nothing about whose show it is.
+ */
+function haystack(rule: CalendarRule, event: CalendarEvent): string {
+  const text = rule.match_description
+    ? `${event.summary || ''}\n${event.description || ''}`
+    : event.summary || '';
+  return text.toLowerCase();
 }
 
 function organizerEmails(event: CalendarEvent): string[] {
@@ -114,7 +125,7 @@ function selfDeclined(event: CalendarEvent): boolean {
 export function evaluate(rule: CalendarRule, event: CalendarEvent): MatchVerdict {
   if (event.status === 'cancelled') return { matched: false, reason: 'cancelled' };
 
-  const text = haystack(event);
+  const text = haystack(rule, event);
 
   const ignoreWords = parseTerms(rule.ignore_words);
   for (const word of ignoreWords) {

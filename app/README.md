@@ -104,7 +104,13 @@ freelance client is another rule, not a code change.
 | מיילים של מארגנים | drawn if the organiser is one of these — for events you were **invited** to |
 | מילות התעלמות | never drawn if any term appears; **overrides both include rules** |
 | דלג על אירועים שסירבת להם | skip events you declined in the calendar |
+| חפש גם בתיאור האירוע | search the description too, not just the title (off by default) |
 | לקוח | personal rules only: which client the created works belong to |
+
+**Matching is title-only unless you opt in**, because descriptions carry running orders —
+`17:30-19:30 בלנס / 20:30 הופעה` — that contain the keyword while saying nothing about
+whose show it is. Against the real calendar, searching descriptions pulled four Karni Band
+gigs into the band rule.
 
 An event is included when a keyword matches **or** the organiser is listed. The organiser
 path exists because an invitation you didn't create often doesn't carry the keyword at

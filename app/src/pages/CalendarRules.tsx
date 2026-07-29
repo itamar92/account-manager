@@ -12,6 +12,7 @@ export interface Rule {
   ignore_words: string;
   client_name: string | null;
   skip_declined: number;
+  match_description: number;
   enabled: number;
   sort_order: number;
 }
@@ -166,14 +167,24 @@ export function CalendarRules({ rules, onChange, onError }: {
                   onChange={(e) => save(rule, { client_name: e.target.value })} placeholder="קרניבנד"
                 />
               )}
-              <label className="flex items-end gap-2 pb-2 text-sm text-slate-400">
-                <input
-                  type="checkbox" checked={!!rule.skip_declined}
-                  onChange={(e) => save(rule, { skip_declined: e.target.checked ? 1 : 0 })}
-                  className="w-4 h-4 accent-indigo-500"
-                />
-                דלג על אירועים שסירבת להם
-              </label>
+              <div className="flex flex-col justify-end gap-1.5 pb-2 text-sm text-slate-400">
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox" checked={!!rule.skip_declined}
+                    onChange={(e) => save(rule, { skip_declined: e.target.checked ? 1 : 0 })}
+                    className="w-4 h-4 accent-indigo-500"
+                  />
+                  דלג על אירועים שסירבת להם
+                </label>
+                <label className="flex items-center gap-2">
+                  <input
+                    type="checkbox" checked={!!rule.match_description}
+                    onChange={(e) => save(rule, { match_description: e.target.checked ? 1 : 0 })}
+                    className="w-4 h-4 accent-indigo-500"
+                  />
+                  <span>חפש גם בתיאור האירוע <span className="text-slate-600">(ולא רק בכותרת)</span></span>
+                </label>
+              </div>
             </div>
 
             {rule.target === 'personal' && !rule.client_name?.trim() && (

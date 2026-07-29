@@ -18,7 +18,7 @@ import {
 const DRAFT_RULE: CalendarRule = {
   id: 'draft', name: 'טיוטה', target: 'band', calendar_id: 'primary',
   keywords: '', organizers: '', ignore_words: '', client_name: null,
-  skip_declined: 1, enabled: 1, sort_order: 0,
+  skip_declined: 1, match_description: 0, enabled: 1, sort_order: 0,
 };
 
 export const router = Router();
