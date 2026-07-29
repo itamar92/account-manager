@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS band_events (
   id TEXT PRIMARY KEY,
   venue TEXT NOT NULL,
   date TEXT NOT NULL,
+  calendar_event_id TEXT,
+  location TEXT,
   tickets INTEGER NOT NULL DEFAULT 0,
   amount_pre_vat REAL NOT NULL DEFAULT 0,
   amount_with_vat REAL NOT NULL DEFAULT 0,
@@ -164,10 +166,85 @@ CREATE TABLE IF NOT EXISTS band_general_expenses (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Which calendar events to draw, and where they land. One row per rule so a second
+-- freelance client (its own organizer, its own ignore words) is configuration, not code.
+CREATE TABLE IF NOT EXISTS calendar_rules (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  target TEXT NOT NULL CHECK (target IN ('band','personal')),
+  calendar_id TEXT NOT NULL DEFAULT 'primary',
+  keywords TEXT NOT NULL DEFAULT '',      -- comma separated; matched in title + description
+  organizers TEXT NOT NULL DEFAULT '',    -- comma separated emails; for events you were invited to
+  ignore_words TEXT NOT NULL DEFAULT '',  -- comma separated; wins over every include rule
+  client_name TEXT,                       -- personal target: which client the work belongs to
+  skip_declined INTEGER NOT NULL DEFAULT 1,
+  -- Off by default: descriptions hold running orders ("20:30 הופעה") that look like
+  -- keywords but say nothing about whose show it is.
+  match_description INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Manual decisions about individual events, which beat whatever the rules say. Rules are
+-- patterns and will always be slightly wrong at the edges; this is the escape hatch that
+-- stops a re-sync from undoing a correction.
+CREATE TABLE IF NOT EXISTS calendar_event_overrides (
+  event_id TEXT PRIMARY KEY,
+  action TEXT NOT NULL CHECK (action IN ('exclude','include')),
+  rule_id TEXT,           -- 'include' only: which rule should draw it
+  summary TEXT,           -- kept so the overrides list is readable without the calendar
+  event_date TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
+
+// ---------- migrations for databases created before a column existed ----------
+function addColumnIfMissing(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+addColumnIfMissing('band_events', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('band_events', 'location', 'TEXT');
+addColumnIfMissing('works', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('works', 'location', 'TEXT');
+addColumnIfMissing('calendar_rules', 'match_description', 'INTEGER NOT NULL DEFAULT 0');
+
+// Both syncs upsert on these keys, so they must be unique — but only among synced rows,
+// which is why they are partial indexes rather than column constraints. A pre-existing
+// database with duplicates would fail to build the index; warn rather than refuse to boot,
+// since the syncs are optional and everything else still works.
+for (const [name, sql] of [
+  [
+    'idx_band_events_calendar',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_band_events_calendar
+       ON band_events(calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+  ],
+  [
+    'idx_invoices_external',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_external
+       ON invoices(external_id) WHERE external_id IS NOT NULL`,
+  ],
+  [
+    'idx_works_calendar',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_works_calendar
+       ON works(calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+  ],
+] as const) {
+  try {
+    db.exec(sql);
+  } catch (err) {
+    console.warn(`[db] could not create ${name} — duplicate keys present:`, (err as Error).message);
+  }
+}
 
 // ---------- settings helpers ----------
 export function getSetting(key: string, fallback: string): string {
@@ -182,5 +259,43 @@ export function setSetting(key: string, value: string) {
 export function getVatPercent(): number {
   return parseFloat(getSetting('vat_percent', '18'));
 }
+
+/** How far back each Morning pull looks, in days. */
+export function getMorningSyncDays(): number {
+  return parseInt(getSetting('morning_sync_days', '90'), 10) || 90;
+}
+
+/**
+ * Gives a database with no rules a starting pair — one for band shows, one for personal
+ * gigs — carrying over whatever single-keyword configuration it had before. Runs on every
+ * boot rather than inside the seed, so a database created earlier gets them too.
+ */
+function seedDefaultCalendarRules() {
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM calendar_rules').get() as { n: number };
+  if (n > 0) return;
+
+  const calendarId = getSetting('calendar_id', process.env.GOOGLE_CALENDAR_ID || 'primary');
+  const keyword = getSetting('calendar_show_keyword', 'הופעה');
+  const insert = db.prepare(
+    `INSERT INTO calendar_rules (id, name, target, calendar_id, keywords, organizers, ignore_words,
+       client_name, skip_declined, enabled, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  // match_description stays at its column default (off).
+  // Terms are matched as substrings, so the stem "חזר" catches both חזרה and חזרת —
+  // writing the full word would miss the construct form these invitations actually use.
+  const defaultIgnore = 'חזר, סאונדצ׳ק, מונטאז, מונטז, הקלט';
+  insert.run(
+    randomUUID(), 'הופעות להקה', 'band', calendarId, keyword, '', defaultIgnore, null, 1, 1, 0
+  );
+  // Starts disabled: a personal rule does nothing useful until an organizer or a client
+  // is filled in, and enabling it empty would draw in nothing anyway.
+  insert.run(
+    randomUUID(), 'עבודות פרטיות', 'personal', calendarId, '', '', `${defaultIgnore}, טיפול`,
+    null, 1, 0, 1
+  );
+}
+
+seedDefaultCalendarRules();
 
 export const uuid = () => randomUUID();

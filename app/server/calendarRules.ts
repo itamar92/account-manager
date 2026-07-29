@@ -1,0 +1,247 @@
+import { db, uuid } from './db.js';
+import type { CalendarEvent } from './calendarClient.js';
+
+export interface CalendarRule {
+  id: string;
+  name: string;
+  target: 'band' | 'personal';
+  calendar_id: string;
+  keywords: string;
+  organizers: string;
+  ignore_words: string;
+  client_name: string | null;
+  skip_declined: number;
+  match_description: number;
+  enabled: number;
+  sort_order: number;
+}
+
+/** Splits a comma/newline separated field into trimmed, non-empty terms. */
+export function parseTerms(raw: string | null | undefined): string[] {
+  return (raw || '')
+    .split(/[,\n]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+export function listRules(): CalendarRule[] {
+  return db.prepare('SELECT * FROM calendar_rules ORDER BY sort_order, created_at').all() as CalendarRule[];
+}
+
+export function getRule(id: string): CalendarRule | undefined {
+  return db.prepare('SELECT * FROM calendar_rules WHERE id = ?').get(id) as CalendarRule | undefined;
+}
+
+export type RuleInput = Partial<Omit<CalendarRule, 'id'>>;
+
+export function createRule(input: RuleInput): CalendarRule {
+  const id = uuid();
+  db.prepare(
+    `INSERT INTO calendar_rules (id, name, target, calendar_id, keywords, organizers, ignore_words,
+       client_name, skip_declined, match_description, enabled, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id,
+    input.name?.trim() || 'כלל חדש',
+    input.target === 'personal' ? 'personal' : 'band',
+    input.calendar_id?.trim() || 'primary',
+    input.keywords ?? '',
+    input.organizers ?? '',
+    input.ignore_words ?? '',
+    input.client_name?.trim() || null,
+    input.skip_declined ? 1 : 0,
+    input.match_description ? 1 : 0,
+    input.enabled ? 1 : 0,
+    input.sort_order ?? 0
+  );
+  return getRule(id)!;
+}
+
+export function updateRule(id: string, input: RuleInput): CalendarRule {
+  const existing = getRule(id);
+  if (!existing) throw Object.assign(new Error('rule not found'), { status: 404 });
+  const merged = { ...existing, ...input };
+  db.prepare(
+    `UPDATE calendar_rules SET name = ?, target = ?, calendar_id = ?, keywords = ?, organizers = ?,
+       ignore_words = ?, client_name = ?, skip_declined = ?, match_description = ?, enabled = ?, sort_order = ?
+     WHERE id = ?`
+  ).run(
+    String(merged.name).trim() || 'כלל חדש',
+    merged.target === 'personal' ? 'personal' : 'band',
+    String(merged.calendar_id).trim() || 'primary',
+    merged.keywords ?? '',
+    merged.organizers ?? '',
+    merged.ignore_words ?? '',
+    merged.client_name ? String(merged.client_name).trim() : null,
+    merged.skip_declined ? 1 : 0,
+    merged.match_description ? 1 : 0,
+    merged.enabled ? 1 : 0,
+    merged.sort_order ?? 0,
+    id
+  );
+  return getRule(id)!;
+}
+
+export function deleteRule(id: string) {
+  db.prepare('DELETE FROM calendar_rules WHERE id = ?').run(id);
+}
+
+export type MatchVerdict =
+  | { matched: true; reason: 'keyword' | 'organizer' | 'manual'; term: string }
+  | { matched: false; reason: 'ignored' | 'declined' | 'no-match' | 'cancelled' | 'manual'; term?: string };
+
+// ---------- manual per-event overrides ----------
+
+export interface EventOverride {
+  event_id: string;
+  action: 'exclude' | 'include';
+  rule_id: string | null;
+  summary: string | null;
+  event_date: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export function listOverrides(): EventOverride[] {
+  return db
+    .prepare('SELECT * FROM calendar_event_overrides ORDER BY event_date, created_at')
+    .all() as EventOverride[];
+}
+
+/** Overrides keyed by event id, for the sync and preview loops. */
+export function overrideMap(): Map<string, EventOverride> {
+  return new Map(listOverrides().map((o) => [o.event_id, o]));
+}
+
+export function setOverride(input: {
+  event_id: string;
+  action: 'exclude' | 'include';
+  rule_id?: string | null;
+  summary?: string | null;
+  event_date?: string | null;
+  note?: string | null;
+}): EventOverride {
+  if (!input.event_id) throw Object.assign(new Error('event_id is required'), { status: 400 });
+  if (input.action !== 'exclude' && input.action !== 'include')
+    throw Object.assign(new Error('action must be exclude or include'), { status: 400 });
+  if (input.action === 'include' && !input.rule_id)
+    throw Object.assign(new Error('include צריך לציין כלל'), { status: 400 });
+
+  db.prepare(
+    `INSERT INTO calendar_event_overrides (event_id, action, rule_id, summary, event_date, note)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(event_id) DO UPDATE SET
+       action = excluded.action, rule_id = excluded.rule_id,
+       summary = COALESCE(excluded.summary, calendar_event_overrides.summary),
+       event_date = COALESCE(excluded.event_date, calendar_event_overrides.event_date),
+       note = excluded.note`
+  ).run(
+    input.event_id,
+    input.action,
+    input.action === 'include' ? input.rule_id ?? null : null,
+    input.summary ?? null,
+    input.event_date ?? null,
+    input.note ?? null
+  );
+  return db
+    .prepare('SELECT * FROM calendar_event_overrides WHERE event_id = ?')
+    .get(input.event_id) as EventOverride;
+}
+
+export function deleteOverride(eventId: string) {
+  db.prepare('DELETE FROM calendar_event_overrides WHERE event_id = ?').run(eventId);
+}
+
+/**
+ * The text a rule searches.
+ *
+ * Titles only unless the rule opts in, because descriptions carry running orders like
+ * "20:30 הופעה" that contain the keyword while saying nothing about whose show it is.
+ */
+function haystack(rule: CalendarRule, event: CalendarEvent): string {
+  const text = rule.match_description
+    ? `${event.summary || ''}\n${event.description || ''}`
+    : event.summary || '';
+  return text.toLowerCase();
+}
+
+function organizerEmails(event: CalendarEvent): string[] {
+  const emails = [event.organizer?.email, event.creator?.email];
+  for (const a of event.attendees ?? []) if (a.organizer && a.email) emails.push(a.email);
+  return emails.filter(Boolean).map((e) => e!.toLowerCase());
+}
+
+/** True when the invitee themselves turned this event down. */
+function selfDeclined(event: CalendarEvent): boolean {
+  return (event.attendees ?? []).some((a) => a.self && a.responseStatus === 'declined');
+}
+
+/**
+ * Decides whether one event is drawn by one rule, and says why.
+ *
+ * A manual override on the event wins over everything — rules are patterns and will always
+ * be wrong at the edges, so a correction must survive the next sync.
+ *
+ * Otherwise an event is included when a keyword matches **or** the organiser is listed. The
+ * second path exists because events you were invited to rather than created often don't
+ * carry the keyword at all. Ignore words are checked before both, which is what makes a
+ * single organiser usable when they send both gigs and rehearsals.
+ */
+export function evaluate(
+  rule: CalendarRule,
+  event: CalendarEvent,
+  overrides?: Map<string, EventOverride>
+): MatchVerdict {
+  if (event.status === 'cancelled') return { matched: false, reason: 'cancelled' };
+
+  const override = overrides?.get(event.id);
+  if (override) {
+    if (override.action === 'exclude') return { matched: false, reason: 'manual', term: 'הוסר ידנית' };
+    if (override.rule_id === rule.id) return { matched: true, reason: 'manual', term: 'נוסף ידנית' };
+    // An include pinned to another rule must not leak into this one.
+    return { matched: false, reason: 'manual', term: 'שויך לכלל אחר' };
+  }
+
+  const text = haystack(rule, event);
+
+  const ignoreWords = parseTerms(rule.ignore_words);
+  for (const word of ignoreWords) {
+    if (text.includes(word.toLowerCase())) return { matched: false, reason: 'ignored', term: word };
+  }
+
+  if (rule.skip_declined && selfDeclined(event)) return { matched: false, reason: 'declined' };
+
+  const keywords = parseTerms(rule.keywords);
+  for (const word of keywords) {
+    if (text.includes(word.toLowerCase())) return { matched: true, reason: 'keyword', term: word };
+  }
+
+  const organizers = parseTerms(rule.organizers).map((o) => o.toLowerCase());
+  if (organizers.length) {
+    const emails = organizerEmails(event);
+    for (const organizer of organizers) {
+      if (emails.includes(organizer)) return { matched: true, reason: 'organizer', term: organizer };
+    }
+  }
+
+  return { matched: false, reason: 'no-match' };
+}
+
+/**
+ * Strips the term that matched off the front of a title so the stored name reads naturally:
+ * "הופעה קולדפליי זאפה חיפה" becomes "קולדפליי זאפה חיפה". Only a leading occurrence is
+ * removed — "בכורה הופעה MADONNA" keeps its shape.
+ */
+export function cleanTitle(event: CalendarEvent, verdict: MatchVerdict): string {
+  const summary = (event.summary || '').trim();
+  if (!summary) return 'אירוע';
+  if (verdict.matched && verdict.reason === 'keyword') {
+    const stripped = summary.replace(new RegExp(`^\\s*${escapeRegExp(verdict.term)}\\s*`, 'i'), '').trim();
+    return stripped || summary;
+  }
+  return summary;
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

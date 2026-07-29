@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { db, uuid, hashPassword, getSetting, setSetting } from './db.js';
+import { DOC_TYPE, DOC_TYPE_LABELS, isRevenueDoc } from './docTypes.js';
 import { MOONLIGHT_INCOME, MOONLIGHT_EVENT_EXPENSES, MOONLIGHT_GENERAL_EXPENSES } from './moonlightSeed.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -74,22 +75,35 @@ export function runSeed() {
         `INSERT INTO invoices (id, number, doc_type, client_id, date, due_date, subtotal, vat_amount, total, status, external_id, source)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'green_invoice_import')`
       );
+      // Every invoice line is a work row, including imported history — the CSV carries no
+      // line detail, so each imported document gets a single work covering its full amount.
+      const insertWork = db.prepare(
+        `INSERT INTO works (id, client_id, date, description, amount, vat_amount, total, status, invoice_id, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'green_invoice_import')`
+      );
       for (const r of rows.slice(1)) {
         const total = parseFloat(r[col('amount_ils')]) || 0;
         const subtotal = Math.round((total / 1.18) * 100) / 100;
+        const vat = Math.round((total - subtotal) * 100) / 100;
+        const docType = parseInt(r[col('type')]) || DOC_TYPE.TAX_INVOICE;
+        const clientId = getClient(r[col('client')]);
+        const status = r[col('status')] === '1' ? 'paid' : 'issued';
+        const date = r[col('date')];
+        const invoiceId = uuid();
+
         insertInvoice.run(
-          uuid(),
-          r[col('number')],
-          parseInt(r[col('type')]) || 320,
-          getClient(r[col('client')]),
-          r[col('date')],
-          r[col('due')] || null,
-          subtotal,
-          Math.round((total - subtotal) * 100) / 100,
-          total,
-          r[col('status')] === '1' ? 'paid' : 'issued',
-          r[col('id')] || null
+          invoiceId, r[col('number')], docType, clientId, date, r[col('due')] || null,
+          subtotal, vat, total, status, r[col('id')] || null
         );
+
+        // Proformas (חשבון עסקה) mirror a sale that a tax invoice also records. Giving them
+        // works too would double-count the sale in every works-based total.
+        if (isRevenueDoc(docType)) {
+          insertWork.run(
+            uuid(), clientId, date, `${DOC_TYPE_LABELS[docType] ?? 'מסמך'} #${r[col('number')]}`,
+            subtotal, vat, total, status === 'paid' ? 'paid' : 'invoiced', invoiceId
+          );
+        }
       }
     }
 

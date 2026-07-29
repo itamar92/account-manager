@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { get, post, del } from '../api';
 import { Button, Card, Input, Modal, Empty } from '../ui';
+import { CalendarRules } from './CalendarRules';
 
 export function Settings() {
   const [data, setData] = useState<any>(null);
@@ -10,9 +11,35 @@ export function Settings() {
   const [userModal, setUserModal] = useState(false);
   const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'band' });
   const [vat, setVat] = useState('');
+  const [syncing, setSyncing] = useState('');
+  const [syncResult, setSyncResult] = useState('');
 
-  const load = () => get('/settings').then((d) => { setData(d); setVat(String(d.settings.vat_percent)); }).catch((e) => setError(e.message));
+  const load = () =>
+    get('/settings')
+      .then((d) => {
+        setData(d);
+        setVat(String(d.settings.vat_percent));
+      })
+      .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
+
+  const runSync = async (which: 'morning' | 'calendar') => {
+    setSyncing(which);
+    setError('');
+    setSyncResult('');
+    try {
+      const d = await post(`/integrations/${which}/sync`);
+      const r = d.result;
+      setSyncResult(
+        which === 'morning'
+          ? `Morning: ${r.fetched} מסמכים (${r.from} – ${r.to}) · ${r.created} חדשים · ${r.updated} עודכנו`
+          : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
+            (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
+      );
+      load();
+    } catch (err: any) { setError(err.message); }
+    finally { setSyncing(''); }
+  };
 
   const createKey = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,6 +79,43 @@ export function Settings() {
           <Button variant="ghost" onClick={saveVat}>שמירה</Button>
         </div>
       </Card>
+
+      <Card>
+        <h2 className="font-bold mb-1">חיבורים</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. ההגדרה עצמה (מפתחות) נמצאת בקובץ <code dir="ltr" className="text-indigo-300">.env</code>
+        </p>
+
+        {syncResult && (
+          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 mb-4 text-sm text-emerald-300 whitespace-pre-line">
+            {syncResult}
+          </div>
+        )}
+
+        <div className="grid gap-3 md:grid-cols-2">
+          <IntegrationRow
+            title="Morning (חשבונית ירוקה)"
+            configured={data.integrations.morning.configured}
+            missingHint="חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET"
+            lastSync={data.integrations.morning.last_sync}
+            detail={`${data.integrations.morning.synced_invoices} מסמכים מסונכרנים · טווח ${data.integrations.morning.sync_days} ימים`}
+            busy={syncing === 'morning'}
+            onSync={() => runSync('morning')}
+          />
+          <IntegrationRow
+            title="Google Calendar — הופעות"
+            configured={data.integrations.calendar.configured}
+            missingHint="חסרים GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN"
+            lastSync={data.integrations.calendar.last_sync}
+            detail={`${data.integrations.calendar.rules_enabled}/${data.integrations.calendar.rules_total} כללים פעילים · ${data.integrations.calendar.synced_events} הופעות · ${data.integrations.calendar.synced_works} עבודות`}
+            busy={syncing === 'calendar'}
+            onSync={() => runSync('calendar')}
+          />
+        </div>
+
+      </Card>
+
+      <CalendarRules onChange={load} onError={setError} />
 
       <Card>
         <div className="flex items-center justify-between mb-3">
@@ -130,6 +194,40 @@ export function Settings() {
           <Button type="submit" className="w-full">יצירה</Button>
         </form>
       </Modal>
+    </div>
+  );
+}
+
+function IntegrationRow({
+  title, configured, missingHint, lastSync, detail, busy, onSync,
+}: {
+  title: string;
+  configured: boolean;
+  missingHint: string;
+  lastSync: string | null;
+  detail: string;
+  busy: boolean;
+  onSync: () => void;
+}) {
+  return (
+    <div className="bg-slate-800/40 border border-slate-800 rounded-xl p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full shrink-0 ${configured ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+            <span className="font-medium truncate">{title}</span>
+          </div>
+          <div className="text-xs text-slate-500 mt-1">
+            {configured ? detail : missingHint}
+          </div>
+          <div className="text-xs text-slate-600 mt-0.5">
+            {lastSync ? `סנכרון אחרון: ${new Date(lastSync).toLocaleString('he-IL')}` : 'טרם סונכרן'}
+          </div>
+        </div>
+        <Button variant="ghost" onClick={onSync} disabled={!configured || busy}>
+          {busy ? 'מסנכרן…' : 'סנכרון'}
+        </Button>
+      </div>
     </div>
   );
 }
