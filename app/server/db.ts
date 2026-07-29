@@ -186,6 +186,19 @@ CREATE TABLE IF NOT EXISTS calendar_rules (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Manual decisions about individual events, which beat whatever the rules say. Rules are
+-- patterns and will always be slightly wrong at the edges; this is the escape hatch that
+-- stops a re-sync from undoing a correction.
+CREATE TABLE IF NOT EXISTS calendar_event_overrides (
+  event_id TEXT PRIMARY KEY,
+  action TEXT NOT NULL CHECK (action IN ('exclude','include')),
+  rule_id TEXT,           -- 'include' only: which rule should draw it
+  summary TEXT,           -- kept so the overrides list is readable without the calendar
+  event_date TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);

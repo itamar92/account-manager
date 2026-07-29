@@ -1,7 +1,7 @@
 import { db, uuid, getVatPercent, setSetting, getSetting } from './db.js';
 import { eventDate, isCalendarConfigured, listEvents, type CalendarEvent } from './calendarClient.js';
 import {
-  cleanTitle, evaluate, listRules, type CalendarRule, type MatchVerdict,
+  cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
 } from './calendarRules.js';
 
 export interface RuleSyncResult {
@@ -180,6 +180,7 @@ export async function pullShowsFromCalendar(
     (r) => r.enabled && (!options.ruleId || r.id === options.ruleId)
   );
   const byCalendar = await fetchCalendars(rules, monthsBack, monthsAhead);
+  const overrides = overrideMap();
   const results: RuleSyncResult[] = [];
 
   for (const rule of rules) {
@@ -203,13 +204,20 @@ export async function pullShowsFromCalendar(
 
         // A cancelled event still has to be evaluated, so a rule only cleans up its own rows.
         if (event.status === 'cancelled') {
-          const wouldMatch = evaluate({ ...rule, skip_declined: 0 }, { ...event, status: 'confirmed' });
+          const wouldMatch = evaluate(
+            { ...rule, skip_declined: 0 }, { ...event, status: 'confirmed' }, overrides
+          );
           if (wouldMatch.matched) applyCancellation(event, rule, tally);
           continue;
         }
 
-        const verdict = evaluate(rule, event);
-        if (!verdict.matched) continue;
+        const verdict = evaluate(rule, event, overrides);
+        if (!verdict.matched) {
+          // An event excluded after it was already drawn should lose its row, so the
+          // correction takes effect without hunting the row down by hand.
+          if (verdict.reason === 'manual') applyCancellation(event, rule, tally);
+          continue;
+        }
         tally.matched++;
 
         const title = cleanTitle(event, verdict);
@@ -255,13 +263,14 @@ export async function previewRule(
 ): Promise<{ fetched: number; matched: number; rows: PreviewRow[] }> {
   const { timeMin, timeMax } = windowBounds(options.monthsBack ?? 3, options.monthsAhead ?? 12);
   const events = await listEvents({ calendarId: rule.calendar_id, timeMin, timeMax });
+  const overrides = overrideMap();
 
   const rows: PreviewRow[] = [];
   let matched = 0;
   for (const event of events) {
     const date = eventDate(event);
     if (!date) continue;
-    const verdict: MatchVerdict = evaluate(rule, event);
+    const verdict: MatchVerdict = evaluate(rule, event, overrides);
     if (verdict.matched) matched++;
     else if (!options.includeMisses) continue;
 

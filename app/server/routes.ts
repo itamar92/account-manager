@@ -11,8 +11,34 @@ import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes
 import { morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
 import { calendarStatus, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
-  createRule, deleteRule, getRule, listRules, updateRule, type CalendarRule,
+  createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
+  updateRule, type CalendarRule,
 } from './calendarRules.js';
+import { listCalendars } from './calendarClient.js';
+
+/**
+ * Drops the rows a calendar event produced, so excluding it takes effect at once.
+ * Rows carrying money are left alone — an exclusion is a filtering decision, not a
+ * licence to delete bookkeeping.
+ */
+function removeRowsForEvent(eventId: string): number {
+  let removed = 0;
+  const event = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(eventId) as any;
+  if (event) {
+    const moneyFields = ['tickets', 'amount_pre_vat', 'amount_with_vat', 'expenses', 'expenses_paid',
+      'profit', 'commission_amount', 'amir', 'itamar', 'yuval', 'guy'];
+    if (moneyFields.every((f) => !Number(event[f]))) {
+      db.prepare('DELETE FROM band_events WHERE id = ?').run(event.id);
+      removed++;
+    }
+  }
+  const work = db.prepare('SELECT * FROM works WHERE calendar_event_id = ?').get(eventId) as any;
+  if (work && work.status === 'unpaid' && !Number(work.amount)) {
+    db.prepare('DELETE FROM works WHERE id = ?').run(work.id);
+    removed++;
+  }
+  return removed;
+}
 
 /** Stand-in used when previewing a rule that has not been saved yet. */
 const DRAFT_RULE: CalendarRule = {
@@ -319,9 +345,14 @@ router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req,
   res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
 }));
 
+/** The calendars this account can read, for the rule's calendar picker. */
+router.get('/integrations/calendar/calendars', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ calendars: await listCalendars() });
+}));
+
 // ---- calendar rules: which events to draw, for band and for personal ----
 router.get('/calendar-rules', requireOwner, handle((_req, res) => {
-  res.json({ rules: listRules() });
+  res.json({ rules: listRules(), overrides: listOverrides() });
 }));
 
 router.post('/calendar-rules', requireOwner, handle((req, res) => {
@@ -334,6 +365,28 @@ router.put('/calendar-rules/:id', requireOwner, handle((req, res) => {
 
 router.delete('/calendar-rules/:id', requireOwner, handle((req, res) => {
   deleteRule(req.params.id);
+  res.json({ ok: true });
+}));
+
+// ---- manual per-event decisions, which beat the rules ----
+router.get('/calendar-overrides', requireOwner, handle((_req, res) => {
+  res.json({ overrides: listOverrides() });
+}));
+
+/**
+ * Pins one event: `exclude` stops any rule drawing it, `include` forces `rule_id` to draw
+ * it. Excluding also removes the row it already produced, so the correction is immediate
+ * rather than waiting for the next sync — but never a row that already holds money.
+ */
+router.post('/calendar-overrides', requireOwner, handle((req, res) => {
+  const override = setOverride(req.body || {});
+  let removed = 0;
+  if (override.action === 'exclude') removed = removeRowsForEvent(override.event_id);
+  res.json({ override, removed });
+}));
+
+router.delete('/calendar-overrides/:eventId', requireOwner, handle((req, res) => {
+  deleteOverride(req.params.eventId);
   res.json({ ok: true });
 }));
 

@@ -40,6 +40,25 @@ export function Moonlight() {
     finally { setSyncing(false); }
   };
 
+  /**
+   * Marks a synced event as "not a show". The decision is stored against the calendar
+   * event, so the next sync will not pull it back in.
+   */
+  const excludeFromCalendar = async (event: any) => {
+    if (!confirm(`לסמן «${event.venue}» כלא-הופעה? האירוע לא יימשך שוב מהיומן.`)) return;
+    setError('');
+    try {
+      const d = await post('/calendar-overrides', {
+        event_id: event.calendar_event_id,
+        action: 'exclude',
+        summary: event.venue,
+        event_date: event.date,
+      });
+      if (!d.removed) setError('האירוע לא יימשך שוב, אבל השורה נשמרה כי יש בה נתונים כספיים — מחק אותה ידנית אם צריך.');
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
   const saveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     const b = eventModal;
@@ -139,8 +158,17 @@ export function Moonlight() {
                   <td className="px-3 py-2.5 text-rose-400">{nis(e.expenses)}</td>
                   <td className={clsx('px-3 py-2.5 font-medium', e.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}>{nis(e.profit)}</td>
                   <td className="px-3 py-2.5">{e.paid_to_musicians ? '✓' : '—'}</td>
-                  <td className="px-3 py-2.5 text-left">
-                    {isOwner && <button onClick={() => setEventModal({ ...e })} className="text-sm text-indigo-400 hover:underline">עריכה</button>}
+                  <td className="px-3 py-2.5 text-left whitespace-nowrap">
+                    {isOwner && (
+                      <div className="flex gap-2 justify-end">
+                        <button onClick={() => setEventModal({ ...e })} className="text-sm text-indigo-400 hover:underline">עריכה</button>
+                        {e.calendar_event_id && (
+                          <button onClick={() => excludeFromCalendar(e)} className="text-sm text-rose-400 hover:underline">
+                            לא הופעה
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

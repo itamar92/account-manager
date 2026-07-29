@@ -87,8 +87,70 @@ export function deleteRule(id: string) {
 }
 
 export type MatchVerdict =
-  | { matched: true; reason: 'keyword' | 'organizer'; term: string }
-  | { matched: false; reason: 'ignored' | 'declined' | 'no-match' | 'cancelled'; term?: string };
+  | { matched: true; reason: 'keyword' | 'organizer' | 'manual'; term: string }
+  | { matched: false; reason: 'ignored' | 'declined' | 'no-match' | 'cancelled' | 'manual'; term?: string };
+
+// ---------- manual per-event overrides ----------
+
+export interface EventOverride {
+  event_id: string;
+  action: 'exclude' | 'include';
+  rule_id: string | null;
+  summary: string | null;
+  event_date: string | null;
+  note: string | null;
+  created_at: string;
+}
+
+export function listOverrides(): EventOverride[] {
+  return db
+    .prepare('SELECT * FROM calendar_event_overrides ORDER BY event_date, created_at')
+    .all() as EventOverride[];
+}
+
+/** Overrides keyed by event id, for the sync and preview loops. */
+export function overrideMap(): Map<string, EventOverride> {
+  return new Map(listOverrides().map((o) => [o.event_id, o]));
+}
+
+export function setOverride(input: {
+  event_id: string;
+  action: 'exclude' | 'include';
+  rule_id?: string | null;
+  summary?: string | null;
+  event_date?: string | null;
+  note?: string | null;
+}): EventOverride {
+  if (!input.event_id) throw Object.assign(new Error('event_id is required'), { status: 400 });
+  if (input.action !== 'exclude' && input.action !== 'include')
+    throw Object.assign(new Error('action must be exclude or include'), { status: 400 });
+  if (input.action === 'include' && !input.rule_id)
+    throw Object.assign(new Error('include צריך לציין כלל'), { status: 400 });
+
+  db.prepare(
+    `INSERT INTO calendar_event_overrides (event_id, action, rule_id, summary, event_date, note)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(event_id) DO UPDATE SET
+       action = excluded.action, rule_id = excluded.rule_id,
+       summary = COALESCE(excluded.summary, calendar_event_overrides.summary),
+       event_date = COALESCE(excluded.event_date, calendar_event_overrides.event_date),
+       note = excluded.note`
+  ).run(
+    input.event_id,
+    input.action,
+    input.action === 'include' ? input.rule_id ?? null : null,
+    input.summary ?? null,
+    input.event_date ?? null,
+    input.note ?? null
+  );
+  return db
+    .prepare('SELECT * FROM calendar_event_overrides WHERE event_id = ?')
+    .get(input.event_id) as EventOverride;
+}
+
+export function deleteOverride(eventId: string) {
+  db.prepare('DELETE FROM calendar_event_overrides WHERE event_id = ?').run(eventId);
+}
 
 /**
  * The text a rule searches.
@@ -117,13 +179,28 @@ function selfDeclined(event: CalendarEvent): boolean {
 /**
  * Decides whether one event is drawn by one rule, and says why.
  *
- * An event is included when a keyword matches **or** the organiser is listed — the second
- * path exists because events you were invited to rather than created often don't carry the
- * keyword at all. Ignore words are checked first and override both, which is what makes a
+ * A manual override on the event wins over everything — rules are patterns and will always
+ * be wrong at the edges, so a correction must survive the next sync.
+ *
+ * Otherwise an event is included when a keyword matches **or** the organiser is listed. The
+ * second path exists because events you were invited to rather than created often don't
+ * carry the keyword at all. Ignore words are checked before both, which is what makes a
  * single organiser usable when they send both gigs and rehearsals.
  */
-export function evaluate(rule: CalendarRule, event: CalendarEvent): MatchVerdict {
+export function evaluate(
+  rule: CalendarRule,
+  event: CalendarEvent,
+  overrides?: Map<string, EventOverride>
+): MatchVerdict {
   if (event.status === 'cancelled') return { matched: false, reason: 'cancelled' };
+
+  const override = overrides?.get(event.id);
+  if (override) {
+    if (override.action === 'exclude') return { matched: false, reason: 'manual', term: 'הוסר ידנית' };
+    if (override.rule_id === rule.id) return { matched: true, reason: 'manual', term: 'נוסף ידנית' };
+    // An include pinned to another rule must not leak into this one.
+    return { matched: false, reason: 'manual', term: 'שויך לכלל אחר' };
+  }
 
   const text = haystack(rule, event);
 

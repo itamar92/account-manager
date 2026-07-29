@@ -115,7 +115,7 @@ export function Settings() {
 
       </Card>
 
-      <CalendarRules rules={data.calendar_rules} onChange={load} onError={setError} />
+      <CalendarRules onChange={load} onError={setError} />
 
       <Card>
         <div className="flex items-center justify-between mb-3">

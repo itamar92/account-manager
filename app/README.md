@@ -99,7 +99,7 @@ freelance client is another rule, not a code change.
 
 | Field | Meaning |
 |-------|---------|
-| מזהה יומן | which calendar to read (`primary`, or a calendar id) |
+| יומן | which calendar to read — a dropdown of the account's calendars, falling back to a free-text id when Google is not configured |
 | מילות מפתח | drawn if any term appears in the title or description |
 | מיילים של מארגנים | drawn if the organiser is one of these — for events you were **invited** to |
 | מילות התעלמות | never drawn if any term appears; **overrides both include rules** |
@@ -139,6 +139,34 @@ A cancelled calendar event is removed only while its row still holds no money.
 window with the reason it was let in or left out — matched keyword, matched organiser,
 which ignore word caught it, or declined. Pass `:id` as `draft` with a `rule` body to try
 a rule that hasn't been saved yet.
+
+Everything about a rule is editable while the app runs, and a change takes effect on the
+next preview or sync. Deciding that Karni Band rehearsals are billable after all is just
+clearing `חזר` out of that rule's ignore words — no redeploy, no migration.
+
+### Manual overrides — when a rule gets one wrong
+
+Rules are patterns, so they will always be slightly wrong at the edges. Any single event
+can be pinned by hand, and **a manual decision beats every rule**:
+
+- **אל תמשוך / לא הופעה / לא עבודה** — never draw this event again. Available on a preview
+  row, on a synced show in Moonlight, and on a synced work in the works list.
+- **משוך בכל זאת** — always draw this event for this rule, whatever the keywords say. Pinned
+  to one rule, so it cannot leak into another.
+
+Excluding also deletes the row the event already produced — **unless that row holds money**,
+in which case the row is kept and the UI says so. An exclusion is a filtering decision, not
+a licence to delete bookkeeping.
+
+Overrides survive re-syncs (that is the point) and are listed under **החלטות ידניות** in
+Settings, each with an undo.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/integrations/calendar/calendars` | the account's calendars, for the picker |
+| `GET /api/calendar-overrides` | list manual decisions |
+| `POST /api/calendar-overrides` | pin an event `{event_id, action: exclude\|include, rule_id?}` |
+| `DELETE /api/calendar-overrides/:eventId` | undo a manual decision |
 
 | Endpoint | Description |
 |----------|-------------|

@@ -61,6 +61,26 @@ export function Works() {
     try { await del(`/works/${id}`); load(); } catch (err: any) { setError(err.message); }
   };
 
+  /**
+   * Marks a work the calendar sync created as "not billable work". Plain deletion would
+   * not stick — the next sync would draw the event again — so the decision is stored
+   * against the calendar event itself.
+   */
+  const excludeFromCalendar = async (work: any) => {
+    if (!confirm(`לסמן «${work.description}» כלא-עבודה? האירוע לא יימשך שוב מהיומן.`)) return;
+    setError('');
+    try {
+      const d = await post('/calendar-overrides', {
+        event_id: work.calendar_event_id,
+        action: 'exclude',
+        summary: work.description,
+        event_date: work.date,
+      });
+      if (!d.removed) setError('האירוע לא יימשך שוב, אבל השורה נשמרה כי כבר יש בה סכום — מחק אותה ידנית אם צריך.');
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -114,9 +134,15 @@ export function Works() {
                   <StatusBadge status={w.status} />
                   {w.invoice_number && <span className="text-xs text-slate-500 mr-1">#{w.invoice_number}</span>}
                 </td>
-                <td className="px-3 py-2.5 text-left">
+                <td className="px-3 py-2.5 text-left whitespace-nowrap">
                   {w.status === 'unpaid' && (
-                    <button onClick={(e) => { e.stopPropagation(); removeWork(w.id); }} className="text-xs text-rose-400 hover:underline">מחיקה</button>
+                    <div className="flex gap-2 justify-end">
+                      {w.calendar_event_id && (
+                        <button onClick={(e) => { e.stopPropagation(); excludeFromCalendar(w); }}
+                          className="text-xs text-amber-400 hover:underline">לא עבודה</button>
+                      )}
+                      <button onClick={(e) => { e.stopPropagation(); removeWork(w.id); }} className="text-xs text-rose-400 hover:underline">מחיקה</button>
+                    </div>
                   )}
                 </td>
               </tr>

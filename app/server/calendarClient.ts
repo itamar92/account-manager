@@ -128,6 +128,48 @@ export function eventDate(event: CalendarEvent): string | null {
   return raw ? raw.slice(0, 10) : null;
 }
 
+export interface CalendarSummary {
+  id: string;
+  summary: string;
+  description?: string;
+  primary?: boolean;
+  accessRole?: string;
+  backgroundColor?: string;
+}
+
+/** Every calendar the account can read — used to populate the rule's calendar picker. */
+export async function listCalendars(): Promise<CalendarSummary[]> {
+  const token = await getAccessToken();
+  const calendars: CalendarSummary[] = [];
+  let pageToken: string | undefined;
+
+  for (let page = 0; page < 10; page++) {
+    const params = new URLSearchParams({
+      minAccessRole: 'reader',
+      maxResults: '250',
+      ...(pageToken ? { pageToken } : {}),
+    });
+    const res = await fetch(`${CALENDAR_API}/users/me/calendarList?${params}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 401) {
+      resetTokenCache();
+      throw new CalendarError('Google rejected the access token (401)');
+    }
+    if (!res.ok) throw new CalendarError(`Google calendarList failed (${res.status}): ${await res.text()}`);
+
+    const body = (await res.json()) as { items?: CalendarSummary[]; nextPageToken?: string };
+    calendars.push(...(body.items ?? []));
+    if (!body.nextPageToken) break;
+    pageToken = body.nextPageToken;
+  }
+  // Primary first, then alphabetical — the primary calendar is the common choice.
+  return calendars.sort((a, b) =>
+    Number(Boolean(b.primary)) - Number(Boolean(a.primary)) ||
+    (a.summary || '').localeCompare(b.summary || '')
+  );
+}
+
 /** Cheap connectivity probe — refreshes the token without reading any events. */
 export async function ping(): Promise<boolean> {
   await getAccessToken();
