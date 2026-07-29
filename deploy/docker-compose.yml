@@ -1,0 +1,39 @@
+# Account Manager on an Oracle Always Free VM, exposed through a Cloudflare Tunnel.
+#
+# The app never binds a public port. cloudflared opens an outbound-only connection
+# to Cloudflare and forwards requests to app:3000 over the private compose network,
+# so the VM needs no ingress rules, no public IP and no TLS certificate of its own.
+#
+#   cd deploy && cp .env.example .env && $EDITOR .env && docker compose up -d --build
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: account-manager:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATA_DIR: /data
+    volumes:
+      - am-data:/data
+    # "expose", not "ports" — reachable from cloudflared, not from the host's
+    # network interface. Publishing 3000 would bypass the tunnel entirely.
+    expose:
+      - "3000"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in deploy/.env}
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  am-data:

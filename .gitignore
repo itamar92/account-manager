@@ -1,5 +1,6 @@
 # Secrets / local config
 .env
+deploy/.env
 .claude/settings.local.json
 
 # Python

@@ -20,6 +20,9 @@ npm run dev        # http://localhost:3000
 
 Production: `npm run build && npm start`.
 
+To deploy it on a server, see [`../deploy/README.md`](../deploy/README.md) —
+Docker + Cloudflare Tunnel on an Oracle Always Free VM.
+
 ### Environment (optional, `.env`)
 
 | Var | Default | Purpose |

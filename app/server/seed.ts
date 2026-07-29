@@ -33,6 +33,22 @@ function parseCsv(text: string): string[][] {
   return rows;
 }
 
+/**
+ * The built-in defaults are a convenience for a laptop, not for a host on the
+ * public internet. In production the seed refuses to run rather than create an
+ * owner account whose password is published in this repository.
+ */
+function seedPassword(envVar: 'SEED_OWNER_PASSWORD' | 'SEED_BAND_PASSWORD', fallback: string): string {
+  const value = process.env[envVar];
+  if (value) return value;
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      `${envVar} must be set on first run in production — refusing to seed the default password.`
+    );
+  }
+  return fallback;
+}
+
 export function runSeed() {
   if (getSetting('seeded', '') === 'true') return;
 
@@ -41,8 +57,8 @@ export function runSeed() {
     setSetting('app_name', 'Account Manager');
 
     // --- users ---
-    const ownerPassword = process.env.SEED_OWNER_PASSWORD || 'changeme123';
-    const bandPassword = process.env.SEED_BAND_PASSWORD || 'moonlight123';
+    const ownerPassword = seedPassword('SEED_OWNER_PASSWORD', 'changeme123');
+    const bandPassword = seedPassword('SEED_BAND_PASSWORD', 'moonlight123');
     const insertUser = db.prepare(
       'INSERT INTO users (id, email, name, password_hash, role) VALUES (?, ?, ?, ?, ?)'
     );
