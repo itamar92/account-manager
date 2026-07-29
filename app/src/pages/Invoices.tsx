@@ -8,6 +8,7 @@ export function Invoices() {
   const [statusFilter, setStatusFilter] = useState('');
   const [detail, setDetail] = useState<any | null>(null);
   const [error, setError] = useState('');
+  const [pushing, setPushing] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const load = () =>
@@ -35,6 +36,18 @@ export function Invoices() {
     } catch (err: any) { setError(err.message); }
   };
 
+  const pushToMorning = async (id: string) => {
+    if (!confirm('להנפיק את החשבונית כמסמך אמיתי ב-Morning?')) return;
+    setPushing(true);
+    setError('');
+    try {
+      const d = await post(`/invoices/${id}/push-to-morning`);
+      setDetail(d.invoice);
+      load();
+    } catch (err: any) { setError(err.message); }
+    finally { setPushing(false); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -51,10 +64,15 @@ export function Invoices() {
 
       <Card>
         {invoices.length === 0 ? <Empty text="אין חשבוניות" /> : (
-          <Table headers={['מס׳', 'תאריך', 'לקוח', 'סכום', 'סטטוס', 'שורות', '']}>
+          <Table headers={['מס׳', 'סוג', 'תאריך', 'לקוח', 'סכום', 'סטטוס', 'שורות', '']}>
             {invoices.map((inv) => (
               <tr key={inv.id} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => openDetail(inv.id)}>
                 <td className="px-3 py-2.5 font-mono text-slate-300">#{inv.number}</td>
+                <td className="px-3 py-2.5 whitespace-nowrap">
+                  <span className={`text-xs ${inv.is_revenue ? 'text-slate-400' : 'text-amber-400/80'}`}>
+                    {inv.doc_type_label || '—'}
+                  </span>
+                </td>
                 <td className="px-3 py-2.5 whitespace-nowrap">{inv.date}</td>
                 <td className="px-3 py-2.5 font-medium">{inv.client_name}</td>
                 <td className="px-3 py-2.5 font-medium">{nis(inv.total)}</td>
@@ -111,7 +129,13 @@ export function Invoices() {
               {detail.paid_date && <div className="flex justify-between text-emerald-400"><span>שולם בתאריך</span><span>{detail.paid_date}</span></div>}
             </div>
 
-            <div className="flex gap-2">
+            <div className="text-xs text-slate-500">
+              {detail.external_id
+                ? <>קיים ב-Morning · <span dir="ltr" className="font-mono">{detail.external_id}</span></>
+                : 'קיים רק באפליקציה — טרם הונפק ב-Morning'}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
               {detail.status === 'issued' && (
                 <>
                   <Button onClick={() => setStatus(detail.id, 'paid')} className="flex-1">סמן כשולם</Button>
@@ -120,6 +144,11 @@ export function Invoices() {
               )}
               {detail.status === 'paid' && (
                 <Button variant="ghost" onClick={() => setStatus(detail.id, 'issued')} className="flex-1">החזר לסטטוס פתוח</Button>
+              )}
+              {!detail.external_id && detail.status !== 'cancelled' && (
+                <Button variant="ghost" disabled={pushing} onClick={() => pushToMorning(detail.id)} className="w-full">
+                  {pushing ? 'שולח…' : 'הנפקה ב-Morning'}
+                </Button>
               )}
             </div>
           </div>

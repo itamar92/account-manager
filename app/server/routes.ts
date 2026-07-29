@@ -1,10 +1,16 @@
 import { Router } from 'express';
 import { randomBytes } from 'crypto';
-import { db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting } from './db.js';
+import {
+  db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting,
+  getCalendarId, getShowKeyword, getMorningSyncDays,
+} from './db.js';
 import {
   createSession, destroySession, login, requireAuth, requireOwner, requireApiKey,
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
+import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
+import { morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
+import { calendarStatus, pullShowsFromCalendar } from './calendarSync.js';
 
 export const router = Router();
 
@@ -15,6 +21,15 @@ function handle(fn: (req: any, res: any) => void) {
     } catch (err: any) {
       res.status(err.status || 500).json({ error: err.message || 'internal error' });
     }
+  };
+}
+
+/** Same as `handle`, for routes that await network calls — a rejected promise still answers. */
+function handleAsync(fn: (req: any, res: any) => Promise<void>) {
+  return (req: any, res: any) => {
+    fn(req, res).catch((err: any) => {
+      res.status(err.status || 500).json({ error: err.message || 'internal error' });
+    });
   };
 }
 
@@ -40,11 +55,16 @@ router.get('/auth/me', (req, res) => {
 
 // ============ dashboard (owner) ============
 router.get('/dashboard', requireOwner, handle((_req, res) => {
+  // Revenue figures count tax documents only. A sale usually also has a חשבון עסקה (300)
+  // recording the same money, so summing every document would count it twice.
   const openInvoices = db.prepare(
-    "SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM invoices WHERE status = 'issued'"
+    `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM invoices
+     WHERE status = 'issued' AND doc_type IN (${REVENUE_DOC_TYPES_SQL})`
   ).get() as any;
   const paidYtd = db.prepare(
-    "SELECT COALESCE(SUM(total),0) AS total FROM invoices WHERE status = 'paid' AND date >= date('now','start of year')"
+    `SELECT COALESCE(SUM(total),0) AS total FROM invoices
+     WHERE status = 'paid' AND doc_type IN (${REVENUE_DOC_TYPES_SQL})
+       AND date >= date('now','start of year')`
   ).get() as any;
   const unpaidWorks = db.prepare(
     "SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE status = 'unpaid'"
@@ -53,13 +73,13 @@ router.get('/dashboard', requireOwner, handle((_req, res) => {
     `SELECT substr(date, 1, 7) AS month,
             SUM(CASE WHEN status = 'paid' THEN total ELSE 0 END) AS paid,
             SUM(CASE WHEN status = 'issued' THEN total ELSE 0 END) AS open
-     FROM invoices WHERE status IN ('paid','issued')
+     FROM invoices WHERE status IN ('paid','issued') AND doc_type IN (${REVENUE_DOC_TYPES_SQL})
      GROUP BY month ORDER BY month DESC LIMIT 12`
   ).all().reverse();
   const recentInvoices = db.prepare(
-    `SELECT i.id, i.number, i.date, i.total, i.status, c.name AS client_name
+    `SELECT i.id, i.number, i.date, i.total, i.status, i.doc_type, c.name AS client_name
      FROM invoices i JOIN clients c ON c.id = i.client_id
-     ORDER BY i.date DESC, i.number DESC LIMIT 8`
+     ORDER BY i.date DESC, i.created_at DESC LIMIT 8`
   ).all();
   const band = bandSummary();
   res.json({ openInvoices, paidYtd, unpaidWorks, monthly, recentInvoices, band });
@@ -71,7 +91,8 @@ router.get('/clients', requireOwner, handle((_req, res) => {
     `SELECT c.*,
        (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_total,
        (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_count,
-       (SELECT COALESCE(SUM(total),0) FROM invoices i WHERE i.client_id = c.id AND i.status = 'issued') AS open_invoices_total
+       (SELECT COALESCE(SUM(total),0) FROM invoices i WHERE i.client_id = c.id AND i.status = 'issued'
+          AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS open_invoices_total
      FROM clients c ORDER BY c.name`
   ).all();
   res.json({ clients });
@@ -151,8 +172,13 @@ router.get('/invoices', requireOwner, handle((req, res) => {
              FROM invoices i JOIN clients c ON c.id = i.client_id`;
   const params: any[] = [];
   if (status) { sql += ' WHERE i.status = ?'; params.push(status); }
-  sql += ' ORDER BY i.date DESC, CAST(i.number AS INTEGER) DESC';
-  res.json({ invoices: db.prepare(sql).all(...params) });
+  sql += ' ORDER BY i.date DESC, i.created_at DESC';
+  const invoices = (db.prepare(sql).all(...params) as any[]).map((inv) => ({
+    ...inv,
+    doc_type_label: DOC_TYPE_LABELS[inv.doc_type] ?? null,
+    is_revenue: isRevenueDoc(inv.doc_type),
+  }));
+  res.json({ invoices });
 }));
 
 router.get('/invoices/:id', requireOwner, handle((req, res) => {
@@ -259,19 +285,54 @@ router.post('/moonlight/general-expenses', requireOwner, handle((req, res) => {
   res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(id) });
 }));
 
+// ============ integrations: Morning (Green Invoice) + Google Calendar (owner) ============
+router.get('/integrations', requireOwner, handle((_req, res) => {
+  res.json({ morning: morningStatus(), calendar: calendarStatus() });
+}));
+
+/** Pulls documents from Morning into the local database. */
+router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, res) => {
+  const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
+  res.json({ result: await pullFromMorning({ days }) });
+}));
+
+/** Issues a local invoice as a real document in Morning and adopts its number. */
+router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (req, res) => {
+  const docType = req.body?.doc_type != null ? parseInt(req.body.doc_type, 10) : undefined;
+  const result = await pushInvoiceToMorning(req.params.id, docType);
+  res.json({ result, invoice: getInvoice(req.params.id) });
+}));
+
+/** Pulls shows from Google Calendar into band_events. */
+router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req, res) => {
+  const monthsBack = req.body?.months_back != null ? parseInt(req.body.months_back, 10) : undefined;
+  const monthsAhead = req.body?.months_ahead != null ? parseInt(req.body.months_ahead, 10) : undefined;
+  res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead }) });
+}));
+
 // ============ settings & admin (owner) ============
 router.get('/settings', requireOwner, handle((_req, res) => {
   res.json({
-    settings: { vat_percent: getVatPercent(), app_name: getSetting('app_name', 'Account Manager') },
+    settings: {
+      vat_percent: getVatPercent(),
+      app_name: getSetting('app_name', 'Account Manager'),
+      calendar_id: getCalendarId(),
+      calendar_show_keyword: getShowKeyword(),
+      morning_sync_days: getMorningSyncDays(),
+    },
+    integrations: { morning: morningStatus(), calendar: calendarStatus() },
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
     api_keys: db.prepare('SELECT id, name, key_prefix, created_at, last_used_at FROM api_keys ORDER BY created_at').all(),
   });
 }));
 
 router.post('/settings', requireOwner, handle((req, res) => {
-  const { vat_percent, app_name } = req.body || {};
+  const { vat_percent, app_name, calendar_id, calendar_show_keyword, morning_sync_days } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
   if (app_name) setSetting('app_name', app_name);
+  if (calendar_id) setSetting('calendar_id', String(calendar_id).trim());
+  if (calendar_show_keyword != null) setSetting('calendar_show_keyword', String(calendar_show_keyword).trim());
+  if (morning_sync_days != null) setSetting('morning_sync_days', String(parseInt(morning_sync_days, 10) || 90));
   res.json({ ok: true });
 }));
 

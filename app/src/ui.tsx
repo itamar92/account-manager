@@ -108,8 +108,10 @@ export function Table({ headers, children }: { headers: string[]; children: Reac
       <table className="w-full text-sm min-w-[600px]">
         <thead>
           <tr className="text-right text-slate-400 border-b border-slate-800">
-            {headers.map((h) => (
-              <th key={h} className="px-3 py-2 font-medium whitespace-nowrap">{h}</th>
+            {/* Keyed by position: header labels are a fixed list and some are blank
+                (action columns), so the label itself is not unique. */}
+            {headers.map((h, i) => (
+              <th key={i} className="px-3 py-2 font-medium whitespace-nowrap">{h}</th>
             ))}
           </tr>
         </thead>

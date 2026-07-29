@@ -28,6 +28,10 @@ Production: `npm run build && npm start`.
 | `DATA_DIR` | `app/data` | where the SQLite file lives |
 | `SEED_OWNER_PASSWORD` | `changeme123` | initial owner password |
 | `SEED_BAND_PASSWORD` | `moonlight123` | initial band members password |
+| `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` | — | Morning API credentials; without them the Morning sync is disabled |
+| `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled |
+| `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
 
 ## Seeded users
 
@@ -50,6 +54,54 @@ Finance data as the initial dataset.
 - **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
 
+### Document types and revenue
+
+A single sale usually produces two documents in Morning: a **חשבון עסקה (300)** when the
+work is agreed, then a **חשבונית מס (320)** when it is billed. Both carry the full amount,
+so totalling every document counts the sale twice.
+
+`server/docTypes.ts` is the single place that decides what counts. Only **305** (חשבונית מס
+קבלה) and **320** (חשבונית מס) are revenue — the same rule `scripts/build_havila.py` uses.
+Non-revenue documents are still imported and listed (flagged in amber in the invoices
+table) but are excluded from every total and never generate works.
+
+### Invoice numbering
+
+Morning owns the real, sequential document numbers. An invoice created in the app is
+therefore numbered `AM-1`, `AM-2`, … until it is issued to Morning, at which point it
+adopts the number Morning assigns. Numbering locally from `MAX(number)+1` would hand out
+numbers Morning is going to issue itself.
+
+## Integrations
+
+Both are owner-only, run on demand from **Settings → חיבורים** (the calendar sync also has
+a button on the Moonlight income tab), and report their configuration status in the UI so
+a missing credential is visible rather than silent.
+
+### Morning (Green Invoice)
+
+- **Pull** — `POST /api/integrations/morning/sync` fetches documents from the last N days
+  (default 90) and upserts them on the Morning document id, so re-running is safe. Local
+  financial edits are preserved; only status, dates and totals are refreshed. Revenue
+  documents get a work row per income line, and one placeholder work when Morning returns
+  no line detail. VAT comes from the document when present, and is otherwise backed out of
+  the total using the configured rate.
+- **Push** — `POST /api/invoices/:id/push-to-morning` issues a local invoice as a real
+  document and stores the returned id and number. An invoice that already exists in
+  Morning is rejected with 409 rather than duplicated.
+
+### Google Calendar → shows
+
+`POST /api/integrations/calendar/sync` reads the configured calendar and upserts matching
+events into `band_events` on the calendar event id.
+
+- Only events whose title or description contains the configured keyword (default `הופעה`)
+  are treated as shows.
+- **Financial columns are never written by the sync** — only venue, date and location. What
+  you enter in the app stays.
+- A show entered by hand is adopted by date rather than duplicated.
+- A cancelled calendar event is removed only while its row is still financially empty.
+
 ## External API (`/api/v1`)
 
 Create an API key in **Settings → מפתחות API**, then send it as the `X-API-Key` header.
@@ -62,6 +114,9 @@ Intended for the Morning app integration / client management system.
 | `POST /api/v1/works` | push a work `{client_name, date, description, amount}` (client auto-created) |
 | `POST /api/v1/invoices` | create invoice `{client_name?, client_id?, work_ids?, line_items?, external_id?}` |
 | `POST /api/v1/invoices/:id/paid` | mark paid — `:id` matches internal id, invoice number, or `external_id` (Morning doc id) |
+
+Note this API is *inbound* — it is how an external system pushes into the app. The app's
+own outbound calls to Morning are the integration described above.
 
 Example — create an invoice from the Morning app flow:
 

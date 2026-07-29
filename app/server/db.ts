@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS band_events (
   id TEXT PRIMARY KEY,
   venue TEXT NOT NULL,
   date TEXT NOT NULL,
+  calendar_event_id TEXT,
+  location TEXT,
   tickets INTEGER NOT NULL DEFAULT 0,
   amount_pre_vat REAL NOT NULL DEFAULT 0,
   amount_with_vat REAL NOT NULL DEFAULT 0,
@@ -169,6 +171,40 @@ CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `);
 
+// ---------- migrations for databases created before a column existed ----------
+function addColumnIfMissing(table: string, column: string, definition: string) {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!columns.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
+
+addColumnIfMissing('band_events', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('band_events', 'location', 'TEXT');
+
+// Both syncs upsert on these keys, so they must be unique — but only among synced rows,
+// which is why they are partial indexes rather than column constraints. A pre-existing
+// database with duplicates would fail to build the index; warn rather than refuse to boot,
+// since the syncs are optional and everything else still works.
+for (const [name, sql] of [
+  [
+    'idx_band_events_calendar',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_band_events_calendar
+       ON band_events(calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+  ],
+  [
+    'idx_invoices_external',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_invoices_external
+       ON invoices(external_id) WHERE external_id IS NOT NULL`,
+  ],
+] as const) {
+  try {
+    db.exec(sql);
+  } catch (err) {
+    console.warn(`[db] could not create ${name} — duplicate keys present:`, (err as Error).message);
+  }
+}
+
 // ---------- settings helpers ----------
 export function getSetting(key: string, fallback: string): string {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined;
@@ -181,6 +217,21 @@ export function setSetting(key: string, value: string) {
 
 export function getVatPercent(): number {
   return parseFloat(getSetting('vat_percent', '18'));
+}
+
+/** Calendar the show sync reads from. Defaults to the owner's primary calendar. */
+export function getCalendarId(): string {
+  return getSetting('calendar_id', process.env.GOOGLE_CALENDAR_ID || 'primary');
+}
+
+/** Only calendar events whose title contains this word are treated as shows. */
+export function getShowKeyword(): string {
+  return getSetting('calendar_show_keyword', 'הופעה');
+}
+
+/** How far back each Morning pull looks, in days. */
+export function getMorningSyncDays(): number {
+  return parseInt(getSetting('morning_sync_days', '90'), 10) || 90;
 }
 
 export const uuid = () => randomUUID();

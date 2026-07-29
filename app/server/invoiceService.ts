@@ -41,11 +41,24 @@ export function resolveClient(input: { clientId?: string; clientName?: string })
   throw Object.assign(new Error('clientId or clientName is required'), { status: 400 });
 }
 
+/**
+ * Provisional number for an invoice that exists only in this app.
+ *
+ * Morning assigns the real, sequential document number when the invoice is pushed to it
+ * (see `pushInvoiceToMorning`). Numbering locally from `MAX(number)+1` would hand out
+ * numbers Morning is going to issue itself, so local numbers carry a prefix and can never
+ * collide with a real one.
+ */
+export const LOCAL_NUMBER_PREFIX = 'AM-';
+
 export function nextInvoiceNumber(): string {
   const row = db
-    .prepare("SELECT MAX(CAST(number AS INTEGER)) AS maxNum FROM invoices WHERE number GLOB '[0-9]*'")
+    .prepare(
+      `SELECT MAX(CAST(substr(number, ${LOCAL_NUMBER_PREFIX.length + 1}) AS INTEGER)) AS maxNum
+       FROM invoices WHERE number LIKE '${LOCAL_NUMBER_PREFIX}%'`
+    )
     .get() as { maxNum: number | null };
-  return String((row.maxNum ?? 60000) + 1);
+  return `${LOCAL_NUMBER_PREFIX}${(row.maxNum ?? 0) + 1}`;
 }
 
 /**

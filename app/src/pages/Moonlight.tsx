@@ -18,6 +18,7 @@ export function Moonlight() {
   const [eventModal, setEventModal] = useState<any | null>(null);
   const [expenseModal, setExpenseModal] = useState(false);
   const [expenseForm, setExpenseForm] = useState({ date: new Date().toISOString().slice(0, 10), description: '', event: 'כללי', paid_by: 'קופה', amount: '' });
+  const [syncing, setSyncing] = useState(false);
 
   const load = () => {
     get('/moonlight/summary').then((d) => setSummary(d.summary)).catch((e) => setError(e.message));
@@ -26,6 +27,18 @@ export function Moonlight() {
     get('/moonlight/general-expenses').then((d) => setGeneralExpenses(d.expenses));
   };
   useEffect(load, []);
+
+  const syncCalendar = async () => {
+    setSyncing(true);
+    setError('');
+    try {
+      const d = await post('/integrations/calendar/sync');
+      const r = d.result;
+      if (r.created + r.updated + r.linked === 0) setError(`לא נמצאו הופעות חדשות (${r.matched} אירועים תואמים)`);
+      load();
+    } catch (err: any) { setError(err.message); }
+    finally { setSyncing(false); }
+  };
 
   const saveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -100,13 +113,26 @@ export function Moonlight() {
         <Card>
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-bold">הכנסות מהופעות</h2>
-            {isOwner && <Button onClick={() => setEventModal({ venue: '', date: '', tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, expenses: 0, profit: 0, amir: 0, itamar: 0, yuval: 0, guy: 0 })}>+ הופעה</Button>}
+            {isOwner && (
+              <div className="flex gap-2">
+                <Button variant="ghost" disabled={syncing} onClick={syncCalendar}>
+                  {syncing ? 'מסנכרן…' : 'משיכה מהיומן'}
+                </Button>
+                <Button onClick={() => setEventModal({ venue: '', date: '', tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, expenses: 0, profit: 0, amir: 0, itamar: 0, yuval: 0, guy: 0 })}>+ הופעה</Button>
+              </div>
+            )}
           </div>
           {events.length === 0 ? <Empty text="אין נתונים" /> : (
             <Table headers={['מקום', 'תאריך', 'כרטיסים', 'לפני מע"מ', 'הוצאות', 'רווח', 'שולם לנגנים', isOwner ? '' : ' ']}>
               {events.map((e) => (
                 <tr key={e.id} className="hover:bg-slate-800/40">
-                  <td className="px-3 py-2.5 font-medium">{e.venue}</td>
+                  <td className="px-3 py-2.5 font-medium">
+                    <div className="flex items-center gap-1.5">
+                      {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-indigo-400 text-xs">◷</span>}
+                      <span>{e.venue}</span>
+                    </div>
+                    {e.location && <div className="text-xs text-slate-500 truncate max-w-[16rem]">{e.location}</div>}
+                  </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">{e.date}</td>
                   <td className="px-3 py-2.5">{e.tickets || '—'}</td>
                   <td className="px-3 py-2.5">{nis(e.amount_pre_vat)}</td>
