@@ -223,13 +223,31 @@ ssh-copy-id -i ~/.ssh/am-deploy.pub ubuntu@<public-ip>
 ssh-keyscan -t ed25519,rsa <public-ip>
 ```
 
-No `ssh-copy-id` on your platform? The same thing by hand:
+No `ssh-copy-id` on your platform? The same thing by hand — **as one command, from
+your machine**. The `< ~/.ssh/am-deploy.pub` on the last line is what feeds the
+`cat`; run the quoted part on the VM instead and it hangs waiting for you to type
+the key in.
 
 ```bash
 ssh -i ~/path/to/oracle-key ubuntu@<public-ip> \
   'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' \
   < ~/.ssh/am-deploy.pub
 ```
+
+Or, if you already have a session open on the VM, paste the key over there.
+`cat ~/.ssh/am-deploy.pub` on your machine prints one line; on the VM:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo 'ssh-ed25519 AAAA… github-actions@account-manager' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+tail -2 ~/.ssh/authorized_keys        # the new line, and your existing one still there
+```
+
+Keep the quotes and keep it on one line — a line break in the middle of the key
+makes it invalid. The **public** key only: `~/.ssh/am-deploy` without the `.pub`
+is the private half, and it belongs in the `DEPLOY_SSH_KEY` secret and nowhere
+else, least of all on the machine it unlocks.
 
 Then check the new key opens the door the way the workflow will use it:
 
