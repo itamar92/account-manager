@@ -20,6 +20,10 @@ npm run dev        # http://localhost:3000
 
 Production: `npm run build && npm start`.
 
+`npm run lint` (`tsc --noEmit`) and `npm run build` are what CI runs on every pull request
+and every push to `master` — see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml),
+which uses the same Node 22 the container ships.
+
 To deploy it on a server, see [`../deploy/README.md`](../deploy/README.md) —
 Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 
