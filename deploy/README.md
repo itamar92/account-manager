@@ -83,12 +83,25 @@ In **Cloudflare Zero Trust → Networks → Tunnels → Create a tunnel** (Cloud
 1. Name it `account-manager`. Copy the **token** from the install command shown —
    that single value is all the VM needs.
 2. Under **Public Hostnames**, add:
-   - Subdomain: *(blank)* · Domain: `im-tools.org` · Path: *(blank)*
-   - Service: `HTTP` → `app:3000`
+   - Subdomain: `account-manager` · Domain: `im-tools.org` · Path: *(blank)*
+   - Type: **`HTTP`** · URL: `app:3000`
 
    `app` is the compose service name; cloudflared resolves it on the compose
    network. The DNS record in your zone is created for you — do not add one by
    hand.
+
+   **Type must be `HTTP`, not `HTTPS`.** The app serves plain HTTP on 3000, so
+   selecting HTTPS makes cloudflared attempt a TLS handshake against it and fail
+   every request with:
+
+   ```
+   Unable to reach the origin service ... tls: first record does not look like a TLS handshake
+   ```
+
+   That hop runs inside the Docker network and needs no certificate of its own —
+   TLS is terminated at Cloudflare's edge.
+
+   The hostname you choose here is the app's URL, and steps 5-6 refer back to it.
 
 ## 4. Deploy
 
@@ -165,14 +178,24 @@ health endpoint through the tunnel and burns a little CPU every 15 minutes:
 ```bash
 chmod +x /opt/account-manager/deploy/keepalive.sh
 crontab -e
+# APP_URL=https://account-manager.im-tools.org/api/health
 # */15 * * * * /opt/account-manager/deploy/keepalive.sh >/dev/null 2>&1
 ```
+
+Your own crontab, not root's — the script's fallback path uses `docker compose`,
+which works via your `docker` group membership.
+
+**Set `APP_URL` to the hostname you configured in step 3.** The script's built-in
+default is a guess; if it doesn't match, the curl fails silently and falls back
+to a local container check, which still exits 0 but loses the network half of the
+activity signal. Confirm the URL separately with
+`curl -s https://<your-hostname>/api/health`.
 
 ## 7. Optional: put Cloudflare Access in front
 
 This app holds your invoicing data behind one password. Zero Trust → Access →
-Applications, self-hosted, `im-tools.org`, policy `emails: itamar92@gmail.com` +
-the band addresses. Free up to 50 users.
+Applications, self-hosted, your hostname from step 3, policy
+`emails: itamar92@gmail.com` + the band addresses. Free up to 50 users.
 
 One catch: **exclude `/api/v1`**, or the Morning integration's `X-API-Key` calls
 will be intercepted by Access and fail. Add a Bypass policy for that path, or a
