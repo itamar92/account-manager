@@ -6,10 +6,16 @@ on:
   push:
     branches: [master]
   pull_request:
+  # Called by deploy.yml, so a deploy verifies the exact commit it is about to
+  # ship instead of trusting a run from somewhere else in the history.
+  workflow_call:
 
-# A second push to the same branch makes the run in flight irrelevant.
+# A second push to the same branch makes the run in flight irrelevant. The group
+# is keyed on the workflow too: when this is called from Deploy, github.workflow
+# is the caller, so the push's own CI run and the deploy's verify do not cancel
+# each other for sharing a ref.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

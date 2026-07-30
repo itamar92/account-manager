@@ -187,6 +187,105 @@ cd deploy && docker compose up -d --build
 
 The database is in a named volume, untouched by rebuilds.
 
+## Automatic deploys
+
+`.github/workflows/deploy.yml` runs exactly that update over SSH when `master`
+changes something the image is built from — `app/`, `deploy/`, `invoices_2026.csv`
+or the workflows themselves. A commit touching only the Python scripts, the JSON
+ledgers or the docs does not redeploy. **Run workflow** on the Actions tab
+redeploys the current `master` on demand.
+
+It typechecks and builds the commit first (the same job every pull request runs),
+then on the VM resets to that exact commit — not to whatever `master` has become —
+rebuilds, and waits for the container's own healthcheck. A container that never
+reports healthy fails the run with the last 80 log lines, so a bad deploy is loud
+rather than silent. `reset --hard` drops *tracked* local edits on the VM and
+leaves untracked files alone, so `deploy/.env` survives.
+
+### The four secrets
+
+A deploy key first — its own key, not your personal one, so it can be revoked
+without locking you out.
+
+**Run these on your own machine, not on the VM** — all three are client-side, and
+a private key has no business living on the server it unlocks. `<public-ip>` is
+the VM's from step 1.
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/am-deploy -C 'github-actions@account-manager' -N ''
+
+# Logs in with your existing access and appends the new public key over there.
+# Add -o IdentityFile=~/path/to/oracle-key if that access is not a default key.
+ssh-copy-id -i ~/.ssh/am-deploy.pub ubuntu@<public-ip>
+
+# Asks the VM for its host keys and prints them — copy the output into the
+# DEPLOY_KNOWN_HOSTS secret. Do not redirect it into your own known_hosts.
+ssh-keyscan -t ed25519,rsa <public-ip>
+```
+
+No `ssh-copy-id` on your platform? The same thing by hand — **as one command, from
+your machine**. The `< ~/.ssh/am-deploy.pub` on the last line is what feeds the
+`cat`; run the quoted part on the VM instead and it hangs waiting for you to type
+the key in.
+
+```bash
+ssh -i ~/path/to/oracle-key ubuntu@<public-ip> \
+  'mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys' \
+  < ~/.ssh/am-deploy.pub
+```
+
+Or, if you already have a session open on the VM, paste the key over there.
+`cat ~/.ssh/am-deploy.pub` on your machine prints one line; on the VM:
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo 'ssh-ed25519 AAAA… github-actions@account-manager' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+tail -2 ~/.ssh/authorized_keys        # the new line, and your existing one still there
+```
+
+Keep the quotes and keep it on one line — a line break in the middle of the key
+makes it invalid. The **public** key only: `~/.ssh/am-deploy` without the `.pub`
+is the private half, and it belongs in the `DEPLOY_SSH_KEY` secret and nowhere
+else, least of all on the machine it unlocks.
+
+Then check the new key opens the door the way the workflow will use it:
+
+```bash
+ssh -i ~/.ssh/am-deploy -o IdentitiesOnly=yes ubuntu@<public-ip> 'whoami; id -nG; docker compose version'
+```
+
+`ubuntu`, a group list containing `docker`, a compose version, and no prompt. A
+passphrase prompt means the key needs regenerating with `-N ''` — nothing can
+type one in Actions.
+
+`ssh-keyscan` pins whatever answers it, so on a box you already trust a session
+to, it is worth confirming what you pinned: run
+`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the VM and check the
+fingerprint against `ssh-keygen -lf -` fed the keyscan output.
+
+Then in **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Value |
+|--------|-------|
+| `DEPLOY_HOST` | the VM's public IP (or a DNS name pointing at it) |
+| `DEPLOY_SSH_KEY` | the whole of `~/.ssh/am-deploy` — the **private** key, `BEGIN`/`END` lines included. It must have no passphrase; nothing can type one |
+| `DEPLOY_KNOWN_HOSTS` | the `ssh-keyscan` output, verbatim |
+| `DEPLOY_USER` | *optional* — defaults to `ubuntu` |
+
+`DEPLOY_KNOWN_HOSTS` is what makes this safe to run unattended: the host keys are
+pinned, so a hijacked DNS record or a changed IP gets a refused connection instead
+of the deploy key. `StrictHostKeyChecking=no` would hand the key to whoever
+answered. If you rebuild the VM, re-run `ssh-keyscan` and update the secret.
+
+The user needs to be in the `docker` group (step 2 does that) and
+`/opt/account-manager` must already be the clone from step 4 — the workflow
+updates a checkout, it does not create one.
+
+To require a human click before each deploy, add a required reviewer to the
+`production` environment under **Settings → Environments**; the workflow already
+deploys into it.
+
 ## Notes
 
 - **Secrets live only in `deploy/.env`** on the VM (git-ignored, `chmod 600`).
