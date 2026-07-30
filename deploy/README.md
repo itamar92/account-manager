@@ -296,15 +296,25 @@ It is the better source anyway, being the server's own copy rather than whatever
 answered the address:
 
 ```bash
-for f in /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_rsa_key.pub; do
-  echo "<public-ip> $(cut -d' ' -f1,2 "$f")"
-done
+cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_rsa_key.pub \
+  | sed 's/^/<public-ip> /'
 ```
 
 Two lines of three fields — host, key type, key — which is the `known_hosts`
 format the secret wants. The host must match `DEPLOY_HOST` exactly: an entry for
 the IP does not authenticate a connection made to a DNS name, or the reverse.
 (Ordinary `ssh` is unaffected by this bug; it negotiates properly.)
+
+No loop and no `$( )` in that pipeline, so it can be handed to the VM from a
+PowerShell prompt as one line rather than typed over there:
+
+```powershell
+ssh ubuntu@<public-ip> "cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_rsa_key.pub | sed 's/^/<public-ip> /'"
+```
+
+More generally: `for … do … done`, `$( )`, `~/` and `cat >>` are bash, and belong
+in a session on the VM. PowerShell has its own `for` syntax and expands `$( )`
+itself before `ssh` is ever invoked.
 
 Then in **Settings → Secrets and variables → Actions → New repository secret**:
 
