@@ -249,6 +249,30 @@ makes it invalid. The **public** key only: `~/.ssh/am-deploy` without the `.pub`
 is the private half, and it belongs in the `DEPLOY_SSH_KEY` secret and nowhere
 else, least of all on the machine it unlocks.
 
+### From Windows
+
+PowerShell strips `''` before `ssh-keygen` sees it, so `-N ''` fails with
+*option requires an argument*. Leave the flag off and press Enter twice, or
+write the empty argument as `-N '""'`:
+
+```powershell
+New-Item -ItemType Directory -Force -Path $HOME\.ssh | Out-Null
+ssh-keygen -t ed25519 -f $HOME\.ssh\am-deploy -C "github-actions@account-manager"
+Get-Content $HOME\.ssh\am-deploy.pub     # copy this line, paste it on the VM
+```
+
+There is no `ssh-copy-id` in Windows OpenSSH, and piping the key over with
+`Get-Content | ssh` appends CRLF line endings — copy and paste the line instead.
+If ssh refuses the key with *UNPROTECTED PRIVATE KEY FILE*, narrow the ACL:
+`icacls $HOME\.ssh\am-deploy /inheritance:r /grant:r "$($env:USERNAME):(R)"`.
+
+`Set-Clipboard` fills the secrets without a round trip through an editor:
+
+```powershell
+Get-Content -Raw $HOME\.ssh\am-deploy | Set-Clipboard        # DEPLOY_SSH_KEY
+ssh-keyscan -t ed25519,rsa <public-ip> | Set-Clipboard       # DEPLOY_KNOWN_HOSTS
+```
+
 Then check the new key opens the door the way the workflow will use it:
 
 ```bash
