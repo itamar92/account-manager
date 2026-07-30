@@ -4,13 +4,13 @@ import {
   db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
 } from './db.js';
 import {
-  createSession, destroySession, login, requireAuth, requireOwner, requireApiKey,
-  loginRateLimit, clearLoginAttempts,
+  createSession, currentSessionToken, destroySession, login, requireAuth, requireOwner,
+  requireApiKey, loginRateLimit, clearLoginAttempts,
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
-import { calendarStatus, previewRule, pullShowsFromCalendar } from './calendarSync.js';
+import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
   updateRule, type CalendarRule,
@@ -34,7 +34,7 @@ function removeRowsForEvent(eventId: string): number {
     }
   }
   const work = db.prepare('SELECT * FROM works WHERE calendar_event_id = ?').get(eventId) as any;
-  if (work && work.status === 'unpaid' && !Number(work.amount)) {
+  if (work && work.status === 'unpaid' && isSyncPriced(work)) {
     db.prepare('DELETE FROM works WHERE id = ?').run(work.id);
     removed++;
   }
@@ -44,7 +44,7 @@ function removeRowsForEvent(eventId: string): number {
 /** Stand-in used when previewing a rule that has not been saved yet. */
 const DRAFT_RULE: CalendarRule = {
   id: 'draft', name: 'טיוטה', target: 'band', calendar_id: 'primary',
-  keywords: '', organizers: '', ignore_words: '', client_name: null,
+  keywords: '', organizers: '', ignore_words: '', client_name: null, fixed_amount: 0,
   skip_declined: 1, match_description: 0, enabled: 1, sort_order: 0,
 };
 
@@ -203,6 +203,73 @@ router.delete('/works/:id', requireOwner, handle((req, res) => {
   if (work.status !== 'unpaid') return res.status(409).json({ error: 'אי אפשר למחוק עבודה שמקושרת לחשבונית' });
   db.prepare('DELETE FROM works WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+}));
+
+/** The ids of a bulk request, rejected as one bad request rather than silently trimmed. */
+function bulkIds(body: any): string[] {
+  const ids = Array.isArray(body?.ids) ? body.ids.filter((id: unknown) => typeof id === 'string' && id) : [];
+  if (!ids.length) throw Object.assign(new Error('לא נבחרו עבודות'), { status: 400 });
+  return ids;
+}
+
+/**
+ * Deletes the selected works in one go. Only unpaid works can go — anything already on an
+ * invoice is reported back as locked rather than quietly skipped.
+ *
+ * `exclude_from_calendar` also pins the underlying events out, because deleting a work the
+ * calendar created would otherwise last until the next sync drew it again.
+ */
+router.post('/works/bulk-delete', requireOwner, handle((req, res) => {
+  const ids = bulkIds(req.body);
+  const excludeFromCalendar = !!req.body?.exclude_from_calendar;
+  const locked: string[] = [];
+  let deleted = 0;
+  let excluded = 0;
+
+  db.transaction(() => {
+    for (const id of ids) {
+      const work = db.prepare('SELECT * FROM works WHERE id = ?').get(id) as any;
+      if (!work) continue;
+      if (work.status !== 'unpaid') { locked.push(work.description); continue; }
+      if (excludeFromCalendar && work.calendar_event_id) {
+        setOverride({
+          event_id: work.calendar_event_id, action: 'exclude',
+          summary: work.description, event_date: work.date,
+        });
+        excluded++;
+      }
+      db.prepare('DELETE FROM works WHERE id = ?').run(id);
+      deleted++;
+    }
+  })();
+
+  res.json({ deleted, excluded, locked });
+}));
+
+/** Moves the selected works to another client — the fix for a rule that filed them wrong. */
+router.post('/works/bulk-client', requireOwner, handle((req, res) => {
+  const ids = bulkIds(req.body);
+  const clientId = req.body?.client_id;
+  if (!clientId) return res.status(400).json({ error: 'client_id is required' });
+  if (!db.prepare('SELECT id FROM clients WHERE id = ?').get(clientId))
+    return res.status(404).json({ error: 'client not found' });
+
+  const locked: string[] = [];
+  let updated = 0;
+  db.transaction(() => {
+    for (const id of ids) {
+      const work = db.prepare('SELECT * FROM works WHERE id = ?').get(id) as any;
+      if (!work) continue;
+      // A work on an invoice belongs to that invoice's client; moving it would leave the
+      // invoice billing one client for another's work.
+      if (work.status !== 'unpaid') { locked.push(work.description); continue; }
+      if (work.client_id === clientId) continue;
+      db.prepare('UPDATE works SET client_id = ? WHERE id = ?').run(clientId, id);
+      updated++;
+    }
+  })();
+
+  res.json({ updated, locked });
 }));
 
 // ============ invoices (owner) ============
@@ -448,6 +515,48 @@ router.post('/settings/users', requireOwner, handle((req, res) => {
     return res.status(409).json({ error: 'משתמש עם אימייל זה כבר קיים' });
   }
   res.json({ user: db.prepare('SELECT id, email, name, role FROM users WHERE id = ?').get(id) });
+}));
+
+/**
+ * Edits a member: name, email, role, and optionally a new password (an empty one leaves the
+ * existing password alone, so details can be fixed without resetting anyone's access).
+ *
+ * Two guards keep the app reachable: the last owner cannot be demoted, and you cannot demote
+ * yourself — either would leave nobody able to open this page.
+ */
+router.put('/settings/users/:id', requireOwner, handle((req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
+  if (!target) return res.status(404).json({ error: 'user not found' });
+
+  const { name, email, password, role } = req.body || {};
+  const nextName = String(name ?? target.name).trim();
+  const nextEmail = String(email ?? target.email).trim();
+  const nextRole = role ?? target.role;
+  if (!nextName || !nextEmail) return res.status(400).json({ error: 'שם ואימייל חובה' });
+  if (!['owner', 'band'].includes(nextRole)) return res.status(400).json({ error: 'invalid role' });
+
+  if (target.role === 'owner' && nextRole !== 'owner') {
+    if (target.id === req.user!.id) return res.status(400).json({ error: 'אי אפשר להוריד לעצמך הרשאות בעלים' });
+    const { n } = db.prepare("SELECT COUNT(*) AS n FROM users WHERE role = 'owner'").get() as { n: number };
+    if (n <= 1) return res.status(400).json({ error: 'חייב להישאר לפחות בעלים אחד' });
+  }
+
+  try {
+    db.prepare('UPDATE users SET name = ?, email = ?, role = ? WHERE id = ?')
+      .run(nextName, nextEmail, nextRole, target.id);
+  } catch {
+    return res.status(409).json({ error: 'משתמש עם אימייל זה כבר קיים' });
+  }
+
+  if (password) {
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), target.id);
+    // A new password ends the sessions opened with the old one — except the one making this
+    // request, so changing your own password does not log you out mid-edit.
+    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token IS NOT ?')
+      .run(target.id, currentSessionToken(req));
+  }
+
+  res.json({ user: db.prepare('SELECT id, email, name, role FROM users WHERE id = ?').get(target.id) });
 }));
 
 router.delete('/settings/users/:id', requireOwner, handle((req, res) => {

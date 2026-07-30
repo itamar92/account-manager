@@ -102,7 +102,7 @@ export function Modal({ title, open, onClose, children }: { title: string; open:
   );
 }
 
-export function Table({ headers, children }: { headers: string[]; children: React.ReactNode }) {
+export function Table({ headers, children }: { headers: React.ReactNode[]; children: React.ReactNode }) {
   return (
     <div className="overflow-x-auto -mx-4 md:mx-0">
       <table className="w-full text-sm min-w-[600px]">

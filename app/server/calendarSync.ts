@@ -65,6 +65,36 @@ function bandEventIsEmpty(row: any): boolean {
   return fields.every((f) => !Number(row[f]));
 }
 
+/**
+ * Same date + same name means the same event. Names are compared loosely because what
+ * someone types by hand and what the calendar holds differ in spacing and case.
+ */
+const normalizeName = (value: string | null | undefined): string =>
+  (value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+/**
+ * A row for this event that was entered by hand, so the sync adopts it rather than adding
+ * a second one. A matching name wins; failing that any hand-entered show on the same date
+ * is taken, which is how a show typed in before the calendar was connected gets linked.
+ */
+function findOrphanBandEvent(date: string, title: string): any | undefined {
+  const rows = db
+    .prepare('SELECT * FROM band_events WHERE date = ? AND calendar_event_id IS NULL ORDER BY created_at')
+    .all(date) as any[];
+  return rows.find((r) => normalizeName(r.venue) === normalizeName(title)) ?? rows[0];
+}
+
+/**
+ * The same-work check for personal rules. Unlike shows, a client can genuinely have two
+ * works on one date, so only an identical name counts — there is no date-only fallback.
+ */
+function findOrphanWork(clientId: string, date: string, title: string): any | undefined {
+  const rows = db
+    .prepare('SELECT * FROM works WHERE client_id = ? AND date = ? AND calendar_event_id IS NULL ORDER BY created_at')
+    .all(clientId, date) as any[];
+  return rows.find((r) => normalizeName(r.description) === normalizeName(title));
+}
+
 function resolveClient(name: string): string {
   const clean = name.trim();
   const existing = db.prepare('SELECT id FROM clients WHERE name = ?').get(clean) as { id: string } | undefined;
@@ -86,10 +116,8 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
     return;
   }
 
-  // Adopt a hand-entered row for the same date instead of creating a second one.
-  const orphan = db
-    .prepare('SELECT * FROM band_events WHERE date = ? AND calendar_event_id IS NULL LIMIT 1')
-    .get(date) as any;
+  // Adopt a hand-entered row for the same date and name instead of creating a second one.
+  const orphan = findOrphanBandEvent(date, title);
   if (orphan) {
     db.prepare('UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ? WHERE id = ?')
       .run(event.id, title, location, orphan.id);
@@ -105,11 +133,14 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
 }
 
 /**
- * A personal rule writes into `works` — the app's billable unit — as an unpaid work with
- * amount 0, waiting for you to fill in the price and invoice it.
+ * A personal rule writes into `works` — the app's billable unit — as an unpaid work priced
+ * at the rule's fixed amount, or at 0 when the rule has none, waiting for you to fill the
+ * price in and invoice it.
  *
  * A work that has already been invoiced is never rewritten, and an amount you entered is
- * never overwritten: only the description, date and location follow the calendar.
+ * never overwritten: only the description, date and location follow the calendar. The one
+ * exception is a still-unpriced work, which picks up a fixed amount added to the rule after
+ * it was drawn.
  */
 function applyPersonalWork(
   event: CalendarEvent,
@@ -123,6 +154,11 @@ function applyPersonalWork(
     return;
   }
   const location = event.location ?? null;
+  const fixedAmount = round2(Number(rule.fixed_amount) || 0);
+  const priceOf = (amount: number) => {
+    const vat = round2((amount * getVatPercent()) / 100);
+    return { amount, vat, total: round2(amount + vat) };
+  };
   const existing = db.prepare('SELECT * FROM works WHERE calendar_event_id = ?').get(event.id) as any;
 
   if (existing) {
@@ -131,23 +167,64 @@ function applyPersonalWork(
       tally.skipped++;
       return;
     }
-    db.prepare('UPDATE works SET date = ?, description = ?, location = ? WHERE id = ?')
-      .run(date, title, location, existing.id);
+    const price = priceOf(fixedAmount && !Number(existing.amount) ? fixedAmount : round2(Number(existing.amount)));
+    db.prepare(
+      'UPDATE works SET date = ?, description = ?, location = ?, amount = ?, vat_amount = ?, total = ? WHERE id = ?'
+    ).run(date, title, location, price.amount, price.vat, price.total, existing.id);
     tally.updated++;
     return;
   }
 
   const clientId = resolveClient(rule.client_name);
-  const vat = round2((0 * getVatPercent()) / 100);
+
+  // A work with this client, date and name is this event, typed in by hand before the sync
+  // reached it. Link it instead of adding a duplicate line to the table.
+  const orphan = findOrphanWork(clientId, date, title);
+  if (orphan) {
+    // An already-billed row is linked and nothing more, which is enough to stop the event
+    // being drawn again as a second, unbilled copy of work you have already invoiced.
+    if (orphan.status !== 'unpaid') {
+      db.prepare('UPDATE works SET calendar_event_id = ? WHERE id = ?').run(event.id, orphan.id);
+    } else {
+      const price = priceOf(fixedAmount && !Number(orphan.amount) ? fixedAmount : round2(Number(orphan.amount)));
+      db.prepare(
+        `UPDATE works SET calendar_event_id = ?, location = ?, amount = ?, vat_amount = ?, total = ?
+         WHERE id = ?`
+      ).run(event.id, location ?? orphan.location, price.amount, price.vat, price.total, orphan.id);
+    }
+    tally.linked++;
+    return;
+  }
+
+  const price = priceOf(fixedAmount);
   db.prepare(
     `INSERT INTO works (id, client_id, date, description, amount, vat_amount, total, status,
        calendar_event_id, location, source)
-     VALUES (?, ?, ?, ?, 0, ?, 0, 'unpaid', ?, ?, 'calendar')`
-  ).run(uuid(), clientId, date, title, vat, event.id, location);
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, 'calendar')`
+  ).run(uuid(), clientId, date, title, price.amount, price.vat, price.total, event.id, location);
   tally.created++;
 }
 
-/** Removes a row for a cancelled event, but only while it still holds no money. */
+/**
+ * True when the number on this work is the sync's own doing — an unpriced calendar row, or
+ * one carrying exactly the fixed price of a personal rule for that client — rather than a
+ * figure someone typed. Only such a row may be cleaned up when its event disappears; an
+ * amount you entered by hand is bookkeeping and stays.
+ */
+export function isSyncPriced(work: any): boolean {
+  const amount = round2(Number(work.amount) || 0);
+  if (!amount) return true;
+  if (work.source !== 'calendar') return false;
+  const rules = db
+    .prepare(
+      `SELECT r.fixed_amount FROM calendar_rules r JOIN clients c ON c.name = r.client_name
+       WHERE r.target = 'personal' AND c.id = ?`
+    )
+    .all(work.client_id) as Array<{ fixed_amount: number }>;
+  return rules.some((r) => round2(Number(r.fixed_amount) || 0) === amount);
+}
+
+/** Removes a row for a cancelled event, but only while it holds no money of your own. */
 function applyCancellation(event: CalendarEvent, rule: CalendarRule, tally: RuleSyncResult) {
   if (rule.target === 'band') {
     const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
@@ -158,7 +235,7 @@ function applyCancellation(event: CalendarEvent, rule: CalendarRule, tally: Rule
     return;
   }
   const work = db.prepare('SELECT * FROM works WHERE calendar_event_id = ?').get(event.id) as any;
-  if (work && work.status === 'unpaid' && !Number(work.amount)) {
+  if (work && work.status === 'unpaid' && isSyncPriced(work)) {
     db.prepare('DELETE FROM works WHERE id = ?').run(work.id);
     tally.removed++;
   }

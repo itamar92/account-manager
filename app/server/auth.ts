@@ -49,6 +49,11 @@ export function destroySession(req: Request, res: Response) {
   res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; Path=/; Max-Age=0`);
 }
 
+/** The token this request is authenticated with, so a password change can spare it. */
+export function currentSessionToken(req: Request): string | null {
+  return parseCookies(req)[SESSION_COOKIE] || null;
+}
+
 export function loadUser(req: Request, _res: Response, next: NextFunction) {
   const token = parseCookies(req)[SESSION_COOKIE];
   if (token) {

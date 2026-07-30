@@ -10,10 +10,19 @@ export interface CalendarRule {
   organizers: string;
   ignore_words: string;
   client_name: string | null;
+  /** Personal target: price per event, before VAT. 0 leaves the work unpriced. */
+  fixed_amount: number;
   skip_declined: number;
   match_description: number;
   enabled: number;
   sort_order: number;
+}
+
+/** A price is optional, so anything unparseable (or negative) means "no fixed price". */
+function normalizeAmount(value: unknown): number {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return 0;
+  return Math.round(amount * 100) / 100;
 }
 
 /** Splits a comma/newline separated field into trimmed, non-empty terms. */
@@ -38,8 +47,8 @@ export function createRule(input: RuleInput): CalendarRule {
   const id = uuid();
   db.prepare(
     `INSERT INTO calendar_rules (id, name, target, calendar_id, keywords, organizers, ignore_words,
-       client_name, skip_declined, match_description, enabled, sort_order)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       client_name, fixed_amount, skip_declined, match_description, enabled, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id,
     input.name?.trim() || 'כלל חדש',
@@ -49,6 +58,7 @@ export function createRule(input: RuleInput): CalendarRule {
     input.organizers ?? '',
     input.ignore_words ?? '',
     input.client_name?.trim() || null,
+    normalizeAmount(input.fixed_amount),
     input.skip_declined ? 1 : 0,
     input.match_description ? 1 : 0,
     input.enabled ? 1 : 0,
@@ -63,7 +73,8 @@ export function updateRule(id: string, input: RuleInput): CalendarRule {
   const merged = { ...existing, ...input };
   db.prepare(
     `UPDATE calendar_rules SET name = ?, target = ?, calendar_id = ?, keywords = ?, organizers = ?,
-       ignore_words = ?, client_name = ?, skip_declined = ?, match_description = ?, enabled = ?, sort_order = ?
+       ignore_words = ?, client_name = ?, fixed_amount = ?, skip_declined = ?, match_description = ?,
+       enabled = ?, sort_order = ?
      WHERE id = ?`
   ).run(
     String(merged.name).trim() || 'כלל חדש',
@@ -73,6 +84,7 @@ export function updateRule(id: string, input: RuleInput): CalendarRule {
     merged.organizers ?? '',
     merged.ignore_words ?? '',
     merged.client_name ? String(merged.client_name).trim() : null,
+    normalizeAmount(merged.fixed_amount),
     merged.skip_declined ? 1 : 0,
     merged.match_description ? 1 : 0,
     merged.enabled ? 1 : 0,
