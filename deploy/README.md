@@ -28,11 +28,30 @@ Oracle Cloud → Compute → Instances → Create.
   cut the Always Free A1 allowance from 4/24 to 2/12 in June 2026, so ask for
   2/12 — the app needs a fraction of it either way.
 - **Image**: Ubuntu 24.04 (ARM64 build — it must match the shape).
-- **Networking**: no public IPv4 needed. The tunnel does not require one.
+- **SSH keys**: upload your public key, or download the generated one *before*
+  creating — it cannot be retrieved afterwards.
+- **Networking**: assign a public IPv4. The tunnel does not need one — nothing
+  inbound ever reaches the app — but you still need a way to SSH in and
+  administer the box. Port 22 with key-only auth is the normal answer; the
+  alternative (no public IP, reaching it through OCI Bastion or the serial
+  console) makes routine maintenance painful for no real gain here.
 - If you hit `Out of capacity` (common for A1 in busy regions), either retry on a
   schedule or fall back to the AMD `VM.Standard.E2.1.Micro`. That shape works,
   but at 1 GB RAM you should build the image elsewhere and `docker load` it —
   `vite build` will not fit.
+
+If you already created the instance without a public IP, add one: instance →
+Resources → Attached VNICs → the primary VNIC → IPv4 Addresses → **⋮** on the
+private IP row → Edit → Public IP Type → Ephemeral.
+
+## 1a. Connect
+
+```bash
+ssh -i ~/path/to/private-key ubuntu@<public-ip>
+```
+
+`ubuntu` is the default user on Oracle's Ubuntu images. The `10.0.0.x` address
+shown alongside is the private IP — reachable only inside the VCN.
 
 Add swap regardless; SQLite and the Node build are both happier with it:
 
