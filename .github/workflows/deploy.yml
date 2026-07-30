@@ -1,0 +1,121 @@
+name: Deploy
+
+# The `git pull && docker compose up -d --build` from deploy/README.md, run for
+# you when master changes something the running app is built from. Everything
+# else in this repo — the Python scripts, the JSON ledgers, docs — is not part of
+# the image, so a commit touching only those does not redeploy.
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'app/**'
+      - 'deploy/**'
+      - 'invoices_2026.csv'   # baked into the image for the first-run seed
+      - '.github/workflows/deploy.yml'
+      - '.github/workflows/ci.yml'
+  workflow_dispatch:          # redeploy the current master on demand
+
+# One deploy at a time, and never cancel one half-done: the remote is mid-build
+# or mid-restart, and killing the SSH session does not stop it.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # Same typecheck and build as every pull request, on the commit being shipped.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://im-tools.org
+
+    steps:
+      # Fail with something readable rather than an ssh error nobody can place.
+      - name: Check secrets are configured
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          missing=""
+          [ -n "$HOST" ] || missing="$missing DEPLOY_HOST"
+          [ -n "$KEY" ] || missing="$missing DEPLOY_SSH_KEY"
+          [ -n "$KNOWN_HOSTS" ] || missing="$missing DEPLOY_KNOWN_HOSTS"
+          if [ -n "$missing" ]; then
+            echo "::error::missing repository secrets:$missing — see deploy/README.md § Automatic deploys"
+            exit 1
+          fi
+
+      - name: Configure SSH
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          # Pinned host keys, so a hijacked DNS record cannot collect this key.
+          # StrictHostKeyChecking=no would hand it to whoever answers.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      # Deploys the exact commit that was just verified, not "whatever master is
+      # by now" — two pushes in quick succession each ship what they tested.
+      #
+      # reset --hard drops tracked local edits on the VM but leaves untracked
+      # files alone, so deploy/.env survives.
+      - name: Pull and rebuild on the VM
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER_NAME: ${{ secrets.DEPLOY_USER || 'ubuntu' }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o BatchMode=yes \
+            "$USER_NAME@$HOST" "DEPLOY_SHA='${{ github.sha }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd /opt/account-manager
+          git fetch --prune origin master
+          git checkout master
+          git reset --hard "$DEPLOY_SHA"
+          echo "deploying $(git log -1 --oneline)"
+
+          cd deploy
+          docker compose up -d --build
+
+          # The image's own HEALTHCHECK is the readiness signal — the app is not
+          # published on a host port, so this is the only way in from the VM.
+          # cloudflared waits for the same condition before it forwards traffic.
+          container=$(docker compose ps -q app)
+          if [ -z "$container" ]; then
+            echo "no app container after up — the build or start failed"
+            docker compose ps
+            docker compose logs --tail 80
+            exit 1
+          fi
+
+          health=starting
+          for _ in $(seq 1 40); do
+            health=$(docker inspect -f '{{.State.Health.Status}}' "$container" 2>/dev/null || echo starting)
+            [ "$health" = healthy ] && break
+            [ "$health" = unhealthy ] && break
+            sleep 5
+          done
+
+          if [ "$health" != healthy ]; then
+            echo "app did not become healthy (last state: $health)"
+            docker compose ps
+            docker compose logs --tail 80 app
+            exit 1
+          fi
+
+          echo "app healthy"
+          docker compose ps
+          # Each build leaves the previous image dangling; the free tier's disk
+          # is small enough for that to matter within a few deploys.
+          docker image prune -f
+          REMOTE

@@ -187,6 +187,54 @@ cd deploy && docker compose up -d --build
 
 The database is in a named volume, untouched by rebuilds.
 
+## Automatic deploys
+
+`.github/workflows/deploy.yml` runs exactly that update over SSH when `master`
+changes something the image is built from — `app/`, `deploy/`, `invoices_2026.csv`
+or the workflows themselves. A commit touching only the Python scripts, the JSON
+ledgers or the docs does not redeploy. **Run workflow** on the Actions tab
+redeploys the current `master` on demand.
+
+It typechecks and builds the commit first (the same job every pull request runs),
+then on the VM resets to that exact commit — not to whatever `master` has become —
+rebuilds, and waits for the container's own healthcheck. A container that never
+reports healthy fails the run with the last 80 log lines, so a bad deploy is loud
+rather than silent. `reset --hard` drops *tracked* local edits on the VM and
+leaves untracked files alone, so `deploy/.env` survives.
+
+### The four secrets
+
+A deploy key first — its own key, not your personal one, so it can be revoked
+without locking you out:
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/am-deploy -C 'github-actions@account-manager' -N ''
+ssh-copy-id -i ~/.ssh/am-deploy.pub ubuntu@<public-ip>
+ssh-keyscan -t ed25519,rsa <public-ip>          # host keys, for the pin below
+```
+
+Then in **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Value |
+|--------|-------|
+| `DEPLOY_HOST` | the VM's public IP (or a DNS name pointing at it) |
+| `DEPLOY_SSH_KEY` | the whole of `~/.ssh/am-deploy` — the **private** key, `BEGIN`/`END` lines included. It must have no passphrase; nothing can type one |
+| `DEPLOY_KNOWN_HOSTS` | the `ssh-keyscan` output, verbatim |
+| `DEPLOY_USER` | *optional* — defaults to `ubuntu` |
+
+`DEPLOY_KNOWN_HOSTS` is what makes this safe to run unattended: the host keys are
+pinned, so a hijacked DNS record or a changed IP gets a refused connection instead
+of the deploy key. `StrictHostKeyChecking=no` would hand the key to whoever
+answered. If you rebuild the VM, re-run `ssh-keyscan` and update the secret.
+
+The user needs to be in the `docker` group (step 2 does that) and
+`/opt/account-manager` must already be the clone from step 4 — the workflow
+updates a checkout, it does not create one.
+
+To require a human click before each deploy, add a required reviewer to the
+`production` environment under **Settings → Environments**; the workflow already
+deploys into it.
+
 ## Notes
 
 - **Secrets live only in `deploy/.env`** on the VM (git-ignored, `chmod 600`).
