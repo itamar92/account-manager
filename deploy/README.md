@@ -288,6 +288,24 @@ to, it is worth confirming what you pinned: run
 `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the VM and check the
 fingerprint against `ssh-keygen -lf -` fed the keyscan output.
 
+**If `ssh-keyscan` fails** with `choose_kex: unsupported KEX method
+sntrup761x25519-sha512@openssh.com` and prints no keys — Windows OpenSSH against
+Ubuntu 24.04 does this, because `ssh-keyscan` takes the server's first-proposed
+KEX instead of negotiating one both ends know — read the keys off the VM instead.
+It is the better source anyway, being the server's own copy rather than whatever
+answered the address:
+
+```bash
+for f in /etc/ssh/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_rsa_key.pub; do
+  echo "<public-ip> $(cut -d' ' -f1,2 "$f")"
+done
+```
+
+Two lines of three fields — host, key type, key — which is the `known_hosts`
+format the secret wants. The host must match `DEPLOY_HOST` exactly: an entry for
+the IP does not authenticate a connection made to a DNS name, or the reverse.
+(Ordinary `ssh` is unaffected by this bug; it negotiates properly.)
+
 Then in **Settings → Secrets and variables → Actions → New repository secret**:
 
 | Secret | Value |
