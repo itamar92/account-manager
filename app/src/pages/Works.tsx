@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { get, post, del, nis } from '../api';
+import { get, post, put, del, nis } from '../api';
 import { Button, Card, Input, Modal, StatusBadge, Table, Empty } from '../ui';
 
 export function Works() {
@@ -11,6 +11,7 @@ export function Works() {
   const [searchParams] = useSearchParams();
   const [clientFilter, setClientFilter] = useState(searchParams.get('client') || '');
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
   const [form, setForm] = useState({ client_id: '', date: new Date().toISOString().slice(0, 10), description: '', amount: '' });
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -95,12 +96,28 @@ export function Works() {
     } catch (err: any) { setError(err.message); }
   };
 
-  const addWork = async (e: React.FormEvent) => {
+  const closeModal = () => {
+    setOpen(false);
+    setEditing(null);
+    setForm({ client_id: '', date: new Date().toISOString().slice(0, 10), description: '', amount: '' });
+  };
+
+  const startEdit = (w: any) => {
+    setForm({ client_id: w.client_id, date: w.date, description: w.description, amount: String(w.amount) });
+    setEditing(w.id);
+    setOpen(true);
+  };
+
+  const saveWork = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     try {
-      await post('/works', { ...form, amount: parseFloat(form.amount) });
-      setOpen(false);
-      setForm({ ...form, description: '', amount: '' });
+      if (editing) {
+        await put(`/works/${editing}`, { date: form.date, description: form.description, amount: parseFloat(form.amount) });
+      } else {
+        await post('/works', { ...form, amount: parseFloat(form.amount) });
+      }
+      closeModal();
       load();
     } catch (err: any) { setError(err.message); }
   };
@@ -134,7 +151,7 @@ export function Works() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">עבודות</h1>
-        <Button onClick={() => setOpen(true)}>+ עבודה חדשה</Button>
+        <Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -221,6 +238,7 @@ export function Works() {
                 <td className="px-3 py-2.5 text-left whitespace-nowrap">
                   {w.status === 'unpaid' && (
                     <div className="flex gap-2 justify-end">
+                      <button onClick={(e) => { e.stopPropagation(); startEdit(w); }} className="text-xs text-indigo-400 hover:underline">עריכה</button>
                       {w.calendar_event_id && (
                         <button onClick={(e) => { e.stopPropagation(); excludeFromCalendar(w); }}
                           className="text-xs text-amber-400 hover:underline">לא עבודה</button>
@@ -235,12 +253,12 @@ export function Works() {
         )}
       </Card>
 
-      <Modal title="עבודה חדשה" open={open} onClose={() => setOpen(false)}>
-        <form onSubmit={addWork} className="space-y-3">
+      <Modal title={editing ? 'עריכת עבודה' : 'עבודה חדשה'} open={open} onClose={closeModal}>
+        <form onSubmit={saveWork} className="space-y-3">
           <label className="block">
             <span className="block text-sm text-slate-400 mb-1">לקוח *</span>
-            <select required value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+            <select required disabled={!!editing} value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm disabled:opacity-60">
               <option value="">בחר לקוח…</option>
               {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
@@ -248,7 +266,7 @@ export function Works() {
           <Input label="תאריך *" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
           <Input label="פירוט *" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} required />
           <Input label='סכום לפני מע"מ *' type="number" step="0.01" dir="ltr" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
-          <Button type="submit" className="w-full">הוספה</Button>
+          <Button type="submit" className="w-full">{editing ? 'שמירה' : 'הוספה'}</Button>
         </form>
       </Modal>
     </div>
