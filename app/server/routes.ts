@@ -158,6 +158,43 @@ router.put('/clients/:id', requireOwner, handle((req, res) => {
   res.json({ client: db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id) });
 }));
 
+/**
+ * Deletes a client, with the guards that keep the books intact.
+ *
+ * A client with invoices is never deleted — that is billing history, and the invoices
+ * would be left pointing at nothing. Uninvoiced works are deletable along with the client,
+ * but only when the caller asks for it (`?delete_works=1`), so the row count is never a
+ * surprise. An enabled calendar rule pointing at the client blocks the delete outright:
+ * the next sync would recreate both the client and its works.
+ */
+router.delete('/clients/:id', requireOwner, handle((req, res) => {
+  const client = db.prepare('SELECT * FROM clients WHERE id = ?').get(req.params.id) as any;
+  if (!client) return res.status(404).json({ error: 'client not found' });
+
+  const invoices = (db.prepare('SELECT COUNT(*) AS n FROM invoices WHERE client_id = ?').get(client.id) as any).n;
+  if (invoices)
+    return res.status(409).json({ error: `ללקוח יש ${invoices} חשבוניות — לקוח עם היסטוריית חיוב לא נמחק` });
+
+  const rules = db.prepare(
+    "SELECT name FROM calendar_rules WHERE enabled = 1 AND target = 'personal' AND client_name = ?"
+  ).all(client.name) as Array<{ name: string }>;
+  if (rules.length)
+    return res.status(409).json({
+      error: `כלל יומן פעיל («${rules.map((r) => r.name).join('», «')}») מושך עבודות ללקוח הזה — כבה או שנה אותו קודם`,
+    });
+
+  const works = (db.prepare('SELECT COUNT(*) AS n FROM works WHERE client_id = ?').get(client.id) as any).n;
+  if (works && !req.query.delete_works)
+    return res.status(409).json({ error: `ללקוח יש ${works} עבודות שטרם חויבו`, works });
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM works WHERE client_id = ?').run(client.id);
+    db.prepare('DELETE FROM clients WHERE id = ?').run(client.id);
+  })();
+
+  res.json({ ok: true, deleted_works: works });
+}));
+
 // ============ works (owner) ============
 router.get('/works', requireOwner, handle((req, res) => {
   const { status, client_id } = req.query;

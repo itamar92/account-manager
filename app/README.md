@@ -66,6 +66,12 @@ cannot demote yourself.
   since otherwise the next sync would simply draw them again.
 - **Mark invoice paid** → all its works become `paid`. Cancelling an invoice releases its
   works back to `unpaid`.
+- **Delete a client** (`DELETE /api/clients/:id`) with three guards: a client holding
+  invoices is refused outright — that is billing history, and the invoices would be left
+  pointing at nothing; a client an *enabled* calendar rule feeds is refused too, since the
+  next sync would recreate both it and its works; and uninvoiced works are only deleted
+  along with it when the caller asks (`?delete_works=1`), which the UI does after saying
+  how many.
 - **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
 
