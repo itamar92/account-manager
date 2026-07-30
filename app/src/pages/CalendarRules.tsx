@@ -11,6 +11,7 @@ export interface Rule {
   organizers: string;
   ignore_words: string;
   client_name: string | null;
+  fixed_amount: number;
   skip_declined: number;
   match_description: number;
   enabled: number;
@@ -53,6 +54,7 @@ export function CalendarRules({ onChange, onError }: {
 }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [overrides, setOverrides] = useState<Override[]>([]);
+  const [clients, setClients] = useState<Array<{ id: string; name: string }>>([]);
   const [calendars, setCalendars] = useState<CalendarOption[] | null>(null);
   const [preview, setPreview] = useState<Record<string, any>>({});
   const [busy, setBusy] = useState('');
@@ -64,6 +66,7 @@ export function CalendarRules({ onChange, onError }: {
 
   useEffect(() => {
     load();
+    get('/clients').then((d) => setClients(d.clients)).catch(() => setClients([]));
     // Best effort: without Google credentials this 503s and the picker falls back to a text field.
     get('/integrations/calendar/calendars')
       .then((d) => setCalendars(d.calendars))
@@ -247,10 +250,20 @@ export function CalendarRules({ onChange, onError }: {
                 onChange={(e) => save(rule, { ignore_words: e.target.value })} placeholder="חזר, סאונדצ׳ק"
               />
               {rule.target === 'personal' && (
-                <Input
-                  label="לקוח לעבודות שייווצרו *" value={rule.client_name || ''}
-                  onChange={(e) => save(rule, { client_name: e.target.value })} placeholder="קרניבנד"
-                />
+                <>
+                  <label className="block">
+                    <span className="block text-sm text-slate-400 mb-1">לקוח לעבודות שייווצרו *</span>
+                    <ClientField
+                      value={rule.client_name || ''} clients={clients}
+                      onChange={(name) => save(rule, { client_name: name })}
+                    />
+                  </label>
+                  <AmountField
+                    label='מחיר קבוע לאירוע (₪, לפני מע"מ)'
+                    value={rule.fixed_amount}
+                    onChange={(amount) => save(rule, { fixed_amount: amount })}
+                  />
+                </>
               )}
               <div className="flex flex-col justify-end gap-1.5 pb-2 text-sm text-slate-400">
                 <label className="flex items-center gap-2">
@@ -275,6 +288,12 @@ export function CalendarRules({ onChange, onError }: {
             {rule.target === 'personal' && !rule.client_name?.trim() && (
               <div className="text-xs text-amber-400 mt-2">
                 בלי לקוח לא ייווצרו עבודות — האירועים התואמים ידולגו.
+              </div>
+            )}
+
+            {rule.target === 'personal' && rule.fixed_amount > 0 && (
+              <div className="text-xs text-slate-500 mt-2">
+                כל אירוע תואם ייפתח כעבודה בסך ₪{rule.fixed_amount} לפני מע"מ. סכום שכבר הזנת ידנית לא יידרס.
               </div>
             )}
 
@@ -313,6 +332,81 @@ export function CalendarRules({ onChange, onError }: {
         </div>
       )}
     </Card>
+  );
+}
+
+const NEW_CLIENT = '__new__';
+
+/**
+ * Picks the rule's client from the clients that exist, which is what you want almost always —
+ * with an escape hatch for naming a client that has not been created yet, since the sync
+ * creates one on first use. A name that no longer matches any client stays editable as text
+ * rather than being silently swapped for someone else.
+ */
+function ClientField({ value, clients, onChange }: {
+  value: string;
+  clients: Array<{ id: string; name: string }>;
+  onChange: (name: string) => void;
+}) {
+  const known = clients.some((c) => c.name === value);
+  const [typing, setTyping] = useState(false);
+  const asText = typing || clients.length === 0 || (!!value && !known);
+  const field = 'w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500';
+
+  if (asText) {
+    return (
+      <div className="flex gap-2">
+        <input
+          value={value} onChange={(e) => onChange(e.target.value)} placeholder="קרניבנד"
+          className={field} autoFocus={typing}
+        />
+        {clients.length > 0 && (
+          <button type="button" onClick={() => setTyping(false)}
+            className="text-xs text-indigo-400 hover:underline whitespace-nowrap">
+            מהרשימה
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      value={value} className={field}
+      onChange={(e) => {
+        if (e.target.value === NEW_CLIENT) { setTyping(true); onChange(''); }
+        else onChange(e.target.value);
+      }}
+    >
+      <option value="">בחר לקוח…</option>
+      {clients.map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+      <option value={NEW_CLIENT}>+ לקוח חדש…</option>
+    </select>
+  );
+}
+
+/**
+ * Money field that keeps what you typed while you type it — binding straight to the number
+ * would wipe a half-written "0." on its way to 0.5.
+ */
+function AmountField({ label, value, onChange }: {
+  label: string;
+  value: number;
+  onChange: (amount: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = draft ?? (value ? String(value) : '');
+  return (
+    <Input
+      label={label} type="number" min="0" step="0.01" dir="ltr" value={shown}
+      placeholder="0 — ללא מחיר קבוע"
+      onChange={(e) => {
+        setDraft(e.target.value);
+        const parsed = parseFloat(e.target.value);
+        onChange(Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+      }}
+      onBlur={() => setDraft(null)}
+    />
   );
 }
 

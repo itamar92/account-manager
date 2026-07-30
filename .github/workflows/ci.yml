@@ -1,0 +1,42 @@
+name: CI
+
+# The app is the only thing here with a build; the Python scripts and the JSON
+# ledgers alongside it are not compiled, so a change to them has nothing to check.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# A second push to the same branch makes the run in flight irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  app:
+    name: lint & build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Node 22 is what deploy/Dockerfile runs, so CI fails on what production
+      # would fail on rather than on a version nothing ships.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      # better-sqlite3 is native. Prebuilds cover linux/x64, but a version bump
+      # without one would fall back to node-gyp, which ubuntu-latest can run.
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run lint
+
+      - name: Build
+        run: npm run build

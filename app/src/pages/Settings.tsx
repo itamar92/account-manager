@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { get, post, del } from '../api';
+import { get, post, put, del } from '../api';
 import { Button, Card, Input, Modal, Empty } from '../ui';
 import { CalendarRules } from './CalendarRules';
 
@@ -10,6 +10,8 @@ export function Settings() {
   const [keyName, setKeyName] = useState('');
   const [userModal, setUserModal] = useState(false);
   const [userForm, setUserForm] = useState({ name: '', email: '', password: '', role: 'band' });
+  // Set while editing an existing member; null means the modal is creating a new one.
+  const [editUser, setEditUser] = useState<any | null>(null);
   const [vat, setVat] = useState('');
   const [syncing, setSyncing] = useState('');
   const [syncResult, setSyncResult] = useState('');
@@ -51,11 +53,32 @@ export function Settings() {
     } catch (err: any) { setError(err.message); }
   };
 
-  const addUser = async (e: React.FormEvent) => {
+  const openNewUser = () => {
+    setEditUser(null);
+    setUserForm({ name: '', email: '', password: '', role: 'band' });
+    setUserModal(true);
+  };
+
+  const openEditUser = (user: any) => {
+    setEditUser(user);
+    // Password starts empty and is only sent when filled in, so details can be corrected
+    // without resetting anyone's access.
+    setUserForm({ name: user.name, email: user.email, password: '', role: user.role });
+    setUserModal(true);
+  };
+
+  const saveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError('');
     try {
-      await post('/settings/users', userForm);
+      if (editUser) {
+        const { password, ...rest } = userForm;
+        await put(`/settings/users/${editUser.id}`, password ? userForm : rest);
+      } else {
+        await post('/settings/users', userForm);
+      }
       setUserModal(false);
+      setEditUser(null);
       setUserForm({ name: '', email: '', password: '', role: 'band' });
       load();
     } catch (err: any) { setError(err.message); }
@@ -123,12 +146,12 @@ export function Settings() {
             <h2 className="font-bold">משתמשים</h2>
             <p className="text-xs text-slate-500">חברי להקה (role: band) רואים רק את אזור Moonlight</p>
           </div>
-          <Button onClick={() => setUserModal(true)}>+ משתמש</Button>
+          <Button onClick={openNewUser}>+ משתמש</Button>
         </div>
         <div className="divide-y divide-slate-800/60">
           {data.users.map((u: any) => (
-            <div key={u.id} className="flex items-center justify-between py-2.5 text-sm">
-              <div>
+            <div key={u.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+              <div className="min-w-0">
                 <span className="font-medium">{u.name}</span>
                 <span className="text-slate-500 mr-2" dir="ltr">{u.email}</span>
               </div>
@@ -136,6 +159,7 @@ export function Settings() {
                 <span className={u.role === 'owner' ? 'text-indigo-400' : 'text-slate-400'}>
                   {u.role === 'owner' ? 'בעלים' : 'חבר להקה'}
                 </span>
+                <button onClick={() => openEditUser(u)} className="text-xs text-indigo-400 hover:underline">עריכה</button>
                 {u.role !== 'owner' && (
                   <button onClick={async () => { if (confirm('למחוק משתמש?')) { await del(`/settings/users/${u.id}`); load(); } }}
                     className="text-xs text-rose-400 hover:underline">מחיקה</button>
@@ -178,11 +202,21 @@ export function Settings() {
         </div>
       </Card>
 
-      <Modal title="משתמש חדש" open={userModal} onClose={() => setUserModal(false)}>
-        <form onSubmit={addUser} className="space-y-3">
+      <Modal
+        title={editUser ? `עריכת ${editUser.name}` : 'משתמש חדש'}
+        open={userModal}
+        onClose={() => { setUserModal(false); setEditUser(null); }}
+      >
+        <form onSubmit={saveUser} className="space-y-3">
           <Input label="שם *" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required />
           <Input label="אימייל *" type="email" dir="ltr" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required />
-          <Input label="סיסמה *" type="password" dir="ltr" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} required />
+          <Input
+            label={editUser ? 'סיסמה חדשה (רק אם רוצים לאפס)' : 'סיסמה *'}
+            type="password" dir="ltr" autoComplete="new-password"
+            placeholder={editUser ? 'ללא שינוי' : undefined}
+            value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })}
+            required={!editUser}
+          />
           <label className="block">
             <span className="block text-sm text-slate-400 mb-1">תפקיד</span>
             <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
@@ -191,7 +225,12 @@ export function Settings() {
               <option value="owner">בעלים (גישה מלאה)</option>
             </select>
           </label>
-          <Button type="submit" className="w-full">יצירה</Button>
+          {editUser && userForm.password && (
+            <p className="text-xs text-slate-500">
+              שינוי סיסמה מנתק את המשתמש מכל המכשירים שבהם הוא מחובר.
+            </p>
+          )}
+          <Button type="submit" className="w-full">{editUser ? 'שמירה' : 'יצירה'}</Button>
         </form>
       </Modal>
     </div>

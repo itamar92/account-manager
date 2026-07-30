@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { get, post, put, nis } from '../api';
+import { get, post, put, del, nis } from '../api';
 import { Button, Card, Input, Modal, Table, Empty } from '../ui';
 
 const emptyForm = { name: '', email: '', phone: '', tax_id: '', payment_terms_days: 30, notes: '' };
@@ -28,6 +28,23 @@ export function Clients() {
     } catch (err: any) { setError(err.message); }
   };
 
+  /**
+   * Deletes a client. Uninvoiced works go with it, but only after saying how many — the
+   * server refuses to touch them otherwise. A client with invoices, or one an enabled
+   * calendar rule feeds, is refused there and the reason is shown as-is.
+   */
+  const remove = async (client: any) => {
+    const works = client.unpaid_count
+      ? `\n\nיימחקו איתו גם ${client.unpaid_count} עבודות שטרם חויבו (${nis(client.unpaid_total)}).`
+      : '';
+    if (!confirm(`למחוק את הלקוח «${client.name}»?${works}`)) return;
+    setError('');
+    try {
+      await del(`/clients/${client.id}?delete_works=1`);
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -51,8 +68,11 @@ export function Clients() {
                   ) : '—'}
                 </td>
                 <td className="px-3 py-2.5">{c.open_invoices_total > 0 ? <span className="text-amber-400">{nis(c.open_invoices_total)}</span> : '—'}</td>
-                <td className="px-3 py-2.5 text-left">
-                  <button onClick={() => openEdit(c)} className="text-sm text-indigo-400 hover:underline">עריכה</button>
+                <td className="px-3 py-2.5 text-left whitespace-nowrap">
+                  <div className="flex gap-3 justify-end">
+                    <button onClick={() => openEdit(c)} className="text-sm text-indigo-400 hover:underline">עריכה</button>
+                    <button onClick={() => remove(c)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -13,6 +13,9 @@ export function Works() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ client_id: '', date: new Date().toISOString().slice(0, 10), description: '', amount: '' });
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [assignTo, setAssignTo] = useState('');
+  const [excludeCalendar, setExcludeCalendar] = useState(true);
   const navigate = useNavigate();
 
   const load = () => {
@@ -31,10 +34,18 @@ export function Works() {
     setSelected(next);
   };
 
+  const toggleAll = () => {
+    const selectable = works.filter((w) => w.status === 'unpaid');
+    setSelected(selected.size >= selectable.length && selectable.length > 0
+      ? new Set()
+      : new Set(selectable.map((w) => w.id)));
+  };
+
   const selectedWorks = works.filter((w) => selected.has(w.id));
   const selectedClientIds = useMemo(() => new Set(selectedWorks.map((w) => w.client_id)), [selectedWorks]);
   const selectedTotal = selectedWorks.reduce((s, w) => s + w.total, 0);
   const canInvoice = selected.size > 0 && selectedClientIds.size === 1;
+  const selectedFromCalendar = selectedWorks.filter((w) => w.calendar_event_id).length;
 
   const createInvoice = async () => {
     try {
@@ -43,6 +54,44 @@ export function Works() {
         work_ids: [...selected],
       });
       navigate(`/invoices?open=${d.invoice.id}`);
+    } catch (err: any) { setError(err.message); }
+  };
+
+  /**
+   * Deletes everything selected in one request. Works drawn from the calendar are also
+   * pinned out of it when asked — otherwise the next sync would simply draw them again.
+   */
+  const deleteSelected = async () => {
+    const suffix = excludeCalendar && selectedFromCalendar
+      ? ` ולסמן ${selectedFromCalendar} אירועים שלא יימשכו שוב מהיומן?`
+      : '?';
+    if (!confirm(`למחוק ${selected.size} עבודות${suffix}`)) return;
+    setError('');
+    setNotice('');
+    try {
+      const d = await post('/works/bulk-delete', {
+        ids: [...selected],
+        exclude_from_calendar: excludeCalendar,
+      });
+      setSelected(new Set());
+      setNotice(`נמחקו ${d.deleted} עבודות${d.excluded ? ` · ${d.excluded} אירועים לא יימשכו שוב` : ''}`);
+      if (d.locked?.length) setError(`${d.locked.length} עבודות נשארו — הן כבר מקושרות לחשבונית`);
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
+  /** Re-files the selected works under another client, for what a rule filed wrong. */
+  const assignClient = async (clientId: string) => {
+    setAssignTo('');
+    const client = clients.find((c) => c.id === clientId);
+    if (!client || !confirm(`להעביר ${selected.size} עבודות ללקוח «${client.name}»?`)) return;
+    setError('');
+    setNotice('');
+    try {
+      const d = await post('/works/bulk-client', { ids: [...selected], client_id: clientId });
+      setNotice(`${d.updated} עבודות הועברו ל«${client.name}»`);
+      if (d.locked?.length) setError(`${d.locked.length} עבודות לא הועברו — הן כבר מקושרות לחשבונית`);
+      load();
     } catch (err: any) { setError(err.message); }
   };
 
@@ -104,20 +153,55 @@ export function Works() {
       </div>
 
       {error && <div className="text-sm text-rose-400">{error}</div>}
+      {notice && <div className="text-sm text-emerald-400">{notice}</div>}
 
+      {/* Sticky: the actions belong next to the rows you are ticking, however far down the
+          table you have scrolled — not at the top of a page you have to scroll back to. */}
       {selected.size > 0 && (
-        <Card className="flex flex-wrap items-center justify-between gap-3 border-indigo-500/40">
-          <div className="text-sm">
-            נבחרו <b>{selected.size}</b> עבודות · סה"כ <b>{nis(selectedTotal)}</b>
-            {!canInvoice && <span className="text-amber-400 mr-2">— חשבונית אפשרית רק ללקוח אחד</span>}
+        <Card className="sticky top-2 z-30 border-indigo-500/40 bg-slate-900/95 backdrop-blur shadow-xl shadow-black/40 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="text-sm">
+              נבחרו <b>{selected.size}</b> עבודות · סה"כ <b>{nis(selectedTotal)}</b>
+              {!canInvoice && <span className="text-amber-400 mr-2">— חשבונית אפשרית רק ללקוח אחד</span>}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={assignTo}
+                onChange={(e) => { setAssignTo(e.target.value); if (e.target.value) assignClient(e.target.value); }}
+                className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm"
+              >
+                <option value="">שיוך ללקוח אחר…</option>
+                {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <Button variant="danger" onClick={deleteSelected}>מחיקת הנבחרות</Button>
+              <Button onClick={createInvoice} disabled={!canInvoice}>צור חשבונית</Button>
+            </div>
           </div>
-          <Button onClick={createInvoice} disabled={!canInvoice}>צור חשבונית מהעבודות שנבחרו</Button>
+          {selectedFromCalendar > 0 && (
+            <label className="flex items-center gap-2 text-xs text-slate-400">
+              <input type="checkbox" checked={excludeCalendar} onChange={(e) => setExcludeCalendar(e.target.checked)}
+                className="w-3.5 h-3.5 accent-indigo-500" />
+              <span>
+                מחיקה תסמן גם את {selectedFromCalendar} האירועים מהיומן כ«לא עבודה»
+                <span className="text-slate-600"> (אחרת הם יימשכו שוב בסנכרון הבא)</span>
+              </span>
+            </label>
+          )}
         </Card>
       )}
 
       <Card>
         {works.length === 0 ? <Empty text="אין עבודות" /> : (
-          <Table headers={['', 'תאריך', 'לקוח', 'פירוט', 'סכום', 'כולל מע"מ', 'סטטוס', '']}>
+          <Table
+            headers={[
+              <input
+                key="all" type="checkbox" className="accent-indigo-500" title="בחר הכל"
+                checked={selected.size > 0 && selected.size === works.filter((w) => w.status === 'unpaid').length}
+                onChange={toggleAll}
+              />,
+              'תאריך', 'לקוח', 'פירוט', 'סכום', 'כולל מע"מ', 'סטטוס', '',
+            ]}
+          >
             {works.map((w) => (
               <tr key={w.id} className={w.status === 'unpaid' ? 'hover:bg-slate-800/40 cursor-pointer' : 'opacity-75'} onClick={() => toggle(w)}>
                 <td className="px-3 py-2.5">

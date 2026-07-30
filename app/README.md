@@ -20,6 +20,10 @@ npm run dev        # http://localhost:3000
 
 Production: `npm run build && npm start`.
 
+`npm run lint` (`tsc --noEmit`) and `npm run build` are what CI runs on every pull request
+and every push to `master` — see [`.github/workflows/ci.yml`](../.github/workflows/ci.yml),
+which uses the same Node 22 the container ships.
+
 To deploy it on a server, see [`../deploy/README.md`](../deploy/README.md) —
 Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 
@@ -47,13 +51,31 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 First run also imports `../invoices_2026.csv` (Green Invoice export) and the Moonlight
 Finance data as the initial dataset.
 
+Members are editable in **Settings → משתמשים**: name, email, role, and a new password —
+left blank, the existing password stands, so details can be corrected without resetting
+anyone's access. Setting a password ends that user's other sessions but not the one making
+the change. Two guards keep the app reachable: the last owner cannot be demoted, and you
+cannot demote yourself.
+
 ## Core logic
 
 - **Works** (עבודות) are the atomic billable unit. Statuses: `unpaid → invoiced → paid`.
 - **Create invoice from works**: select unpaid works of one client → an invoice is created
   atomically and the works become `invoiced`.
+- **Bulk actions on the selection**: the same tick boxes also delete the selected works or
+  move them to another client. The action bar sticks to the top of the window, so it stays
+  reachable however far down the table you have scrolled. Only unpaid works can be deleted
+  or moved — anything already on an invoice is reported back as skipped rather than
+  silently changed. Deleting works the calendar created offers to pin their events out too,
+  since otherwise the next sync would simply draw them again.
 - **Mark invoice paid** → all its works become `paid`. Cancelling an invoice releases its
   works back to `unpaid`.
+- **Delete a client** (`DELETE /api/clients/:id`) with three guards: a client holding
+  invoices is refused outright — that is billing history, and the invoices would be left
+  pointing at nothing; a client an *enabled* calendar rule feeds is refused too, since the
+  next sync would recreate both it and its works; and uninvoiced works are only deleted
+  along with it when the caller asks (`?delete_works=1`), which the UI does after saying
+  how many.
 - **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
 
@@ -108,7 +130,8 @@ freelance client is another rule, not a code change.
 | מילות התעלמות | never drawn if any term appears; **overrides both include rules** |
 | דלג על אירועים שסירבת להם | skip events you declined in the calendar |
 | חפש גם בתיאור האירוע | search the description too, not just the title (off by default) |
-| לקוח | personal rules only: which client the created works belong to |
+| לקוח | personal rules only: which client the created works belong to — a dropdown of existing clients, with a free-text escape hatch for one that does not exist yet (the sync creates it on first use) |
+| מחיר קבוע לאירוע | personal rules only: the agreed price per event for that client, before VAT. 0 (the default) leaves each work unpriced |
 
 **Matching is title-only unless you opt in**, because descriptions carry running orders —
 `17:30-19:30 בלנס / 20:30 הופעה` — that contain the keyword while saying nothing about
@@ -128,14 +151,22 @@ defaults use stems for this reason.
 **Targets**
 
 - `band` → upserts into `band_events`. **Financial columns are never written by the sync**
-  — only venue, date and location. A show entered by hand is adopted by date rather than
-  duplicated.
-- `personal` → creates an unpaid **work** with amount 0 under the rule's client, ready for
-  you to price and invoice. An amount you entered is never overwritten, and once the work
-  has been invoiced the sync stops touching it entirely. A rule with no client creates
-  nothing and reports the events as skipped.
+  — only venue, date and location. A show entered by hand is adopted rather than
+  duplicated: same date and same name first, then any hand-entered show on that date.
+- `personal` → creates an unpaid **work** under the rule's client, priced at the rule's
+  fixed amount or left at 0 for you to price. A work already on the table for that client,
+  date and name is adopted instead of duplicated. An amount you entered is never
+  overwritten — a fixed price only fills a work still sitting at 0, so adding one to a rule
+  prices everything it drew that you have not touched. Once the work has been invoiced the
+  sync stops touching it entirely, and a rule with no client creates nothing and reports the
+  events as skipped.
 
-A cancelled calendar event is removed only while its row still holds no money.
+**Nothing is drawn twice.** The event id is the primary link, and a row that predates it is
+matched on date + name (compared ignoring case and spacing), so connecting the calendar to
+a table you had been keeping by hand links the rows instead of doubling them.
+
+A cancelled calendar event is removed only while its row holds no money of your own — an
+untouched 0, or exactly the fixed price the sync itself wrote.
 
 **Preview before you trust it.** `POST /api/calendar-rules/:id/preview` (the
 **תצוגה מקדימה** button) is a dry run that writes nothing and lists every event in the

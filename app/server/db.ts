@@ -177,6 +177,9 @@ CREATE TABLE IF NOT EXISTS calendar_rules (
   organizers TEXT NOT NULL DEFAULT '',    -- comma separated emails; for events you were invited to
   ignore_words TEXT NOT NULL DEFAULT '',  -- comma separated; wins over every include rule
   client_name TEXT,                       -- personal target: which client the work belongs to
+  -- Personal target: the agreed price per event for this client. 0 means "no fixed price",
+  -- which leaves the created work at 0 for you to price by hand.
+  fixed_amount REAL NOT NULL DEFAULT 0,
   skip_declined INTEGER NOT NULL DEFAULT 1,
   -- Off by default: descriptions hold running orders ("20:30 הופעה") that look like
   -- keywords but say nothing about whose show it is.
@@ -217,6 +220,7 @@ addColumnIfMissing('band_events', 'location', 'TEXT');
 addColumnIfMissing('works', 'calendar_event_id', 'TEXT');
 addColumnIfMissing('works', 'location', 'TEXT');
 addColumnIfMissing('calendar_rules', 'match_description', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('calendar_rules', 'fixed_amount', 'REAL NOT NULL DEFAULT 0');
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing
