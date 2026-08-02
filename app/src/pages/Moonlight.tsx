@@ -88,7 +88,7 @@ export function Moonlight() {
       )}
 
       {tab === 'eventExpenses' && (
-        <EventExpensesTab {...tabProps} expenses={eventExpenses} year={year} onYearChange={setYear} />
+        <EventExpensesTab {...tabProps} expenses={eventExpenses} events={allEvents} year={year} onYearChange={setYear} />
       )}
 
       {tab === 'generalExpenses' && (

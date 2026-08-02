@@ -230,6 +230,34 @@ export function EditableCell({
   );
 }
 
+/**
+ * A table cell holding one of a fixed set of values, saved as soon as you pick one. Separate
+ * from EditableCell because there is nothing to type and nothing to commit — the choice is
+ * the edit.
+ */
+export function SelectCell({ value, options, onSave, disabled, className }: {
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onSave: (value: string) => void | Promise<void>;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const current = options.find((o) => o.value === value);
+  if (disabled) return <span className={className}>{current?.label || '—'}</span>;
+  return (
+    <select
+      value={value}
+      onChange={(e) => onSave(e.target.value)}
+      className={clsx(
+        'bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-indigo-500',
+        className
+      )}
+    >
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </select>
+  );
+}
+
 /** Years to offer in a filter: this year down, far enough back to cover the seeded history. */
 function recentYears(span = 6): number[] {
   const current = new Date().getFullYear();
