@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import { del, post, put, nis } from '../../api';
-import { Button, Card, EditableCell, Empty, Table, YearSelect } from '../../ui';
-import { MEMBERS, type TabProps } from './shared';
+import { Button, Card, EditableCell, Empty, SelectCell, Table, YearSelect } from '../../ui';
+import { MEMBERS, PAYMENT_STATUSES, PAYMENT_STATUS_STYLES, type TabProps } from './shared';
 
 interface Props extends TabProps {
   events: any[];
@@ -125,7 +125,8 @@ export function IncomeTab({
                 checked={selected.size > 0 && selected.size === events.length}
                 onChange={() => setSelected(selected.size === events.length ? new Set() : new Set(events.map((e) => e.id)))} />
             ) : '',
-            '', 'מקום', 'תאריך', 'כרטיסים', 'לפני מע"מ', 'הוצאות', 'רווח', 'דמי הפקה', 'שולם לנגנים', isOwner ? '' : ' ',
+            '', 'מקום', 'תאריך', 'כרטיסים', 'לפני מע"מ', 'הוצאות', 'רווח', 'סטטוס תשלום', 'דמי הפקה', 'שולם לנגנים',
+            isOwner ? '' : ' ',
           ]}>
             {events.map((e) => {
               const isOpen = expanded.has(e.id);
@@ -173,6 +174,11 @@ export function IncomeTab({
                       {nis(e.profit)}
                     </td>
                     <td className="px-3 py-2.5">
+                      <SelectCell value={e.payment_status || 'waiting_report'} options={PAYMENT_STATUSES}
+                        disabled={!isOwner} className={PAYMENT_STATUS_STYLES[e.payment_status]}
+                        onSave={(v) => saveField(e.id, { payment_status: v })} />
+                    </td>
+                    <td className="px-3 py-2.5">
                       <EditableCell type="checkbox" value={e.has_commission} disabled={!isOwner}
                         onSave={(v) => saveField(e.id, { has_commission: v })} />
                     </td>
@@ -191,7 +197,7 @@ export function IncomeTab({
                   </tr>
                   {isOpen && (
                     <tr className="bg-slate-800/20">
-                      <td colSpan={11} className="px-4 py-3">
+                      <td colSpan={12} className="px-4 py-3">
                         <DivisionPanel event={e} isOwner={isOwner} onSave={saveField} />
                       </td>
                     </tr>

@@ -15,6 +15,22 @@ export function eventLabel(event: { venue: string; date: string }): string {
   return y && m && d ? `${event.venue} - ${d}/${m}/${y}` : event.venue;
 }
 
+/** Where a show's money has got to, in the order it moves through. */
+export const PAYMENT_STATUSES = [
+  { value: 'waiting_report', label: 'ממתין לדוח' },
+  { value: 'invoice_sent', label: 'חשבונית נשלחה' },
+  { value: 'received', label: 'התקבל' },
+];
+
+export const PAYMENT_STATUS_STYLES: Record<string, string> = {
+  waiting_report: 'text-amber-400',
+  invoice_sent: 'text-sky-400',
+  received: 'text-emerald-400',
+};
+
+export const paymentStatusLabel = (value: string) =>
+  PAYMENT_STATUSES.find((s) => s.value === value)?.label || value;
+
 export interface TabProps {
   isOwner: boolean;
   onError: (message: string) => void;

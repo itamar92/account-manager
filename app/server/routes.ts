@@ -18,8 +18,9 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  deleteEventCascade, ensureExpenseRow, eventLabel, expenseRowForEvent, expenseTotal, getEvent,
-  recomputeEvent, syncExpenseLabel,
+  deleteEventCascade, ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent,
+  expenseTotal, getEvent, normalizePaymentStatus, reassignExpenseRow, recomputeEvent,
+  syncExpenseLabel,
 } from './moonlight.js';
 
 /**
@@ -154,7 +155,7 @@ router.get('/dashboard', requireOwner, handle((_req, res) => {
      ORDER BY i.date DESC, i.created_at DESC LIMIT 8`
   ).all();
   const band = bandSummary();
-  res.json({ openInvoices, paidYtd, unpaidWorks, monthly, recentInvoices, band });
+  res.json({ openInvoices, paidYtd, unpaidWorks, monthly, recentInvoices, band, bandFollowUps: bandFollowUps() });
 }));
 
 // ============ clients (owner) ============
@@ -386,6 +387,38 @@ router.post('/invoices/:id/status', requireOwner, handle((req, res) => {
 }));
 
 // ============ moonlight (owner + band members) ============
+/**
+ * The two follow-up lists for the band: shows whose money has not arrived, and shows whose
+ * suppliers have not been paid. Both are about shows that already happened — a gig next month
+ * owing nobody anything yet is not a loose end.
+ */
+function bandFollowUps() {
+  const today = new Date().toISOString().slice(0, 10);
+  const past = db
+    .prepare('SELECT * FROM band_events WHERE date <= ? ORDER BY date DESC')
+    .all(today) as any[];
+
+  const awaitingPayment = past
+    .filter((e) => e.payment_status !== 'received')
+    .map((e) => ({
+      id: e.id, venue: e.venue, date: e.date,
+      amount: round2(Number(e.amount_pre_vat) || 0),
+      payment_status: e.payment_status,
+    }));
+
+  const owedToSuppliers = past
+    .map((e) => ({ event: e, outstanding: expenseOutstanding(expenseRowForEvent(e.id)) }))
+    .filter((r) => r.outstanding > 0)
+    .map((r) => ({ id: r.event.id, venue: r.event.venue, date: r.event.date, outstanding: r.outstanding }));
+
+  return {
+    awaitingPayment,
+    awaitingPaymentTotal: round2(awaitingPayment.reduce((s, e) => s + e.amount, 0)),
+    owedToSuppliers,
+    owedToSuppliersTotal: round2(owedToSuppliers.reduce((s, e) => s + e.outstanding, 0)),
+  };
+}
+
 function bandSummary(range: { from?: string; to?: string } = {}) {
   const eventsWhere = rangeClause('date', range);
   const events = db.prepare(`SELECT * FROM band_events${eventsWhere.sql}`).all(...eventsWhere.params) as any[];
@@ -453,11 +486,12 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   const id = uuid();
   db.prepare(
     `INSERT INTO band_events (id, venue, date, tickets, amount_pre_vat, amount_with_vat,
-      receiver, invoice, has_commission, paid_to_musicians)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      receiver, invoice, has_commission, paid_to_musicians, payment_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, b.venue, b.date, b.tickets || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
-    b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0
+    b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0,
+    normalizePaymentStatus(b.payment_status) || 'waiting_report'
   );
   ensureExpenseRow(getEvent(id));
   res.json({ event: recomputeEvent(id) });
@@ -480,12 +514,13 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
 
   db.prepare(
     `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?,
-      receiver=?, invoice=?, has_commission=?, paid_to_musicians=?, division_mode=?,
+      receiver=?, invoice=?, has_commission=?, paid_to_musicians=?, division_mode=?, payment_status=?,
       amir=?, itamar=?, yuval=?, guy=?
      WHERE id=?`
   ).run(
     b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat,
     b.receiver, b.invoice, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0, divisionMode,
+    normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',
     b.amir, b.itamar, b.yuval, b.guy, req.params.id
   );
   const updated = getEvent(req.params.id);
@@ -524,6 +559,15 @@ const EVENT_EXPENSE_MONEY = ['tickets', 'campaign', 'refreshments', 'design', 'o
   'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer', 'vat_summary'] as const;
 const EVENT_EXPENSE_FLAGS = ['akom_paid', 'hall_fee_paid', 'sound_company_paid', 'bracelets_paid',
   'lightman_paid', 'soundman_paid', 'singer_paid'] as const;
+
+/**
+ * Attaches an existing expense row to a show — the manual counterpart to the migration, for
+ * the rows whose written-out name could not be matched to one automatically.
+ */
+router.post('/moonlight/event-expenses/:id/assign', requireOwner, handle((req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : null;
+  res.json({ expense: reassignExpenseRow(req.params.id, eventId) });
+}));
 
 router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id) as any;

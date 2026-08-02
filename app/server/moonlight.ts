@@ -52,6 +52,19 @@ export function expensePaidTotal(row: any): number {
   );
 }
 
+/** How far along a show's payment is. The order is the order it moves through. */
+export const PAYMENT_STATUSES = ['waiting_report', 'invoice_sent', 'received'] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+export function normalizePaymentStatus(value: unknown): PaymentStatus | undefined {
+  return PAYMENT_STATUSES.includes(value as PaymentStatus) ? (value as PaymentStatus) : undefined;
+}
+
+/** What is still owed to the suppliers of one show. */
+export function expenseOutstanding(row: any): number {
+  return round2(expenseTotal(row) - expensePaidTotal(row));
+}
+
 export interface Division { amir: number; itamar: number; yuval: number; guy: number; commission_amount: number }
 
 /**
@@ -153,6 +166,52 @@ export const recomputeEvent = db.transaction((eventId: string) => {
     ).run(expenses, expensesPaid, profit, d.amir, d.itamar, d.yuval, d.guy, d.commission_amount, eventId);
   }
   return getEvent(eventId);
+});
+
+/**
+ * Points an existing expense row at a different show, or at none.
+ *
+ * Rows written before the two tables were linked name their show in prose, and the migration
+ * only adopts the ones it can match beyond doubt — this is how the rest get attached by hand.
+ * The costs already typed into the row are what moves; the label is rewritten from the show it
+ * lands on, since the show owns the name.
+ *
+ * The show it leaves is given a fresh empty row rather than keeping the numbers that walked
+ * away, so both shows' totals are right afterwards.
+ */
+export const reassignExpenseRow = db.transaction((expenseId: string, eventId: string | null) => {
+  const row = db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(expenseId) as any;
+  if (!row) throw Object.assign(new Error('expense row not found'), { status: 404 });
+
+  const target = eventId ? getEvent(eventId) : undefined;
+  if (eventId && !target) throw Object.assign(new Error('event not found'), { status: 400 });
+  if (target && target.id === row.event_id) return row;
+
+  // One row per show. The empty row every show is created with carries nothing, so it gives
+  // way; a row with costs already typed into it does not, since that would hide real numbers.
+  if (target) {
+    const occupant = expenseRowForEvent(target.id);
+    if (occupant && occupant.id !== expenseId) {
+      if (expenseTotal(occupant) > 0) {
+        throw Object.assign(
+          new Error(`ל«${eventLabel(target.venue, target.date)}» כבר יש שורת הוצאות עם סכומים — רוקנו אותה קודם`),
+          { status: 409 }
+        );
+      }
+      db.prepare('DELETE FROM band_event_expenses WHERE id = ?').run(occupant.id);
+    }
+  }
+
+  const previousId: string | null = row.event_id;
+  db.prepare('UPDATE band_event_expenses SET event_id = ?, event = ? WHERE id = ?')
+    .run(target?.id ?? null, target ? eventLabel(target.venue, target.date) : row.event, expenseId);
+
+  if (previousId && previousId !== target?.id) {
+    ensureExpenseRow(getEvent(previousId));
+    recomputeEvent(previousId);
+  }
+  if (target) recomputeEvent(target.id);
+  return db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(expenseId);
 });
 
 /**
