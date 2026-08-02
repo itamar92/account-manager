@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { get, nis } from '../api';
 import { Card, StatCard, StatusBadge, Empty } from '../ui';
+import { MEMBERS } from './moonlight/shared';
 
 export function Dashboard() {
   const [data, setData] = useState<any>(null);
@@ -74,15 +75,10 @@ export function Dashboard() {
           <Link to="/moonlight" className="text-sm text-indigo-400 hover:underline">לאזור המלא ←</Link>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            ['אמיר', data.band.amir],
-            ['איתמר', data.band.itamar],
-            ['יובל', data.band.yuval],
-            ['גיא', data.band.guy],
-          ].map(([name, amount]) => (
-            <div key={name as string} className="bg-slate-800/50 rounded-xl p-3 text-center">
-              <div className="text-sm text-slate-400">{name}</div>
-              <div className="text-lg font-bold text-indigo-300">{nis(amount as number)}</div>
+          {MEMBERS.map((m) => (
+            <div key={m.key} className="bg-slate-800/50 rounded-xl p-3 text-center">
+              <div className="text-sm text-slate-400">{m.name}</div>
+              <div className="text-lg font-bold text-indigo-300">{nis(data.band[m.key])}</div>
             </div>
           ))}
         </div>

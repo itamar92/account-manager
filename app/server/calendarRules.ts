@@ -240,18 +240,39 @@ export function evaluate(
 }
 
 /**
- * Strips the term that matched off the front of a title so the stored name reads naturally:
- * "הופעה קולדפליי זאפה חיפה" becomes "קולדפליי זאפה חיפה". Only a leading occurrence is
- * removed — "בכורה הופעה MADONNA" keeps its shape.
+ * Strips the rule's own words off the front of a title so the stored name reads naturally:
+ * with keywords "הופעה, קולדפליי", the calendar entry "הופעה קולדפליי זאפה חיפה" is stored as
+ * "זאפה חיפה".
+ *
+ * Every keyword the rule searches for is stripped, not just the one that happened to match,
+ * because the word marking an entry as a show and the word naming the act are both noise in
+ * the venue column — and both are the user's own rule, so nothing is hardcoded here. Only
+ * leading occurrences go: "בכורה הופעה MADONNA" keeps its shape. A title made entirely of
+ * rule words is left alone rather than stored blank.
  */
-export function cleanTitle(event: CalendarEvent, verdict: MatchVerdict): string {
+export function cleanTitle(event: CalendarEvent, verdict: MatchVerdict, rule?: CalendarRule): string {
   const summary = (event.summary || '').trim();
   if (!summary) return 'אירוע';
-  if (verdict.matched && verdict.reason === 'keyword') {
-    const stripped = summary.replace(new RegExp(`^\\s*${escapeRegExp(verdict.term)}\\s*`, 'i'), '').trim();
-    return stripped || summary;
+  if (!verdict.matched) return summary;
+
+  const terms = parseTerms(rule?.keywords);
+  // An organizer match has no term of its own, but its title may still carry the prefix.
+  if (!terms.length && verdict.reason === 'keyword') terms.push(verdict.term);
+  if (!terms.length) return summary;
+
+  let title = summary;
+  let stripped = true;
+  while (stripped) {
+    stripped = false;
+    for (const term of terms) {
+      const next = title.replace(new RegExp(`^\\s*${escapeRegExp(term)}\\s*[-–:]*\\s*`, 'i'), '');
+      if (next !== title) {
+        title = next;
+        stripped = true;
+      }
+    }
   }
-  return summary;
+  return title.trim() || summary;
 }
 
 function escapeRegExp(s: string): string {

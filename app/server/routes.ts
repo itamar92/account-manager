@@ -17,6 +17,10 @@ import {
   updateRule, type CalendarRule,
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
+import {
+  deleteEventCascade, ensureExpenseRow, eventLabel, expenseRowForEvent, expenseTotal, getEvent,
+  recomputeEvent, syncExpenseLabel,
+} from './moonlight.js';
 
 /**
  * Drops the rows a calendar event produced, so excluding it takes effect at once.
@@ -29,7 +33,10 @@ function removeRowsForEvent(eventId: string): number {
   if (event) {
     const moneyFields = ['tickets', 'amount_pre_vat', 'amount_with_vat', 'expenses', 'expenses_paid',
       'profit', 'commission_amount', 'amir', 'itamar', 'yuval', 'guy'];
-    if (moneyFields.every((f) => !Number(event[f]))) {
+    // Its expense row is created empty with the show, so an untouched one does not count as
+    // bookkeeping — but anything typed into it does.
+    if (moneyFields.every((f) => !Number(event[f])) && !expenseTotal(expenseRowForEvent(event.id))) {
+      db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(event.id);
       db.prepare('DELETE FROM band_events WHERE id = ?').run(event.id);
       removed++;
     }
@@ -59,6 +66,29 @@ function handle(fn: (req: any, res: any) => void) {
       res.status(err.status || 500).json({ error: err.message || 'internal error' });
     }
   };
+}
+
+/**
+ * The date window a list is asking for. Every end is optional: the tables ask for one year,
+ * the moonlight summary can ask for any span, and callers that ask for nothing — the
+ * dashboard — keep getting everything.
+ */
+function dateRange(query: any): { from?: string; to?: string } {
+  const year = parseInt(query?.year, 10);
+  if (Number.isFinite(year) && year > 1970) return { from: `${year}-01-01`, to: `${year}-12-31` };
+  return {
+    from: typeof query?.from === 'string' && query.from ? query.from : undefined,
+    to: typeof query?.to === 'string' && query.to ? query.to : undefined,
+  };
+}
+
+/** The same window as a WHERE clause, for queries that have no other filters. */
+function rangeClause(column: string, range: { from?: string; to?: string }): { sql: string; params: string[] } {
+  const parts: string[] = [];
+  const params: string[] = [];
+  if (range.from) { parts.push(`${column} >= ?`); params.push(range.from); }
+  if (range.to) { parts.push(`${column} <= ?`); params.push(range.to); }
+  return { sql: parts.length ? ` WHERE ${parts.join(' AND ')}` : '', params };
 }
 
 /** Same as `handle`, for routes that await network calls — a rejected promise still answers. */
@@ -205,6 +235,9 @@ router.get('/works', requireOwner, handle((req, res) => {
   const params: any[] = [];
   if (status) { sql += ' AND w.status = ?'; params.push(status); }
   if (client_id) { sql += ' AND w.client_id = ?'; params.push(client_id); }
+  const range = dateRange(req.query);
+  if (range.from) { sql += ' AND w.date >= ?'; params.push(range.from); }
+  if (range.to) { sql += ' AND w.date <= ?'; params.push(range.to); }
   sql += ' ORDER BY w.date DESC';
   res.json({ works: db.prepare(sql).all(...params) });
 }));
@@ -317,7 +350,12 @@ router.get('/invoices', requireOwner, handle((req, res) => {
                (SELECT COUNT(*) FROM works w WHERE w.invoice_id = i.id) AS works_count
              FROM invoices i JOIN clients c ON c.id = i.client_id`;
   const params: any[] = [];
-  if (status) { sql += ' WHERE i.status = ?'; params.push(status); }
+  const filters: string[] = [];
+  if (status) { filters.push('i.status = ?'); params.push(status); }
+  const range = dateRange(req.query);
+  if (range.from) { filters.push('i.date >= ?'); params.push(range.from); }
+  if (range.to) { filters.push('i.date <= ?'); params.push(range.to); }
+  if (filters.length) sql += ` WHERE ${filters.join(' AND ')}`;
   sql += ' ORDER BY i.date DESC, i.created_at DESC';
   const invoices = (db.prepare(sql).all(...params) as any[]).map((inv) => ({
     ...inv,
@@ -348,9 +386,12 @@ router.post('/invoices/:id/status', requireOwner, handle((req, res) => {
 }));
 
 // ============ moonlight (owner + band members) ============
-function bandSummary() {
-  const events = db.prepare('SELECT * FROM band_events').all() as any[];
-  const general = db.prepare('SELECT * FROM band_general_expenses').all() as any[];
+function bandSummary(range: { from?: string; to?: string } = {}) {
+  const eventsWhere = rangeClause('date', range);
+  const events = db.prepare(`SELECT * FROM band_events${eventsWhere.sql}`).all(...eventsWhere.params) as any[];
+  const general = db
+    .prepare(`SELECT * FROM band_general_expenses${eventsWhere.sql}`)
+    .all(...eventsWhere.params) as any[];
   const sum = (arr: any[], key: string) => round2(arr.reduce((acc, r) => acc + (Number(r[key]) || 0), 0));
   return {
     totalRevenue: sum(events, 'amount_pre_vat'),
@@ -361,74 +402,211 @@ function bandSummary() {
     yuval: sum(events, 'yuval'),
     guy: sum(events, 'guy'),
     fundExpenses: sum(general, 'fund'),
+    generalExpenses: sum(general, 'amount'),
+    eventCount: events.length,
     upcomingEvents: events.filter((e) => e.date >= new Date().toISOString().slice(0, 10)).length,
   };
 }
 
-router.get('/moonlight/summary', requireAuth, handle((_req, res) => {
-  res.json({ summary: bandSummary() });
+router.get('/moonlight/summary', requireAuth, handle((req, res) => {
+  res.json({ summary: bandSummary(dateRange(req.query)) });
 }));
 
-router.get('/moonlight/events', requireAuth, handle((_req, res) => {
-  res.json({ events: db.prepare('SELECT * FROM band_events ORDER BY date').all() });
+router.get('/moonlight/events', requireAuth, handle((req, res) => {
+  const where = rangeClause('date', dateRange(req.query));
+  res.json({ events: db.prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`).all(...where.params) });
 }));
 
-router.get('/moonlight/event-expenses', requireAuth, handle((_req, res) => {
-  res.json({ expenses: db.prepare('SELECT * FROM band_event_expenses ORDER BY created_at').all() });
+/**
+ * Expense rows follow their show's date. Rows that never found a show stay in the list
+ * whatever the filter says — they are the ones most in need of attention.
+ */
+router.get('/moonlight/event-expenses', requireAuth, handle((req, res) => {
+  const range = dateRange(req.query);
+  const filters: string[] = [];
+  const params: string[] = [];
+  if (range.from) { filters.push('e.date >= ?'); params.push(range.from); }
+  if (range.to) { filters.push('e.date <= ?'); params.push(range.to); }
+  const where = filters.length ? ` WHERE x.event_id IS NULL OR (${filters.join(' AND ')})` : '';
+  res.json({
+    expenses: db.prepare(
+      `SELECT x.*, e.date AS event_date, e.venue AS event_venue
+       FROM band_event_expenses x LEFT JOIN band_events e ON e.id = x.event_id${where}
+       ORDER BY e.date IS NULL DESC, e.date, x.created_at`
+    ).all(...params),
+  });
 }));
 
-router.get('/moonlight/general-expenses', requireAuth, handle((_req, res) => {
-  res.json({ expenses: db.prepare('SELECT * FROM band_general_expenses ORDER BY date DESC').all() });
+router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
+  const where = rangeClause('date', dateRange(req.query));
+  res.json({
+    expenses: db.prepare(`SELECT * FROM band_general_expenses${where.sql} ORDER BY date DESC`).all(...where.params),
+  });
 }));
 
 // Writes to moonlight data are owner-only; band members are view-only.
+// `expenses`, `expenses_paid` and `profit` are never taken from the client: they are derived
+// from the show's expense row by recomputeEvent.
 router.post('/moonlight/events', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.venue || !b.date) return res.status(400).json({ error: 'venue and date are required' });
   const id = uuid();
   db.prepare(
-    `INSERT INTO band_events (id, venue, date, tickets, amount_pre_vat, amount_with_vat, expenses, expenses_paid, profit,
-      receiver, invoice, has_commission, commission_amount, paid_to_musicians, amir, itamar, yuval, guy)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO band_events (id, venue, date, tickets, amount_pre_vat, amount_with_vat,
+      receiver, invoice, has_commission, paid_to_musicians)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, b.venue, b.date, b.tickets || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
-    b.expenses || 0, b.expenses_paid || 0, b.profit || 0, b.receiver || null, b.invoice || null,
-    b.has_commission ? 1 : 0, b.commission_amount || 0, b.paid_to_musicians ? 1 : 0,
-    b.amir || 0, b.itamar || 0, b.yuval || 0, b.guy || 0
+    b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0
   );
-  res.json({ event: db.prepare('SELECT * FROM band_events WHERE id = ?').get(id) });
+  ensureExpenseRow(getEvent(id));
+  res.json({ event: recomputeEvent(id) });
 }));
 
+/** The member shares are the only fields whose presence changes the row's mode. */
+const DIVISION_FIELDS = ['amir', 'itamar', 'yuval', 'guy'] as const;
+
 router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
-  const existing = db.prepare('SELECT * FROM band_events WHERE id = ?').get(req.params.id) as any;
+  const existing = getEvent(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'event not found' });
-  const b = { ...existing, ...req.body };
+  const body = req.body || {};
+  const b = { ...existing, ...body };
+
+  // Typing a share by hand takes the division over; asking for 'auto' hands it back.
+  const touchedDivision = DIVISION_FIELDS.some((f) => body[f] !== undefined);
+  const divisionMode = body.division_mode === 'auto' ? 'auto'
+    : touchedDivision ? 'manual'
+    : existing.division_mode || 'auto';
+
   db.prepare(
-    `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?, expenses=?, expenses_paid=?,
-      profit=?, receiver=?, invoice=?, has_commission=?, commission_amount=?, paid_to_musicians=?, amir=?, itamar=?, yuval=?, guy=?
+    `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?,
+      receiver=?, invoice=?, has_commission=?, paid_to_musicians=?, division_mode=?,
+      amir=?, itamar=?, yuval=?, guy=?
      WHERE id=?`
   ).run(
-    b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat, b.expenses, b.expenses_paid,
-    b.profit, b.receiver, b.invoice, b.has_commission ? 1 : 0, b.commission_amount,
-    b.paid_to_musicians ? 1 : 0, b.amir, b.itamar, b.yuval, b.guy, req.params.id
+    b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat,
+    b.receiver, b.invoice, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0, divisionMode,
+    b.amir, b.itamar, b.yuval, b.guy, req.params.id
   );
-  res.json({ event: db.prepare('SELECT * FROM band_events WHERE id = ?').get(req.params.id) });
+  const updated = getEvent(req.params.id);
+  ensureExpenseRow(updated);
+  syncExpenseLabel(updated);
+  res.json({ event: recomputeEvent(req.params.id) });
 }));
+
+router.delete('/moonlight/events/:id', requireOwner, handle((req, res) => {
+  // Excluding is the default: deleting a synced show without it just invites the next sync
+  // to put it straight back.
+  const flag = req.query.exclude_from_calendar;
+  const result = deleteEventCascade(req.params.id, flag !== '0' && flag !== 'false');
+  if (!result.deleted) return res.status(404).json({ error: 'event not found' });
+  res.json(result);
+}));
+
+router.post('/moonlight/events/bulk-delete', requireOwner, handle((req, res) => {
+  const ids = bulkIds(req.body);
+  const exclude = !!req.body?.exclude_from_calendar;
+  const run = db.transaction(() => {
+    let deleted = 0;
+    let excluded = 0;
+    for (const id of ids) {
+      const result = deleteEventCascade(id, exclude);
+      deleted += result.deleted;
+      excluded += result.excluded;
+    }
+    return { deleted, excluded };
+  });
+  res.json(run());
+}));
+
+/** The label and its link are owned by the show, so neither is editable here. */
+const EVENT_EXPENSE_MONEY = ['tickets', 'campaign', 'refreshments', 'design', 'other', 'expense_amount',
+  'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer', 'vat_summary'] as const;
+const EVENT_EXPENSE_FLAGS = ['akom_paid', 'hall_fee_paid', 'sound_company_paid', 'bracelets_paid',
+  'lightman_paid', 'soundman_paid', 'singer_paid'] as const;
+
+router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
+  const existing = db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: 'expense row not found' });
+  const body = req.body || {};
+
+  const sets: string[] = [];
+  const params: any[] = [];
+  for (const field of EVENT_EXPENSE_MONEY) {
+    if (body[field] === undefined) continue;
+    sets.push(`${field} = ?`);
+    params.push(Number(body[field]) || 0);
+  }
+  for (const field of EVENT_EXPENSE_FLAGS) {
+    if (body[field] === undefined) continue;
+    sets.push(`${field} = ?`);
+    params.push(body[field] ? 1 : 0);
+  }
+  for (const field of ['status', 'paid_by'] as const) {
+    if (body[field] === undefined) continue;
+    sets.push(`${field} = ?`);
+    params.push(body[field] || null);
+  }
+  if (sets.length) {
+    db.prepare(`UPDATE band_event_expenses SET ${sets.join(', ')} WHERE id = ?`).run(...params, req.params.id);
+  }
+  if (existing.event_id) recomputeEvent(existing.event_id);
+  res.json({
+    expense: db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id),
+    event: existing.event_id ? getEvent(existing.event_id) : null,
+  });
+}));
+
+/** Turns a show id into the label the expense row displays; '' means the general bucket. */
+function generalExpenseEvent(eventId: unknown): { event_id: string | null; event: string } {
+  if (!eventId) return { event_id: null, event: 'כללי' };
+  const event = getEvent(String(eventId)) as any;
+  if (!event) throw Object.assign(new Error('event not found'), { status: 400 });
+  return { event_id: event.id, event: eventLabel(event.venue, event.date) };
+}
 
 router.post('/moonlight/general-expenses', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.date || !b.description) return res.status(400).json({ error: 'date and description are required' });
   const id = uuid();
+  const link = generalExpenseEvent(b.event_id);
   db.prepare(
-    `INSERT INTO band_general_expenses (id, date, description, event, paid_by, amount, amir, amir_returned,
-      itamar, itamar_returned, yuval, yuval_returned, fund, fund_returned)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO band_general_expenses (id, date, description, event, event_id, paid_by, amount, paid,
+      amir, amir_returned, itamar, itamar_returned, yuval, yuval_returned, fund, fund_returned)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, b.date, b.description, b.event || 'כללי', b.paid_by || null, b.amount || 0,
+    id, b.date, b.description, link.event, link.event_id, b.paid_by || null, b.amount || 0, b.paid ? 1 : 0,
     b.amir || 0, b.amir_returned || null, b.itamar || 0, b.itamar_returned || null,
     b.yuval || 0, b.yuval_returned || null, b.fund || 0, b.fund_returned || null
   );
   res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(id) });
+}));
+
+router.put('/moonlight/general-expenses/:id', requireOwner, handle((req, res) => {
+  const existing = db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: 'expense not found' });
+  const body = req.body || {};
+  const b = { ...existing, ...body };
+  // The label always follows the linked show, so it is never taken from the client.
+  const link = body.event_id !== undefined
+    ? generalExpenseEvent(body.event_id)
+    : { event_id: existing.event_id, event: existing.event };
+  db.prepare(
+    `UPDATE band_general_expenses SET date=?, description=?, event=?, event_id=?, paid_by=?, amount=?, paid=?,
+      amir=?, amir_returned=?, itamar=?, itamar_returned=?, yuval=?, yuval_returned=?, fund=?, fund_returned=?
+     WHERE id=?`
+  ).run(
+    b.date, b.description, link.event, link.event_id, b.paid_by || null, Number(b.amount) || 0, b.paid ? 1 : 0,
+    b.amir || 0, b.amir_returned || null, b.itamar || 0, b.itamar_returned || null,
+    b.yuval || 0, b.yuval_returned || null, b.fund || 0, b.fund_returned || null, req.params.id
+  );
+  res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(req.params.id) });
+}));
+
+router.delete('/moonlight/general-expenses/:id', requireOwner, handle((req, res) => {
+  const result = db.prepare('DELETE FROM band_general_expenses WHERE id = ?').run(req.params.id);
+  if (!result.changes) return res.status(404).json({ error: 'expense not found' });
+  res.json({ deleted: 1 });
 }));
 
 // ============ integrations: Morning (Green Invoice) + Google Calendar (owner) ============
