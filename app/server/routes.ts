@@ -9,7 +9,8 @@ import {
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
-import { morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
+import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
+import { buildMorningDraft, morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -441,10 +442,23 @@ router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, 
   res.json({ result: await pullFromMorning({ days }) });
 }));
 
+/** Pre-fills the issue dialog with the document Morning is about to be asked for. */
+router.get('/invoices/:id/morning-draft', requireOwner, handle((req, res) => {
+  res.json({ draft: buildMorningDraft(req.params.id) });
+}));
+
 /** Issues a local invoice as a real document in Morning and adopts its number. */
 router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (req, res) => {
-  const docType = req.body?.doc_type != null ? parseInt(req.body.doc_type, 10) : undefined;
-  const result = await pushInvoiceToMorning(req.params.id, docType);
+  const b = req.body || {};
+  const result = await pushInvoiceToMorning(req.params.id, {
+    docType: b.doc_type != null ? parseInt(b.doc_type, 10) : undefined,
+    date: b.date || undefined,
+    dueDate: b.due_date || undefined,
+    description: b.description,
+    remarks: b.remarks,
+    clientEmail: b.client_email,
+    sendEmail: Boolean(b.send_email),
+  });
   res.json({ result, invoice: getInvoice(req.params.id) });
 }));
 
@@ -525,6 +539,8 @@ router.get('/settings', requireOwner, handle((_req, res) => {
       app_name: getSetting('app_name', 'Account Manager'),
       morning_sync_days: getMorningSyncDays(),
     },
+    business: getBusinessDetails(),
+    business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
     integrations: { morning: morningStatus(), calendar: calendarStatus() },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
@@ -538,6 +554,11 @@ router.post('/settings', requireOwner, handle((req, res) => {
   if (app_name) setSetting('app_name', app_name);
   if (morning_sync_days != null) setSetting('morning_sync_days', String(parseInt(morning_sync_days, 10) || 90));
   res.json({ ok: true });
+}));
+
+/** The letterhead shown in the Morning issue preview. Local only — Morning is not told. */
+router.post('/settings/business', requireOwner, handle((req, res) => {
+  res.json({ business: setBusinessDetails(req.body || {}) });
 }));
 
 router.post('/settings/users', requireOwner, handle((req, res) => {

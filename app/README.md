@@ -115,6 +115,27 @@ a missing credential is visible rather than silent.
   document and stores the returned id and number. An invoice that already exists in
   Morning is rejected with 409 rather than duplicated.
 
+  Issuing goes through a two-step dialog rather than a bare confirm, because the document
+  it produces cannot be deleted — only credited. `GET /api/invoices/:id/morning-draft`
+  pre-fills the first step with the document's own fields, in the order they appear on the
+  document: type (חשבון עסקה / חשבונית מס / חשבונית מס קבלה), client and email, document
+  date, due date, subject (שם המסמך) and remarks. The second step renders the document as
+  it will be issued, and only its final button calls the push. Confirming the dialog
+  untouched issues exactly what the plain push would have.
+
+  The preview's letterhead comes from **Settings → פרטי העסק** (`POST /api/settings/business`):
+  name, business type, ח.פ / ע.מ, address, contact details and a logo URL, stored as
+  `business_*` settings. They are local only — Morning holds the authoritative copy and
+  renders the issued document from its own template, so nothing here is sent to it. With
+  the details unset the preview says so rather than drawing an empty letterhead.
+
+  The due date defaults to **שוטף + N** — end of the document's month plus the client's
+  `payment_terms_days` (30 unless the client says otherwise) — and follows the document
+  date until it is edited by hand. Whatever the dialog changed is written back to the local
+  invoice too, and an email typed for a client that had none is saved to the client card so
+  the next document fills it in. The document is only emailed to the client on an explicit
+  tick.
+
 ### Google Calendar → shows and personal work
 
 Which events get drawn is configured in **Settings → אילו אירועים למשוך מהיומן** as a list

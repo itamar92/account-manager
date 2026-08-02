@@ -15,12 +15,15 @@ export function Settings() {
   const [vat, setVat] = useState('');
   const [syncing, setSyncing] = useState('');
   const [syncResult, setSyncResult] = useState('');
+  const [business, setBusiness] = useState<any>(null);
+  const [businessSaved, setBusinessSaved] = useState('');
 
   const load = () =>
     get('/settings')
       .then((d) => {
         setData(d);
         setVat(String(d.settings.vat_percent));
+        setBusiness(d.business);
       })
       .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -88,6 +91,20 @@ export function Settings() {
     try { await post('/settings', { vat_percent: parseFloat(vat) }); load(); } catch (err: any) { setError(err.message); }
   };
 
+  const saveBusiness = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setBusinessSaved('');
+    try {
+      const d = await post('/settings/business', business);
+      setBusiness(d.business);
+      setBusinessSaved('פרטי העסק נשמרו');
+    } catch (err: any) { setError(err.message); }
+  };
+
+  const setBusinessField = (key: string, value: string) =>
+    setBusiness((b: any) => ({ ...b, [key]: value }));
+
   if (!data) return <Empty text="טוען…" />;
 
   return (
@@ -102,6 +119,42 @@ export function Settings() {
           <Button variant="ghost" onClick={saveVat}>שמירה</Button>
         </div>
       </Card>
+
+      {business && (
+        <Card>
+          <h2 className="font-bold mb-1">פרטי העסק</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            הכותרת שמוצגת בתצוגה המקדימה לפני הנפקה ב-Morning. המסמך עצמו מונפק לפי תבנית העיצוב
+            שמוגדרת ב-Morning — הפרטים כאן לא נשלחים אליו, אלא רק משלימים את התצוגה.
+          </p>
+          {businessSaved && <div className="text-sm text-emerald-400 mb-3">{businessSaved}</div>}
+          <form onSubmit={saveBusiness} className="grid gap-3 md:grid-cols-2">
+            <Input label="שם העסק" value={business.name || ''} onChange={(e) => setBusinessField('name', e.target.value)} />
+            <label className="block">
+              <span className="block text-sm text-slate-400 mb-1">סוג העסק</span>
+              <select value={business.type || ''} onChange={(e) => setBusinessField('type', e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+                <option value="">ללא</option>
+                {data.business_types.map((t: any) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </label>
+            <Input label="ח.פ / ע.מ" dir="ltr" value={business.taxId || ''} onChange={(e) => setBusinessField('taxId', e.target.value)} />
+            <Input label="טלפון" dir="ltr" value={business.phone || ''} onChange={(e) => setBusinessField('phone', e.target.value)} />
+            <Input label="כתובת" value={business.address || ''} onChange={(e) => setBusinessField('address', e.target.value)} />
+            <Input label="עיר" value={business.city || ''} onChange={(e) => setBusinessField('city', e.target.value)} />
+            <Input label="אימייל" type="email" dir="ltr" value={business.email || ''} onChange={(e) => setBusinessField('email', e.target.value)} />
+            <Input label="אתר" dir="ltr" value={business.website || ''} onChange={(e) => setBusinessField('website', e.target.value)} />
+            <div className="md:col-span-2">
+              <Input label="קישור ללוגו" dir="ltr" placeholder="https://…"
+                value={business.logoUrl || ''} onChange={(e) => setBusinessField('logoUrl', e.target.value)} />
+              <p className="text-xs text-slate-500 mt-1">כתובת תמונה מלאה (https) — הלוגו עצמו נשאר מוגדר ב-Morning.</p>
+            </div>
+            <div className="md:col-span-2">
+              <Button type="submit">שמירת פרטי העסק</Button>
+            </div>
+          </form>
+        </Card>
+      )}
 
       <Card>
         <h2 className="font-bold mb-1">חיבורים</h2>

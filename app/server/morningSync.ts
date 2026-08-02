@@ -1,5 +1,10 @@
 import { db, uuid, getVatPercent, getMorningSyncDays, setSetting, getSetting } from './db.js';
-import { REVENUE_DOC_TYPES, CREDIT_DOC_TYPES, isRevenueDoc, DOC_TYPE } from './docTypes.js';
+import {
+  REVENUE_DOC_TYPES, CREDIT_DOC_TYPES, isRevenueDoc, DOC_TYPE,
+  ISSUABLE_DOC_TYPES, issuableDocTypeOptions,
+} from './docTypes.js';
+import { computeDueDate } from './invoiceService.js';
+import { getBusinessDetails, type BusinessDetails } from './business.js';
 import {
   createDocument, documentUrl, isMorningConfigured, MorningError, searchAllDocuments, type MorningDocument,
 } from './morningClient.js';
@@ -175,37 +180,198 @@ export interface PushResult {
   url: string | null;
 }
 
-/**
- * Issues a local invoice as a real document in Morning and adopts the number Morning
- * assigns, replacing the provisional `AM-*` number.
- */
-export async function pushInvoiceToMorning(invoiceId: string, docType?: number): Promise<PushResult> {
+/** The fields the issue dialog fills in, mirroring Morning's own document form. */
+export interface PushInvoiceOptions {
+  docType?: number;
+  date?: string;
+  dueDate?: string;
+  /** "שם המסמך" */
+  description?: string;
+  /** "הערות" printed on the document */
+  remarks?: string;
+  clientEmail?: string;
+  sendEmail?: boolean;
+}
+
+type InvoiceRow = {
+  id: string;
+  number: string;
+  doc_type: number;
+  date: string;
+  due_date: string | null;
+  subtotal: number;
+  vat_amount: number;
+  total: number;
+  status: string;
+  external_id: string | null;
+  notes: string | null;
+  client_id: string;
+  client_name: string;
+  client_email: string | null;
+  client_tax_id: string | null;
+  client_phone: string | null;
+  payment_terms_days: number;
+};
+
+type WorkRow = { id: string; date: string; description: string; amount: number; vat_amount: number; total: number };
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function loadInvoiceForPush(invoiceId: string): InvoiceRow {
   const invoice = db
     .prepare(
-      `SELECT i.*, c.name AS client_name FROM invoices i JOIN clients c ON c.id = i.client_id WHERE i.id = ?`
+      `SELECT i.*, c.name AS client_name, c.email AS client_email, c.tax_id AS client_tax_id,
+              c.phone AS client_phone, c.payment_terms_days
+       FROM invoices i JOIN clients c ON c.id = i.client_id WHERE i.id = ?`
     )
-    .get(invoiceId) as any;
+    .get(invoiceId) as InvoiceRow | undefined;
   if (!invoice) throw new MorningError('invoice not found', 404);
   if (invoice.external_id)
     throw new MorningError(`החשבונית כבר קיימת ב-Morning (${invoice.external_id})`, 409);
   if (invoice.status === 'cancelled') throw new MorningError('אי אפשר לשלוח חשבונית מבוטלת', 400);
+  return invoice;
+}
 
-  const works = db.prepare('SELECT description, amount FROM works WHERE invoice_id = ? ORDER BY date').all(
-    invoiceId
-  ) as Array<{ description: string; amount: number }>;
+function loadWorksForPush(invoiceId: string): WorkRow[] {
+  const works = db
+    .prepare('SELECT id, date, description, amount, vat_amount, total FROM works WHERE invoice_id = ? ORDER BY date')
+    .all(invoiceId) as WorkRow[];
   if (!works.length) throw new MorningError('לחשבונית אין שורות לשליחה', 400);
+  return works;
+}
+
+/**
+ * A sensible "שם המסמך" to start from: one line speaks for itself, several are summarised
+ * by the period they cover — which is how a month of gigs reads on a real invoice.
+ */
+function defaultDocumentName(works: WorkRow[]): string {
+  if (works.length === 1) return works[0].description;
+  const months = [...new Set(works.map((w) => (w.date || '').slice(0, 7)).filter(Boolean))].sort();
+  const label = (m: string) => `${m.slice(5, 7)}/${m.slice(0, 4)}`;
+  if (!months.length) return `${works.length} עבודות`;
+  return months.length === 1
+    ? `עבודות ${label(months[0])}`
+    : `עבודות ${label(months[0])}–${label(months[months.length - 1])}`;
+}
+
+export interface MorningDraft {
+  invoiceId: string;
+  number: string;
+  configured: boolean;
+  business: BusinessDetails;
+  docType: number;
+  docTypes: Array<{ value: number; label: string }>;
+  date: string;
+  dueDate: string;
+  paymentTermsDays: number;
+  description: string;
+  remarks: string;
+  client: { id: string; name: string; email: string; taxId: string; phone: string };
+  lines: Array<{ id: string; date: string; description: string; amount: number; vatAmount: number; total: number }>;
+  subtotal: number;
+  vatAmount: number;
+  total: number;
+  vatPercent: number;
+}
+
+/**
+ * Everything the issue dialog needs to open pre-filled — the same values `pushInvoiceToMorning`
+ * would use on its own, so confirming the dialog untouched issues exactly what the plain
+ * push would have.
+ */
+export function buildMorningDraft(invoiceId: string): MorningDraft {
+  const invoice = loadInvoiceForPush(invoiceId);
+  const works = loadWorksForPush(invoiceId);
+  const termsDays = invoice.payment_terms_days ?? 30;
+
+  return {
+    invoiceId,
+    number: invoice.number,
+    configured: isMorningConfigured(),
+    business: getBusinessDetails(),
+    docType: ISSUABLE_DOC_TYPES.includes(invoice.doc_type) ? invoice.doc_type : DOC_TYPE.TAX_INVOICE,
+    docTypes: issuableDocTypeOptions(),
+    date: invoice.date,
+    dueDate: invoice.due_date || computeDueDate(invoice.date, termsDays),
+    paymentTermsDays: termsDays,
+    description: defaultDocumentName(works),
+    remarks: invoice.notes || '',
+    client: {
+      id: invoice.client_id,
+      name: invoice.client_name,
+      email: invoice.client_email || '',
+      taxId: invoice.client_tax_id || '',
+      phone: invoice.client_phone || '',
+    },
+    lines: works.map((w) => ({
+      id: w.id,
+      date: w.date,
+      description: w.description,
+      amount: w.amount,
+      vatAmount: w.vat_amount,
+      total: w.total,
+    })),
+    subtotal: invoice.subtotal,
+    vatAmount: invoice.vat_amount,
+    total: invoice.total,
+    vatPercent: getVatPercent(),
+  };
+}
+
+/**
+ * Issues a local invoice as a real document in Morning and adopts the number Morning
+ * assigns, replacing the provisional `AM-*` number.
+ *
+ * Whatever the dialog changed — document type, dates, subject, remarks — is written back
+ * to the local invoice as well, so the two copies of the document agree.
+ */
+export async function pushInvoiceToMorning(
+  invoiceId: string,
+  options: PushInvoiceOptions = {}
+): Promise<PushResult> {
+  const invoice = loadInvoiceForPush(invoiceId);
+  const works = loadWorksForPush(invoiceId);
+
+  const docType = options.docType ?? invoice.doc_type ?? DOC_TYPE.TAX_INVOICE;
+  if (!ISSUABLE_DOC_TYPES.includes(docType))
+    throw new MorningError(`סוג מסמך ${docType} לא ניתן להנפקה מכאן`, 400);
+
+  const date = options.date || invoice.date;
+  const dueDate = options.dueDate || invoice.due_date || computeDueDate(date, invoice.payment_terms_days ?? 30);
+  if (dueDate < date) throw new MorningError('תאריך התשלום מוקדם מתאריך המסמך', 400);
+
+  const email = (options.clientEmail ?? invoice.client_email ?? '').trim();
+  if (email && !EMAIL_RE.test(email)) throw new MorningError('כתובת המייל של הלקוח לא תקינה', 400);
+  if (options.sendEmail && !email)
+    throw new MorningError('אי אפשר לשלוח את המסמך במייל בלי כתובת מייל ללקוח', 400);
 
   const doc = await createDocument({
-    type: docType ?? invoice.doc_type ?? DOC_TYPE.TAX_INVOICE,
+    type: docType,
     clientName: invoice.client_name,
-    date: invoice.date,
+    clientEmails: email ? [email] : [],
+    clientTaxId: invoice.client_tax_id || undefined,
+    date,
+    dueDate,
+    description: (options.description || '').trim() || undefined,
+    remarks: (options.remarks || '').trim() || undefined,
+    sendEmail: Boolean(options.sendEmail),
     lines: works.map((w) => ({ description: w.description, price: w.amount })),
   });
   if (!doc?.id) throw new MorningError('Morning לא החזיר מזהה מסמך');
 
-  db.prepare('UPDATE invoices SET external_id = ?, number = ?, doc_type = ?, source = ? WHERE id = ?').run(
-    doc.id, String(doc.number ?? invoice.number), doc.type ?? invoice.doc_type, 'morning', invoiceId
+  const remarks = (options.remarks || '').trim();
+  db.prepare(
+    `UPDATE invoices SET external_id = ?, number = ?, doc_type = ?, date = ?, due_date = ?,
+       notes = ?, source = ? WHERE id = ?`
+  ).run(
+    doc.id, String(doc.number ?? invoice.number), doc.type ?? docType, date, dueDate,
+    remarks || invoice.notes, 'morning', invoiceId
   );
+
+  // Fills a gap, never overwrites: an address typed into the dialog is what makes the
+  // client's email auto-fill next time round.
+  if (email && !invoice.client_email)
+    db.prepare('UPDATE clients SET email = ? WHERE id = ?').run(email, invoice.client_id);
 
   return {
     invoiceId,

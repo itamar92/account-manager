@@ -125,9 +125,15 @@ export interface CreateDocumentInput {
   type: number;
   clientName: string;
   clientId?: string;
+  clientEmails?: string[];
+  clientTaxId?: string;
   lines: Array<{ description: string; price: number; quantity?: number }>;
   date?: string;
+  dueDate?: string;
+  /** "שם המסמך" — the subject line printed at the head of the document. */
+  description?: string;
   currency?: string;
+  /** "הערות" — free text printed at the foot of the document. */
   remarks?: string;
   /** Green Invoice emails the document to the client when true. Off by default. */
   sendEmail?: boolean;
@@ -135,15 +141,21 @@ export interface CreateDocumentInput {
 
 export async function createDocument(input: CreateDocumentInput): Promise<MorningDocument> {
   const currency = input.currency || 'ILS';
+  const emails = (input.clientEmails ?? []).filter(Boolean);
   return request<MorningDocument>('POST', '/documents', {
     type: input.type,
+    lang: 'he',
     client: {
       ...(input.clientId ? { id: input.clientId } : {}),
       name: input.clientName,
       add: !input.clientId, // let Morning create the client when we have no id for it
+      ...(emails.length ? { emails } : {}),
+      ...(input.clientTaxId ? { taxId: input.clientTaxId } : {}),
     },
     currency,
     date: input.date,
+    ...(input.dueDate ? { dueDate: input.dueDate } : {}),
+    ...(input.description ? { description: input.description } : {}),
     income: input.lines.map((l) => ({
       description: l.description,
       quantity: l.quantity ?? 1,
@@ -151,7 +163,8 @@ export async function createDocument(input: CreateDocumentInput): Promise<Mornin
       currency,
     })),
     ...(input.remarks ? { remarks: input.remarks } : {}),
-    ...(input.sendEmail ? {} : { lang: 'he', sendEmail: false }),
+    // Only ever emailed on an explicit request, and only when there is an address to use.
+    sendEmail: Boolean(input.sendEmail && emails.length),
   });
 }
 
