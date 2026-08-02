@@ -78,6 +78,13 @@ cannot demote yourself.
   how many.
 - **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
+- **Deleting an expense row** (`DELETE /api/moonlight/event-expenses/:id`) means two
+  different things, because every show owns exactly one row. A row assigned to a show is
+  **emptied** — its amounts go, the empty row stays behind to type into, and the show's
+  totals are recomputed (`{deleted: 0, cleared: 1}`). A row assigned to nothing — a leftover
+  from before the two tables were linked — is **deleted** (`{deleted: 1, cleared: 0}`). The
+  expenses tab labels the button accordingly (ניקוי / מחיקה) and says which it is doing
+  before it does it. General expenses are plain rows and delete outright.
 
 ### Document types and revenue
 
@@ -181,6 +188,29 @@ defaults use stems for this reason.
   prices everything it drew that you have not touched. Once the work has been invoiced the
   sync stops touching it entirely, and a rule with no client creates nothing and reports the
   events as skipped.
+
+**The name a synced row is stored under is not the calendar title.** Two things come off it:
+
+1. **Show words, always**: `הופעה`, `הופעות`, `מופע`, `מופעים`, `גיג`, `גיגים`, `show`,
+   `shows`, `gig`, `gigs`. They mark an entry as a show without naming it, so they are noise
+   in the venue column wherever they stand and are removed from every synced title along
+   with any separator they leave dangling. Whole words only — `הופעת בכורה` and `גיגית` are
+   untouched.
+2. **The rule's own keywords, off the front**: the word naming the act is noise in that
+   column too. Only leading occurrences go, since a keyword in the middle of a name is
+   usually part of it.
+
+So a rule keyed on `קולדפליי` stores `הופעה קולדפליי גריי תל אביב` as **`גריי תל אביב`**. A
+title made entirely of these words keeps its original text rather than being stored blank,
+and the preview shows the name each row would actually be stored under.
+
+**A name you type by hand wins from then on.** Renaming a synced show (or a synced work's
+description) sets `venue_locked` / `description_locked`, and the next sync updates that
+row's date and location while leaving the name alone — so a correction is not undone by
+re-syncing. A show adopted by date whose hand-typed name differs from the calendar title is
+locked on adoption for the same reason. The lock is shown as a ✎ next to the name in the
+income tab; clicking it hands the name back to the calendar, and the next sync renames the
+row to the cleaned title again.
 
 **Nothing is drawn twice.** The event id is the primary link, and a row that predates it is
 matched on date + name (compared ignoring case and spacing), so connecting the calendar to

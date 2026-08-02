@@ -230,6 +230,10 @@ addColumnIfMissing('band_event_expenses', 'event_id', 'TEXT');
 addColumnIfMissing('band_events', 'payment_status', "TEXT NOT NULL DEFAULT 'waiting_report'");
 addColumnIfMissing('band_general_expenses', 'paid', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('band_general_expenses', 'event_id', 'TEXT');
+// A name typed by hand outranks the calendar. Set the moment someone renames a synced show or
+// work, and from then on the sync updates its date and place but leaves the name alone.
+addColumnIfMissing('band_events', 'venue_locked', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing

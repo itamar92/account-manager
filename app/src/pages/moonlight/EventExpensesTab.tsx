@@ -1,5 +1,5 @@
 import React from 'react';
-import { post, put, nis } from '../../api';
+import { del, post, put, nis } from '../../api';
 import { Card, Combobox, EditableCell, Empty, Table, YearSelect } from '../../ui';
 import { eventLabel, type TabProps } from './shared';
 
@@ -29,13 +29,17 @@ interface Props extends TabProps {
 }
 
 /**
- * The cost side of each show. There is no add or delete here: every show in the income tab
- * owns exactly one row, created with it, and its name is the show's name plus the date — so
- * the two tables can never disagree about which gig a cost belongs to.
+ * The cost side of each show. There is no add here: every show in the income tab owns exactly
+ * one row, created with it, and its name is the show's name plus the date — so the two tables
+ * can never disagree about which gig a cost belongs to.
  *
- * The one exception is the assignment itself. Rows written before the tables were linked name
- * their show in prose, and the ones that could not be matched automatically are attached here
- * by hand — which is also how a row filed against the wrong show gets moved.
+ * Deleting follows from that. A row assigned to a show is emptied rather than removed, since
+ * the show it belongs to still needs somewhere to write costs; a row assigned to nothing is a
+ * leftover and goes for good.
+ *
+ * The assignment itself is the other thing done here. Rows written before the tables were
+ * linked name their show in prose, and the ones that could not be matched automatically are
+ * attached by hand — which is also how a row filed against the wrong show gets moved.
  */
 export function EventExpensesTab({ expenses, events, year, onYearChange, isOwner, onError, reload }: Props) {
   const saveField = async (id: string, patch: Record<string, any>) => {
@@ -56,6 +60,18 @@ export function EventExpensesTab({ expenses, events, year, onYearChange, isOwner
     } catch (err: any) { onError(err.message); }
   };
 
+  const removeRow = async (row: any) => {
+    const question = row.event_id
+      ? `לרוקן את שורת ההוצאות של «${row.event}»? כל הסכומים בשורה יימחקו והיא תישאר ריקה.`
+      : `למחוק את שורת ההוצאות «${row.event}»? היא לא משויכת לאף הופעה.`;
+    if (!confirm(question)) return;
+    onError('');
+    try {
+      await del(`/moonlight/event-expenses/${row.id}`);
+      reload();
+    } catch (err: any) { onError(err.message); }
+  };
+
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -67,7 +83,7 @@ export function EventExpensesTab({ expenses, events, year, onYearChange, isOwner
       </div>
 
       {expenses.length === 0 ? <Empty text="אין נתונים בטווח הזה" /> : (
-        <Table headers={['הופעה', ...COLUMNS.map((c) => c.label), 'מע"מ', 'סה"כ']}>
+        <Table headers={['הופעה', ...COLUMNS.map((c) => c.label), 'מע"מ', 'סה"כ', isOwner ? '' : ' ']}>
           {expenses.map((x) => (
             <tr key={x.id} className="hover:bg-slate-800/40 align-top">
               <td className="px-3 py-2.5 font-medium whitespace-nowrap min-w-[14rem]">
@@ -110,6 +126,13 @@ export function EventExpensesTab({ expenses, events, year, onYearChange, isOwner
                   disabled={!isOwner} onSave={(v) => saveField(x.id, { vat_summary: v })} />
               </td>
               <td className="px-3 py-2.5 font-medium text-rose-400 whitespace-nowrap">{nis(rowTotal(x))}</td>
+              <td className="px-3 py-2.5 text-left whitespace-nowrap">
+                {isOwner && (
+                  <button onClick={() => removeRow(x)} className="text-sm text-rose-400 hover:underline">
+                    {x.event_id ? 'ניקוי' : 'מחיקה'}
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </Table>
