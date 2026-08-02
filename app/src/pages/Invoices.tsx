@@ -2,13 +2,15 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { get, post, nis } from '../api';
 import { Button, Card, Modal, StatusBadge, Table, Empty } from '../ui';
+import { MorningIssueModal } from './MorningIssueModal';
 
 export function Invoices() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
   const [detail, setDetail] = useState<any | null>(null);
   const [error, setError] = useState('');
-  const [pushing, setPushing] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [issuing, setIssuing] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
   const load = () =>
@@ -36,16 +38,13 @@ export function Invoices() {
     } catch (err: any) { setError(err.message); }
   };
 
-  const pushToMorning = async (id: string) => {
-    if (!confirm('להנפיק את החשבונית כמסמך אמיתי ב-Morning?')) return;
-    setPushing(true);
+  /** Called once the issue dialog has produced a real Morning document. */
+  const onIssued = (invoice: any, result: any) => {
+    setIssuing(false);
+    setDetail(invoice);
     setError('');
-    try {
-      const d = await post(`/invoices/${id}/push-to-morning`);
-      setDetail(d.invoice);
-      load();
-    } catch (err: any) { setError(err.message); }
-    finally { setPushing(false); }
+    setNotice(`המסמך הונפק ב-Morning · מספר ${result.documentNumber || invoice.number}`);
+    load();
   };
 
   return (
@@ -61,6 +60,7 @@ export function Invoices() {
         </select>
       </div>
       {error && <div className="text-sm text-rose-400">{error}</div>}
+      {notice && <div className="text-sm text-emerald-400">{notice}</div>}
 
       <Card>
         {invoices.length === 0 ? <Empty text="אין חשבוניות" /> : (
@@ -94,7 +94,8 @@ export function Invoices() {
         )}
       </Card>
 
-      <Modal title={detail ? `חשבונית #${detail.number}` : ''} open={!!detail} onClose={() => setDetail(null)}>
+      {/* Hidden while the issue dialog is up — it is a step out of this invoice, not a layer on it. */}
+      <Modal title={detail ? `חשבונית #${detail.number}` : ''} open={!!detail && !issuing} onClose={() => setDetail(null)}>
         {detail && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
@@ -146,14 +147,21 @@ export function Invoices() {
                 <Button variant="ghost" onClick={() => setStatus(detail.id, 'issued')} className="flex-1">החזר לסטטוס פתוח</Button>
               )}
               {!detail.external_id && detail.status !== 'cancelled' && (
-                <Button variant="ghost" disabled={pushing} onClick={() => pushToMorning(detail.id)} className="w-full">
-                  {pushing ? 'שולח…' : 'הנפקה ב-Morning'}
+                <Button variant="ghost" onClick={() => { setNotice(''); setIssuing(true); }} className="w-full">
+                  הנפקה ב-Morning
                 </Button>
               )}
             </div>
           </div>
         )}
       </Modal>
+
+      <MorningIssueModal
+        invoiceId={detail?.id ?? null}
+        open={issuing && !!detail}
+        onClose={() => setIssuing(false)}
+        onIssued={onIssued}
+      />
     </div>
   );
 }

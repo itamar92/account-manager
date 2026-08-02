@@ -18,3 +18,7 @@ export const del = <T = any>(path: string) => api<T>(path, { method: 'DELETE' })
 
 export const nis = (n: number | null | undefined) =>
   `₪${(Number(n) || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 })}`;
+
+/** Agorot included — for anything that has to match the document itself. */
+export const nisExact = (n: number | null | undefined) =>
+  `₪${(Number(n) || 0).toLocaleString('he-IL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

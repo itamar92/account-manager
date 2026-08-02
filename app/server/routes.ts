@@ -9,7 +9,7 @@ import {
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
-import { morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
+import { buildMorningDraft, morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -441,10 +441,23 @@ router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, 
   res.json({ result: await pullFromMorning({ days }) });
 }));
 
+/** Pre-fills the issue dialog with the document Morning is about to be asked for. */
+router.get('/invoices/:id/morning-draft', requireOwner, handle((req, res) => {
+  res.json({ draft: buildMorningDraft(req.params.id) });
+}));
+
 /** Issues a local invoice as a real document in Morning and adopts its number. */
 router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (req, res) => {
-  const docType = req.body?.doc_type != null ? parseInt(req.body.doc_type, 10) : undefined;
-  const result = await pushInvoiceToMorning(req.params.id, docType);
+  const b = req.body || {};
+  const result = await pushInvoiceToMorning(req.params.id, {
+    docType: b.doc_type != null ? parseInt(b.doc_type, 10) : undefined,
+    date: b.date || undefined,
+    dueDate: b.due_date || undefined,
+    description: b.description,
+    remarks: b.remarks,
+    clientEmail: b.client_email,
+    sendEmail: Boolean(b.send_email),
+  });
   res.json({ result, invoice: getInvoice(req.params.id) });
 }));
 

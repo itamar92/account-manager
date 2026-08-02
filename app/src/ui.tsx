@@ -84,12 +84,40 @@ export function Input({ label, ...props }: React.InputHTMLAttributes<HTMLInputEl
   );
 }
 
-export function Modal({ title, open, onClose, children }: { title: string; open: boolean; onClose: () => void; children: React.ReactNode }) {
+export function Textarea({ label, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label?: string }) {
+  return (
+    <label className="block">
+      {label && <span className="block text-sm text-slate-400 mb-1">{label}</span>}
+      <textarea
+        rows={3}
+        {...props}
+        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm resize-y focus:outline-none focus:border-indigo-500"
+      />
+    </label>
+  );
+}
+
+const modalWidths = {
+  md: 'md:max-w-lg',
+  lg: 'md:max-w-2xl',
+  xl: 'md:max-w-3xl',
+};
+
+export function Modal({ title, open, onClose, children, size = 'md' }: {
+  title: string;
+  open: boolean;
+  onClose: () => void;
+  children: React.ReactNode;
+  size?: keyof typeof modalWidths;
+}) {
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/60 p-0 md:p-4" onClick={onClose}>
       <div
-        className="bg-slate-900 border border-slate-700 rounded-t-2xl md:rounded-2xl w-full md:max-w-lg max-h-[90vh] overflow-y-auto p-5"
+        className={clsx(
+          'bg-slate-900 border border-slate-700 rounded-t-2xl md:rounded-2xl w-full max-h-[90vh] overflow-y-auto p-5',
+          modalWidths[size]
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between mb-4">

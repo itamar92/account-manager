@@ -42,6 +42,19 @@ export function resolveClient(input: { clientId?: string; clientName?: string })
 }
 
 /**
+ * "שוטף + N" — the terms Israeli invoices are almost always written on: the clock starts
+ * at the end of the month the document was issued in, and the agreed number of days runs
+ * from there. A client's own `payment_terms_days` supplies N, defaulting to 30.
+ */
+export function computeDueDate(date: string, termsDays = 30): string {
+  const base = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(base.getTime())) return date;
+  // Day 0 of the next month is the last day of this one.
+  const endOfMonth = Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0);
+  return new Date(endOfMonth + Math.max(0, termsDays) * 86400_000).toISOString().slice(0, 10);
+}
+
+/**
  * Provisional number for an invoice that exists only in this app.
  *
  * Morning assigns the real, sequential document number when the invoice is pushed to it
