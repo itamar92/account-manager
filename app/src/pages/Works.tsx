@@ -1,13 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
-import { Button, Card, Input, Modal, StatusBadge, Table, Empty } from '../ui';
+import { Button, Card, Input, Modal, StatusBadge, Table, Empty, YearSelect } from '../ui';
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
   const [clients, setClients] = useState<any[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState('');
+  // Lists open on the year you are working in; older years are a deliberate step back.
+  const [year, setYear] = useState<number | ''>(new Date().getFullYear());
   const [searchParams] = useSearchParams();
   const [clientFilter, setClientFilter] = useState(searchParams.get('client') || '');
   const [open, setOpen] = useState(false);
@@ -23,9 +25,10 @@ export function Works() {
     const qs = new URLSearchParams();
     if (statusFilter) qs.set('status', statusFilter);
     if (clientFilter) qs.set('client_id', clientFilter);
+    if (year !== '') qs.set('year', String(year));
     get(`/works?${qs}`).then((d) => setWorks(d.works)).catch((e) => setError(e.message));
   };
-  useEffect(() => { load(); setSelected(new Set()); }, [statusFilter, clientFilter]);
+  useEffect(() => { load(); setSelected(new Set()); }, [statusFilter, clientFilter, year]);
   useEffect(() => { get('/clients').then((d) => setClients(d.clients)); }, []);
 
   const toggle = (w: any) => {
@@ -167,6 +170,7 @@ export function Works() {
           <option value="invoiced">בחשבונית</option>
           <option value="paid">שולם</option>
         </select>
+        <YearSelect value={year} onChange={setYear} />
       </div>
 
       {error && <div className="text-sm text-rose-400">{error}</div>}

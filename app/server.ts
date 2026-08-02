@@ -5,12 +5,16 @@ import { fileURLToPath } from 'url';
 import { loadUser } from './server/auth.js';
 import { router, apiV1 } from './server/routes.js';
 import { runSeed } from './server/seed.js';
+import { backfillMoonlight } from './server/moonlight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
 const port = parseInt(process.env.PORT || '3000');
 
 runSeed();
+// Links every show to its expense row and refreshes the derived columns. Idempotent, so it
+// also picks up shows a previous version's calendar sync created without one.
+backfillMoonlight();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));

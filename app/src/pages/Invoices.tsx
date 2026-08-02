@@ -1,23 +1,29 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { get, post, nis } from '../api';
-import { Button, Card, Modal, StatusBadge, Table, Empty } from '../ui';
+import { Button, Card, Modal, StatusBadge, Table, Empty, YearSelect } from '../ui';
 import { MorningIssueModal } from './MorningIssueModal';
 
 export function Invoices() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
+  // Opens on the year you are working in; older years are a deliberate step back.
+  const [year, setYear] = useState<number | ''>(new Date().getFullYear());
   const [detail, setDetail] = useState<any | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [issuing, setIssuing] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const load = () =>
-    get(`/invoices${statusFilter ? `?status=${statusFilter}` : ''}`)
+  const load = () => {
+    const qs = new URLSearchParams();
+    if (statusFilter) qs.set('status', statusFilter);
+    if (year !== '') qs.set('year', String(year));
+    return get(`/invoices?${qs}`)
       .then((d) => setInvoices(d.invoices))
       .catch((e) => setError(e.message));
-  useEffect(() => { load(); }, [statusFilter]);
+  };
+  useEffect(() => { load(); }, [statusFilter, year]);
 
   useEffect(() => {
     const openId = searchParams.get('open');
@@ -51,13 +57,16 @@ export function Invoices() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">חשבוניות</h1>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
-          <option value="">כל הסטטוסים</option>
-          <option value="issued">פתוחות</option>
-          <option value="paid">שולמו</option>
-          <option value="cancelled">בוטלו</option>
-        </select>
+        <div className="flex flex-wrap gap-2">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+            <option value="">כל הסטטוסים</option>
+            <option value="issued">פתוחות</option>
+            <option value="paid">שולמו</option>
+            <option value="cancelled">בוטלו</option>
+          </select>
+          <YearSelect value={year} onChange={setYear} />
+        </div>
       </div>
       {error && <div className="text-sm text-rose-400">{error}</div>}
       {notice && <div className="text-sm text-emerald-400">{notice}</div>}

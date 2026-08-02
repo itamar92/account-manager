@@ -3,6 +3,7 @@ import { eventDate, isCalendarConfigured, listEvents, type CalendarEvent } from 
 import {
   cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
 } from './calendarRules.js';
+import { ensureExpenseRow, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel } from './moonlight.js';
 
 export interface RuleSyncResult {
   ruleId: string;
@@ -58,11 +59,15 @@ async function fetchCalendars(
   return byCalendar;
 }
 
-/** True when nobody has entered money against this band event yet. */
+/**
+ * True when nobody has entered money against this band event yet. Its expense row is created
+ * empty alongside the show, so an untouched one is not evidence of bookkeeping — but anything
+ * typed into it is.
+ */
 function bandEventIsEmpty(row: any): boolean {
   const fields = ['tickets', 'amount_pre_vat', 'amount_with_vat', 'expenses', 'expenses_paid', 'profit',
     'commission_amount', 'amir', 'itamar', 'yuval', 'guy'];
-  return fields.every((f) => !Number(row[f]));
+  return fields.every((f) => !Number(row[f])) && !expenseTotal(expenseRowForEvent(row.id));
 }
 
 /**
@@ -112,6 +117,9 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   if (existing) {
     db.prepare('UPDATE band_events SET venue = ?, date = ?, location = ? WHERE id = ?')
       .run(title, date, location, existing.id);
+    const updated = getEvent(existing.id);
+    ensureExpenseRow(updated);
+    syncExpenseLabel(updated);
     tally.updated++;
     return;
   }
@@ -121,14 +129,19 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   if (orphan) {
     db.prepare('UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ? WHERE id = ?')
       .run(event.id, title, location, orphan.id);
+    const linked = getEvent(orphan.id);
+    ensureExpenseRow(linked);
+    syncExpenseLabel(linked);
     tally.linked++;
     return;
   }
 
+  const id = uuid();
   db.prepare(
     `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(uuid(), title, date, event.id, location, 'איתמר');
+  ).run(id, title, date, event.id, location, 'איתמר');
+  ensureExpenseRow(getEvent(id));
   tally.created++;
 }
 
@@ -229,6 +242,7 @@ function applyCancellation(event: CalendarEvent, rule: CalendarRule, tally: Rule
   if (rule.target === 'band') {
     const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
     if (existing && bandEventIsEmpty(existing)) {
+      db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(existing.id);
       db.prepare('DELETE FROM band_events WHERE id = ?').run(existing.id);
       tally.removed++;
     }
@@ -297,7 +311,7 @@ export async function pullShowsFromCalendar(
         }
         tally.matched++;
 
-        const title = cleanTitle(event, verdict);
+        const title = cleanTitle(event, verdict, rule);
         if (rule.target === 'band') applyBandEvent(event, date, title, tally);
         else applyPersonalWork(event, date, title, rule, tally);
       }
@@ -355,7 +369,7 @@ export async function previewRule(
       eventId: event.id,
       date,
       summary: event.summary || '',
-      title: cleanTitle(event, verdict),
+      title: cleanTitle(event, verdict, rule),
       location: event.location ?? null,
       organizer: event.organizer?.email ?? event.creator?.email ?? null,
       matched: verdict.matched,

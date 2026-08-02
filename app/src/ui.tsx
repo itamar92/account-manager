@@ -152,3 +152,173 @@ export function Table({ headers, children }: { headers: React.ReactNode[]; child
 export function Empty({ text }: { text: string }) {
   return <div className="text-center text-slate-500 py-10">{text}</div>;
 }
+
+/**
+ * A table cell you edit by clicking it, saving on blur or Enter and abandoning on Escape.
+ *
+ * It exists so a table can be corrected in place without the detour through an edit dialog —
+ * the dialog stays for entering a row from scratch. Read-only viewers get the plain value, so
+ * the hover affordance never promises an edit that would be refused.
+ */
+export function EditableCell({
+  value, onSave, type = 'text', disabled, display, align, placeholder,
+}: {
+  value: string | number | boolean | null | undefined;
+  onSave: (value: any) => void | Promise<void>;
+  type?: 'text' | 'number' | 'date' | 'checkbox';
+  disabled?: boolean;
+  /** What to show when idle, for values that are formatted (currency, dates). */
+  display?: React.ReactNode;
+  align?: 'right' | 'left';
+  placeholder?: string;
+}) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState('');
+
+  if (type === 'checkbox') {
+    return (
+      <input
+        type="checkbox"
+        checked={!!value}
+        disabled={disabled}
+        onChange={(e) => onSave(e.target.checked ? 1 : 0)}
+        className="accent-indigo-500 w-4 h-4 disabled:opacity-50"
+      />
+    );
+  }
+
+  const idle = display ?? (value === '' || value == null ? '—' : String(value));
+  if (disabled) return <span>{idle}</span>;
+
+  if (!editing) {
+    return (
+      <button
+        type="button"
+        onClick={() => { setDraft(value == null ? '' : String(value)); setEditing(true); }}
+        title="לחיצה לעריכה"
+        className={clsx(
+          'w-full rounded px-1 -mx-1 text-start hover:bg-slate-800 hover:ring-1 hover:ring-slate-700 transition-colors',
+          align === 'left' && 'text-left'
+        )}
+      >
+        {idle}
+      </button>
+    );
+  }
+
+  const commit = () => {
+    setEditing(false);
+    const next = type === 'number' ? Number(draft) || 0 : draft;
+    if (String(next) !== String(value ?? '')) onSave(next);
+  };
+
+  return (
+    <input
+      autoFocus
+      type={type}
+      value={draft}
+      placeholder={placeholder}
+      dir={type === 'number' ? 'ltr' : undefined}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') { e.preventDefault(); commit(); }
+        if (e.key === 'Escape') { e.preventDefault(); setEditing(false); }
+      }}
+      className="w-full min-w-[4.5rem] bg-slate-800 border border-indigo-500 rounded px-1.5 py-0.5 text-sm focus:outline-none"
+    />
+  );
+}
+
+/** Years to offer in a filter: this year down, far enough back to cover the seeded history. */
+function recentYears(span = 6): number[] {
+  const current = new Date().getFullYear();
+  return Array.from({ length: span }, (_, i) => current - i);
+}
+
+const selectClass =
+  'bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500';
+
+/** `''` means every year — lists default to the current one. */
+export function YearSelect({ value, onChange, label }: {
+  value: number | '';
+  onChange: (value: number | '') => void;
+  label?: string;
+}) {
+  return (
+    <select
+      aria-label={label || 'שנה'}
+      value={value === '' ? '' : String(value)}
+      onChange={(e) => onChange(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+      className={selectClass}
+    >
+      <option value="">כל השנים</option>
+      {recentYears().map((year) => (
+        <option key={year} value={year}>{year}</option>
+      ))}
+    </select>
+  );
+}
+
+export interface ComboOption { value: string; label: string }
+
+/**
+ * A select you can type into to narrow a long list — the show list grows with every gig, so
+ * picking one out of a plain dropdown gets slower every month.
+ */
+export function Combobox({ value, options, onChange, placeholder, disabled, className }: {
+  value: string;
+  options: ComboOption[];
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [query, setQuery] = React.useState('');
+  const selected = options.find((o) => o.value === value);
+
+  if (disabled) return <span>{selected?.label || '—'}</span>;
+
+  const matches = query.trim()
+    ? options.filter((o) => o.label.toLowerCase().includes(query.trim().toLowerCase()))
+    : options;
+
+  const choose = (option: ComboOption) => {
+    onChange(option.value);
+    setOpen(false);
+    setQuery('');
+  };
+
+  return (
+    <div className={clsx('relative', className)}>
+      <input
+        value={open ? query : selected?.label ?? ''}
+        placeholder={placeholder || selected?.label || 'בחירה…'}
+        onFocus={() => { setOpen(true); setQuery(''); }}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+        // Deferred so a click on an option registers before the list unmounts.
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+      />
+      {open && (
+        <div className="absolute z-40 mt-1 w-full max-h-56 overflow-y-auto bg-slate-900 border border-slate-700 rounded-xl shadow-xl">
+          {matches.length === 0 && <div className="px-3 py-2 text-sm text-slate-500">אין תוצאות</div>}
+          {matches.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onMouseDown={(e) => { e.preventDefault(); choose(option); }}
+              className={clsx(
+                'block w-full text-right px-3 py-2 text-sm hover:bg-slate-800',
+                option.value === value ? 'text-indigo-300' : 'text-slate-200'
+              )}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -221,6 +221,13 @@ addColumnIfMissing('works', 'calendar_event_id', 'TEXT');
 addColumnIfMissing('works', 'location', 'TEXT');
 addColumnIfMissing('calendar_rules', 'match_description', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('calendar_rules', 'fixed_amount', 'REAL NOT NULL DEFAULT 0');
+// 'auto' recomputes the four member shares from the profit on every write; 'manual' is set
+// the moment someone types a share by hand, and freezes them until they ask for auto back.
+addColumnIfMissing('band_events', 'division_mode', "TEXT NOT NULL DEFAULT 'auto'");
+// The link a show's expense row used to express as the free-text label "מקום - DD/MM/YYYY".
+addColumnIfMissing('band_event_expenses', 'event_id', 'TEXT');
+addColumnIfMissing('band_general_expenses', 'paid', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('band_general_expenses', 'event_id', 'TEXT');
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing
@@ -241,6 +248,11 @@ for (const [name, sql] of [
     'idx_works_calendar',
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_works_calendar
        ON works(calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+  ],
+  [
+    'idx_band_event_expenses_event',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_band_event_expenses_event
+       ON band_event_expenses(event_id) WHERE event_id IS NOT NULL`,
   ],
 ] as const) {
   try {
