@@ -152,6 +152,19 @@ export function IncomeTab({
                         {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-indigo-400 text-xs">◷</span>}
                         <EditableCell value={e.venue} disabled={!isOwner}
                           onSave={(v) => saveField(e.id, { venue: v })} />
+                        {/* A name typed by hand stops following the calendar; this hands it back. */}
+                        {e.calendar_event_id && !!e.venue_locked && (
+                          <button
+                            onClick={() => isOwner && saveField(e.id, { venue_locked: 0 })}
+                            disabled={!isOwner}
+                            title={isOwner
+                              ? 'השם נערך ידנית וסנכרון מהיומן לא ישנה אותו — לחצו כדי להחזיר אותו לשם שביומן'
+                              : 'השם נערך ידנית וסנכרון מהיומן לא ישנה אותו'}
+                            className="text-amber-400 text-xs disabled:cursor-default"
+                          >
+                            ✎
+                          </button>
+                        )}
                       </div>
                       {e.location && <div className="text-xs text-slate-500 truncate max-w-[16rem]">{e.location}</div>}
                     </td>

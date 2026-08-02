@@ -18,9 +18,9 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  deleteEventCascade, ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent,
-  expenseTotal, getEvent, normalizePaymentStatus, reassignExpenseRow, recomputeEvent,
-  syncExpenseLabel,
+  deleteEventCascade, deleteExpenseRow, ensureExpenseRow, eventLabel, expenseOutstanding,
+  expenseRowForEvent, expenseTotal, getEvent, normalizePaymentStatus, reassignExpenseRow,
+  recomputeEvent, syncExpenseLabel,
 } from './moonlight.js';
 
 /**
@@ -227,6 +227,15 @@ router.delete('/clients/:id', requireOwner, handle((req, res) => {
   res.json({ ok: true, deleted_works: works });
 }));
 
+/**
+ * True when this request actually changes a name. A form that posts every field back sends the
+ * name it was given, so only a different one counts as someone renaming the row — which is what
+ * locks the name against the next calendar sync.
+ */
+function renamed(incoming: unknown, current: unknown): boolean {
+  return incoming !== undefined && String(incoming).trim() !== String(current ?? '').trim();
+}
+
 // ============ works (owner) ============
 router.get('/works', requireOwner, handle((req, res) => {
   const { status, client_id } = req.query;
@@ -261,11 +270,19 @@ router.put('/works/:id', requireOwner, handle((req, res) => {
   const work = db.prepare('SELECT * FROM works WHERE id = ?').get(req.params.id) as any;
   if (!work) return res.status(404).json({ error: 'work not found' });
   if (work.status !== 'unpaid') return res.status(409).json({ error: 'עבודה שכבר חויבה נעולה לעריכה' });
-  const { date, description, amount } = req.body || {};
+  const { date, description, amount, description_locked } = req.body || {};
   const amt = round2(Number(amount ?? work.amount));
   const vat = round2((amt * getVatPercent()) / 100);
-  db.prepare('UPDATE works SET date = ?, description = ?, amount = ?, vat_amount = ?, total = ? WHERE id = ?')
-    .run(date ?? work.date, description ?? work.description, amt, vat, round2(amt + vat), req.params.id);
+  // As with a show's name: an edited description stops following the calendar.
+  const locked = renamed(description, work.description) ? 1
+    : description_locked !== undefined ? (description_locked ? 1 : 0)
+    : work.description_locked ? 1 : 0;
+  db.prepare(
+    `UPDATE works SET date = ?, description = ?, amount = ?, vat_amount = ?, total = ?, description_locked = ?
+     WHERE id = ?`
+  ).run(
+    date ?? work.date, description ?? work.description, amt, vat, round2(amt + vat), locked, req.params.id
+  );
   res.json({ work: db.prepare('SELECT * FROM works WHERE id = ?').get(req.params.id) });
 }));
 
@@ -512,16 +529,22 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     : touchedDivision ? 'manual'
     : existing.division_mode || 'auto';
 
+  // Renaming a show is a decision about its name: from here on the calendar sync leaves it
+  // alone. Sending venue_locked: 0 without renaming hands the name back to the sync.
+  const venueLocked = renamed(body.venue, existing.venue) ? 1
+    : body.venue_locked !== undefined ? (body.venue_locked ? 1 : 0)
+    : existing.venue_locked ? 1 : 0;
+
   db.prepare(
     `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?,
       receiver=?, invoice=?, has_commission=?, paid_to_musicians=?, division_mode=?, payment_status=?,
-      amir=?, itamar=?, yuval=?, guy=?
+      amir=?, itamar=?, yuval=?, guy=?, venue_locked=?
      WHERE id=?`
   ).run(
     b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat,
     b.receiver, b.invoice, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0, divisionMode,
     normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',
-    b.amir, b.itamar, b.yuval, b.guy, req.params.id
+    b.amir, b.itamar, b.yuval, b.guy, venueLocked, req.params.id
   );
   const updated = getEvent(req.params.id);
   ensureExpenseRow(updated);
@@ -567,6 +590,14 @@ const EVENT_EXPENSE_FLAGS = ['akom_paid', 'hall_fee_paid', 'sound_company_paid',
 router.post('/moonlight/event-expenses/:id/assign', requireOwner, handle((req, res) => {
   const eventId = req.body?.event_id ? String(req.body.event_id) : null;
   res.json({ expense: reassignExpenseRow(req.params.id, eventId) });
+}));
+
+/**
+ * Empties a show's expense row, or deletes an unassigned one outright — see deleteExpenseRow
+ * for why the two cases differ.
+ */
+router.delete('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
+  res.json(deleteExpenseRow(req.params.id));
 }));
 
 router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {

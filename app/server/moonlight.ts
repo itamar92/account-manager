@@ -215,6 +215,29 @@ export const reassignExpenseRow = db.transaction((expenseId: string, eventId: st
 });
 
 /**
+ * Removes an expense row.
+ *
+ * What that means depends on what the row is. A row belonging to a show cannot simply vanish —
+ * every show owns exactly one, and the income tab has nowhere to write its costs without it —
+ * so its numbers are cleared and an empty row takes its place, which is what "delete" means for
+ * a line you only want emptied. A row belonging to no show is a leftover from before the two
+ * tables were linked, and that one goes for good.
+ */
+export const deleteExpenseRow = db.transaction(
+  (id: string): { deleted: number; cleared: number } => {
+    const row = db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(id) as any;
+    if (!row) throw Object.assign(new Error('expense row not found'), { status: 404 });
+
+    db.prepare('DELETE FROM band_event_expenses WHERE id = ?').run(id);
+    if (!row.event_id) return { deleted: 1, cleared: 0 };
+
+    ensureExpenseRow(getEvent(row.event_id));
+    recomputeEvent(row.event_id);
+    return { deleted: 0, cleared: 1 };
+  }
+);
+
+/**
  * Removes a show together with the expense row it owns. A show drawn from the calendar is
  * also pinned as "not a show" by default, otherwise the next sync simply brings it back.
  */

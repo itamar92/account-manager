@@ -291,6 +291,12 @@ export function CalendarRules({ onChange, onError }: {
               </div>
             )}
 
+            <div className="text-xs text-slate-500 mt-2">
+              השם שיישמר מנוקה אוטומטית ממילים כמו «הופעה», «מופע», «גיג», «show» ו«gig», וממילות
+              המפתח של הכלל שבתחילת הכותרת — «הופעה קולדפליי גריי תל אביב» יישמר כ«גריי תל אביב».
+              שם שתערכו ידנית לא יידרס בסנכרון הבא.
+            </div>
+
             {rule.target === 'personal' && rule.fixed_amount > 0 && (
               <div className="text-xs text-slate-500 mt-2">
                 כל אירוע תואם ייפתח כעבודה בסך ₪{rule.fixed_amount} לפני מע"מ. סכום שכבר הזנת ידנית לא יידרס.
@@ -438,7 +444,13 @@ function PreviewTable({ result, onPin }: {
               {rows.map((r: any) => (
                 <tr key={r.eventId} className={r.matched ? '' : 'opacity-60'}>
                   <td className="px-2 py-1.5 whitespace-nowrap text-slate-400">{r.date}</td>
-                  <td className="px-2 py-1.5">{r.summary}</td>
+                  <td className="px-2 py-1.5">
+                    {r.summary}
+                    {/* The name it would actually be stored under, once the show words come off. */}
+                    {r.matched && r.title && r.title !== r.summary && (
+                      <span className="text-slate-500" title="השם שיישמר">{' ← '}{r.title}</span>
+                    )}
+                  </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
                     <span className={r.matched ? 'text-emerald-400' : 'text-slate-500'}>
                       {r.matched ? '✓ ' : '✕ '}

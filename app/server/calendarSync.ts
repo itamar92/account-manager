@@ -109,14 +109,20 @@ function resolveClient(name: string): string {
   return id;
 }
 
-/** A band rule writes into band_events; only the descriptive columns are ever touched. */
+/**
+ * A band rule writes into band_events; only the descriptive columns are ever touched.
+ *
+ * A show whose name was typed by hand keeps it: `venue_locked` is the record of that decision,
+ * and re-syncing must not undo it. The date and the place still follow the calendar, which is
+ * where they are actually maintained.
+ */
 function applyBandEvent(event: CalendarEvent, date: string, title: string, tally: RuleSyncResult) {
   const location = event.location ?? null;
   const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
 
   if (existing) {
     db.prepare('UPDATE band_events SET venue = ?, date = ?, location = ? WHERE id = ?')
-      .run(title, date, location, existing.id);
+      .run(existing.venue_locked ? existing.venue : title, date, location, existing.id);
     const updated = getEvent(existing.id);
     ensureExpenseRow(updated);
     syncExpenseLabel(updated);
@@ -127,8 +133,11 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   // Adopt a hand-entered row for the same date and name instead of creating a second one.
   const orphan = findOrphanBandEvent(date, title);
   if (orphan) {
-    db.prepare('UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ? WHERE id = ?')
-      .run(event.id, title, location, orphan.id);
+    // Adopted by date rather than by name: the name on the row was typed by someone, so it
+    // stays and is locked, exactly as a rename after the fact would be.
+    const keepName = !!orphan.venue_locked || normalizeName(orphan.venue) !== normalizeName(title);
+    db.prepare('UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ? WHERE id = ?')
+      .run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, orphan.id);
     const linked = getEvent(orphan.id);
     ensureExpenseRow(linked);
     syncExpenseLabel(linked);
@@ -154,6 +163,9 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
  * never overwritten: only the description, date and location follow the calendar. The one
  * exception is a still-unpriced work, which picks up a fixed amount added to the rule after
  * it was drawn.
+ *
+ * A description edited by hand is kept as well — see `applyBandEvent` for the same rule on
+ * the band side.
  */
 function applyPersonalWork(
   event: CalendarEvent,
@@ -183,7 +195,10 @@ function applyPersonalWork(
     const price = priceOf(fixedAmount && !Number(existing.amount) ? fixedAmount : round2(Number(existing.amount)));
     db.prepare(
       'UPDATE works SET date = ?, description = ?, location = ?, amount = ?, vat_amount = ?, total = ? WHERE id = ?'
-    ).run(date, title, location, price.amount, price.vat, price.total, existing.id);
+    ).run(
+      date, existing.description_locked ? existing.description : title, location,
+      price.amount, price.vat, price.total, existing.id
+    );
     tally.updated++;
     return;
   }

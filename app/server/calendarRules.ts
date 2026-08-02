@@ -240,39 +240,75 @@ export function evaluate(
 }
 
 /**
- * Strips the rule's own words off the front of a title so the stored name reads naturally:
- * with keywords "הופעה, קולדפליי", the calendar entry "הופעה קולדפליי זאפה חיפה" is stored as
- * "זאפה חיפה".
+ * Words that say "this entry is a show" without saying which show it is. They are noise in
+ * the venue column wherever they stand, so they come out of every synced title regardless of
+ * what any rule says — which is why they are here and not in a rule's keywords.
+ */
+export const SHOW_NOISE_WORDS = [
+  'הופעה', 'הופעות', 'מופע', 'מופעים', 'גיג', 'גיגים',
+  'show', 'shows', 'gig', 'gigs',
+] as const;
+
+/** Punctuation used to glue title parts together, left dangling when a word between them goes. */
+const SEPARATORS = '\\-–—:|,';
+/** What counts as part of a word, so "גיג" comes out of a title but "גיגית" survives. */
+const WORD_CHAR = '\\p{L}\\p{N}';
+
+/**
+ * Removes every standalone occurrence of one word, together with the separator it leaves
+ * behind: "קולדפליי - הופעה - זאפה" loses "הופעה -" rather than keeping a stray dash.
+ */
+function removeWord(title: string, word: string): string {
+  const pattern = `(?<![${WORD_CHAR}])${escapeRegExp(word)}(?![${WORD_CHAR}])\\s*[${SEPARATORS}]*`;
+  return title.replace(new RegExp(pattern, 'giu'), ' ');
+}
+
+/** Squeezes the whitespace and drops separators left hanging at either end. */
+function tidy(title: string): string {
+  return title
+    .replace(/\s+/g, ' ')
+    .replace(new RegExp(`^[\\s${SEPARATORS}]+`), '')
+    .replace(new RegExp(`[\\s${SEPARATORS}]+$`), '')
+    .trim();
+}
+
+/**
+ * The name a synced event is stored under.
+ *
+ * Two things come off. The show words above go wherever they appear, always. Then the rule's
+ * own keywords are stripped off the front, so with the keyword "קולדפליי" the calendar entry
+ * "הופעה קולדפליי גריי תל אביב" is stored as "גריי תל אביב".
  *
  * Every keyword the rule searches for is stripped, not just the one that happened to match,
- * because the word marking an entry as a show and the word naming the act are both noise in
- * the venue column — and both are the user's own rule, so nothing is hardcoded here. Only
- * leading occurrences go: "בכורה הופעה MADONNA" keeps its shape. A title made entirely of
- * rule words is left alone rather than stored blank.
+ * because the word naming the act is noise in the venue column too. Keywords only go from the
+ * front: "בכורה קולדפליי" keeps its shape, since a keyword in the middle of a name is usually
+ * part of it. A title made entirely of these words is left alone rather than stored blank.
  */
 export function cleanTitle(event: CalendarEvent, verdict: MatchVerdict, rule?: CalendarRule): string {
   const summary = (event.summary || '').trim();
   if (!summary) return 'אירוע';
   if (!verdict.matched) return summary;
 
+  let title = summary;
+  for (const word of SHOW_NOISE_WORDS) title = removeWord(title, word);
+  title = tidy(title);
+
   const terms = parseTerms(rule?.keywords);
   // An organizer match has no term of its own, but its title may still carry the prefix.
   if (!terms.length && verdict.reason === 'keyword') terms.push(verdict.term);
-  if (!terms.length) return summary;
 
-  let title = summary;
   let stripped = true;
   while (stripped) {
     stripped = false;
     for (const term of terms) {
-      const next = title.replace(new RegExp(`^\\s*${escapeRegExp(term)}\\s*[-–:]*\\s*`, 'i'), '');
+      const next = title.replace(new RegExp(`^\\s*${escapeRegExp(term)}\\s*[${SEPARATORS}]*\\s*`, 'iu'), '');
       if (next !== title) {
         title = next;
         stripped = true;
       }
     }
   }
-  return title.trim() || summary;
+  return tidy(title) || summary;
 }
 
 function escapeRegExp(s: string): string {

@@ -232,7 +232,12 @@ export function Works() {
                 </td>
                 <td className="px-3 py-2.5 whitespace-nowrap">{w.date}</td>
                 <td className="px-3 py-2.5 font-medium">{w.client_name}</td>
-                <td className="px-3 py-2.5 text-slate-300">{w.description}</td>
+                <td className="px-3 py-2.5 text-slate-300">
+                  {w.description}
+                  {!!w.description_locked && w.calendar_event_id && (
+                    <span className="text-amber-400 text-xs mr-1" title="הפירוט נערך ידנית — סנכרון מהיומן לא ישנה אותו">✎</span>
+                  )}
+                </td>
                 <td className="px-3 py-2.5">{nis(w.amount)}</td>
                 <td className="px-3 py-2.5 font-medium">{nis(w.total)}</td>
                 <td className="px-3 py-2.5">
