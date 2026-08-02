@@ -11,10 +11,25 @@ interface DraftLine {
   total: number;
 }
 
+interface Business {
+  name: string;
+  type: string;
+  typeLabel: string;
+  taxId: string;
+  address: string;
+  city: string;
+  phone: string;
+  email: string;
+  website: string;
+  logoUrl: string;
+  configured: boolean;
+}
+
 interface Draft {
   invoiceId: string;
   number: string;
   configured: boolean;
+  business: Business;
   docType: number;
   docTypes: Array<{ value: number; label: string }>;
   date: string;
@@ -274,13 +289,46 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
   );
 }
 
+/**
+ * Who is issuing the document. Filled in from Settings → פרטי העסק; until that is filled
+ * in, the preview says so rather than leaving the top of the page unexplained.
+ */
+function Letterhead({ business }: { business: Business }) {
+  if (!business.configured) {
+    return (
+      <div className="text-[11px] text-slate-400 border-b border-dashed border-slate-300 pb-2 mb-4">
+        פרטי העסק לא הוגדרו — אפשר למלא אותם בהגדרות ← פרטי העסק כדי שהכותרת תופיע גם כאן.
+      </div>
+    );
+  }
+  const line = [business.typeLabel, business.taxId].filter(Boolean).join(' ');
+  const address = [business.address, business.city].filter(Boolean).join(', ');
+  return (
+    <div className="flex items-start justify-between gap-4 flex-wrap border-b border-slate-200 pb-4 mb-4">
+      <div className="flex items-center gap-3 min-w-0">
+        {business.logoUrl && (
+          <img src={business.logoUrl} alt="" className="h-12 w-auto max-w-[120px] object-contain shrink-0" />
+        )}
+        <div className="min-w-0">
+          <div className="font-bold text-lg leading-tight">{business.name}</div>
+          {line && <div className="text-xs text-slate-500" dir="ltr">{line}</div>}
+        </div>
+      </div>
+      <div className="text-xs text-slate-500 text-left space-y-0.5">
+        {address && <div>{address}</div>}
+        {business.phone && <div dir="ltr">{business.phone}</div>}
+        {business.email && <div dir="ltr">{business.email}</div>}
+        {business.website && <div dir="ltr">{business.website}</div>}
+      </div>
+    </div>
+  );
+}
+
 /** What the issued document will look like. Rendered light, like the document itself. */
 function DocumentPreview({ draft, form, docTypeLabel }: { draft: Draft; form: Form; docTypeLabel: string }) {
   return (
     <div className="bg-white text-slate-900 rounded-xl p-5 md:p-7 shadow-lg" dir="rtl">
-      <div className="text-[11px] text-slate-400 border-b border-dashed border-slate-300 pb-2 mb-4">
-        הלוגו ופרטי העסק מגיעים מהגדרות המסמכים ב-Morning ויתווספו למסמך שיונפק.
-      </div>
+      <Letterhead business={draft.business} />
 
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -357,10 +405,13 @@ function DocumentPreview({ draft, form, docTypeLabel }: { draft: Draft; form: Fo
         </div>
       )}
 
-      <div className="mt-5 text-[11px] text-slate-400">
-        {form.send_email && form.client_email
-          ? <>המסמך יישלח במייל אל <span dir="ltr">{form.client_email}</span> עם ההנפקה.</>
-          : 'המסמך לא יישלח במייל — אפשר לשלוח אותו מ-Morning בכל שלב.'}
+      <div className="mt-5 text-[11px] text-slate-400 space-y-0.5">
+        <div>
+          {form.send_email && form.client_email
+            ? <>המסמך יישלח במייל אל <span dir="ltr">{form.client_email}</span> עם ההנפקה.</>
+            : 'המסמך לא יישלח במייל — אפשר לשלוח אותו מ-Morning בכל שלב.'}
+        </div>
+        <div>התוכן הוא מה שיישלח להנפקה; העיצוב הסופי נקבע לפי תבנית המסמכים ב-Morning.</div>
       </div>
     </div>
   );

@@ -9,6 +9,7 @@ import {
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
+import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
 import { buildMorningDraft, morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
@@ -538,6 +539,8 @@ router.get('/settings', requireOwner, handle((_req, res) => {
       app_name: getSetting('app_name', 'Account Manager'),
       morning_sync_days: getMorningSyncDays(),
     },
+    business: getBusinessDetails(),
+    business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
     integrations: { morning: morningStatus(), calendar: calendarStatus() },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
@@ -551,6 +554,11 @@ router.post('/settings', requireOwner, handle((req, res) => {
   if (app_name) setSetting('app_name', app_name);
   if (morning_sync_days != null) setSetting('morning_sync_days', String(parseInt(morning_sync_days, 10) || 90));
   res.json({ ok: true });
+}));
+
+/** The letterhead shown in the Morning issue preview. Local only — Morning is not told. */
+router.post('/settings/business', requireOwner, handle((req, res) => {
+  res.json({ business: setBusinessDetails(req.body || {}) });
 }));
 
 router.post('/settings/users', requireOwner, handle((req, res) => {

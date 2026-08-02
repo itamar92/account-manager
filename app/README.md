@@ -123,6 +123,12 @@ a missing credential is visible rather than silent.
   it will be issued, and only its final button calls the push. Confirming the dialog
   untouched issues exactly what the plain push would have.
 
+  The preview's letterhead comes from **Settings → פרטי העסק** (`POST /api/settings/business`):
+  name, business type, ח.פ / ע.מ, address, contact details and a logo URL, stored as
+  `business_*` settings. They are local only — Morning holds the authoritative copy and
+  renders the issued document from its own template, so nothing here is sent to it. With
+  the details unset the preview says so rather than drawing an empty letterhead.
+
   The due date defaults to **שוטף + N** — end of the document's month plus the client's
   `payment_terms_days` (30 unless the client says otherwise) — and follows the document
   date until it is edited by hand. Whatever the dialog changed is written back to the local

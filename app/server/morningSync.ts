@@ -4,6 +4,7 @@ import {
   ISSUABLE_DOC_TYPES, issuableDocTypeOptions,
 } from './docTypes.js';
 import { computeDueDate } from './invoiceService.js';
+import { getBusinessDetails, type BusinessDetails } from './business.js';
 import {
   createDocument, documentUrl, isMorningConfigured, MorningError, searchAllDocuments, type MorningDocument,
 } from './morningClient.js';
@@ -257,6 +258,7 @@ export interface MorningDraft {
   invoiceId: string;
   number: string;
   configured: boolean;
+  business: BusinessDetails;
   docType: number;
   docTypes: Array<{ value: number; label: string }>;
   date: string;
@@ -286,6 +288,7 @@ export function buildMorningDraft(invoiceId: string): MorningDraft {
     invoiceId,
     number: invoice.number,
     configured: isMorningConfigured(),
+    business: getBusinessDetails(),
     docType: ISSUABLE_DOC_TYPES.includes(invoice.doc_type) ? invoice.doc_type : DOC_TYPE.TAX_INVOICE,
     docTypes: issuableDocTypeOptions(),
     date: invoice.date,
