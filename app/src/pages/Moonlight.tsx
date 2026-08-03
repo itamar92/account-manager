@@ -7,13 +7,15 @@ import { IncomeTab } from './moonlight/IncomeTab';
 import { EventExpensesTab } from './moonlight/EventExpensesTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
+import { AssignmentsTab } from './moonlight/AssignmentsTab';
 import { MEMBERS } from './moonlight/shared';
 
-type Tab = 'summary' | 'income' | 'eventExpenses' | 'generalExpenses';
+type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses';
 
 const tabs: [Tab, string][] = [
   ['summary', 'סיכום'],
   ['income', 'הכנסות'],
+  ['assignments', 'שיבוצים'],
   ['eventExpenses', 'הוצאות הופעות'],
   ['generalExpenses', 'הוצאות כלליות'],
 ];
@@ -85,6 +87,10 @@ export function Moonlight() {
           onNewEvent={() => setEventModal({ venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1 })}
           onEditEvent={setEventModal}
         />
+      )}
+
+      {tab === 'assignments' && (
+        <AssignmentsTab {...tabProps} year={year} onYearChange={setYear} />
       )}
 
       {tab === 'eventExpenses' && (

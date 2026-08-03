@@ -4,6 +4,7 @@ import {
   cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
 } from './calendarRules.js';
 import { ensureExpenseRow, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel } from './moonlight.js';
+import { setEventAttendees } from './assignments.js';
 
 export interface RuleSyncResult {
   ruleId: string;
@@ -118,6 +119,11 @@ function resolveClient(name: string): string {
  */
 function applyBandEvent(event: CalendarEvent, date: string, title: string, tally: RuleSyncResult) {
   const location = event.location ?? null;
+  // The guest list is what the staffing tab matches supplier emails against. A guest who
+  // declined is not coming, so they do not count as staffed.
+  const guests = (event.attendees ?? [])
+    .filter((a) => a.email && a.responseStatus !== 'declined')
+    .map((a) => a.email!);
   const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
 
   if (existing) {
@@ -126,6 +132,7 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
     const updated = getEvent(existing.id);
     ensureExpenseRow(updated);
     syncExpenseLabel(updated);
+    setEventAttendees(existing.id, guests);
     tally.updated++;
     return;
   }
@@ -141,6 +148,7 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
     const linked = getEvent(orphan.id);
     ensureExpenseRow(linked);
     syncExpenseLabel(linked);
+    setEventAttendees(orphan.id, guests);
     tally.linked++;
     return;
   }
@@ -151,6 +159,7 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
      VALUES (?, ?, ?, ?, ?, ?)`
   ).run(id, title, date, event.id, location, 'איתמר');
   ensureExpenseRow(getEvent(id));
+  setEventAttendees(id, guests);
   tally.created++;
 }
 

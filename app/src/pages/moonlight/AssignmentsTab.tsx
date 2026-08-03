@@ -1,0 +1,325 @@
+import React, { useEffect, useState } from 'react';
+import { clsx } from 'clsx';
+import { del, get, post, put, nis } from '../../api';
+import { Button, Card, DataTable, Empty, Input, Modal, SearchInput, YearSelect, textMatch } from '../../ui';
+import { ASSIGNMENT_ROLES, roleName, type TabProps } from './shared';
+
+interface Props extends TabProps {
+  year: number | '';
+  onYearChange: (year: number | '') => void;
+}
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * The staffing board (שיבוצים): who works each show, matched from the calendar guest list
+ * where the supplier table knows the email, decided by hand where it does not.
+ *
+ * Three pieces: an alert for upcoming shows missing someone, the show-by-role grid, and the
+ * supplier table itself — each supplier with the open debt across the shows they worked.
+ */
+export function AssignmentsTab({ isOwner, onError, year, onYearChange }: Props) {
+  const [events, setEvents] = useState<any[]>([]);
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
+  const [supplierModal, setSupplierModal] = useState<any | null>(null);
+  const [debtsFor, setDebtsFor] = useState<any | null>(null);
+  const [matching, setMatching] = useState(false);
+
+  const load = () => {
+    const qs = year === '' ? '' : `?year=${year}`;
+    get(`/moonlight/assignments${qs}`)
+      .then((d) => { setEvents(d.events); setSuppliers(d.suppliers); })
+      .catch((e) => onError(e.message));
+  };
+  useEffect(load, [year]);
+
+  const assign = async (eventId: string, role: string, value: string) => {
+    try {
+      await put(`/moonlight/events/${eventId}/assignments`, {
+        role,
+        supplier_id: value === '' || value === 'none' ? null : value,
+        not_needed: value === 'none',
+      });
+      load();
+    } catch (err: any) { onError(err.message); }
+  };
+
+  const saveSupplier = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const b = supplierModal;
+    try {
+      if (b.id) await put(`/moonlight/suppliers/${b.id}`, b);
+      else await post('/moonlight/suppliers', b);
+      setSupplierModal(null);
+      load();
+    } catch (err: any) { onError(err.message); }
+  };
+
+  const removeSupplier = async (supplier: any) => {
+    if (!confirm(`למחוק את «${supplier.name}»? השיבוצים שלו יימחקו גם הם.`)) return;
+    try { await del(`/moonlight/suppliers/${supplier.id}`); load(); }
+    catch (err: any) { onError(err.message); }
+  };
+
+  const autoMatch = async () => {
+    setMatching(true);
+    onError('');
+    try {
+      const d = await post('/moonlight/assignments/auto-match');
+      if (!d.assigned) onError('לא נמצאו התאמות חדשות בין אורחי היומן לספקים');
+      load();
+    } catch (err: any) { onError(err.message); }
+    finally { setMatching(false); }
+  };
+
+  const visible = events.filter((e) => textMatch(search, e.venue));
+  const upcomingMissing = events.filter((e) => e.date >= today() && e.missing.length > 0);
+
+  return (
+    <div className="space-y-3">
+      {upcomingMissing.length > 0 && (
+        <Card className="border-amber-500/40">
+          <div className="font-bold text-amber-400 mb-2">
+            ⚠ {upcomingMissing.length} הופעות קרובות עם שיבוץ חסר
+          </div>
+          <div className="space-y-1 text-sm">
+            {upcomingMissing.slice(0, 6).map((e) => (
+              <div key={e.id} className="flex flex-wrap items-center gap-2">
+                <span className="font-medium">{e.venue}</span>
+                <span className="text-xs text-slate-500">{e.date}</span>
+                <span className="text-amber-400 text-xs">
+                  חסר: {e.missing.map((r: string) => roleName(r)).join(', ')}
+                </span>
+              </div>
+            ))}
+            {upcomingMissing.length > 6 && (
+              <div className="text-xs text-slate-500">ועוד {upcomingMissing.length - 6} הופעות…</div>
+            )}
+          </div>
+        </Card>
+      )}
+
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <h2 className="font-bold">שיבוצים להופעות</h2>
+            <YearSelect value={year} onChange={onYearChange} />
+          </div>
+          {isOwner && (
+            <span title="משווה את רשימת האורחים של כל הופעה מהיומן לאימיילים של הספקים">
+              <Button variant="ghost" disabled={matching} onClick={autoMatch}>
+                {matching ? 'מתאים…' : 'התאמה מהיומן'}
+              </Button>
+            </span>
+          )}
+        </div>
+        <div className="mb-4">
+          <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי מקום…" className="w-full sm:max-w-xs" />
+        </div>
+
+        {visible.length === 0 ? <Empty text="אין הופעות בטווח הזה" /> : (
+          <DataTable
+            rows={visible}
+            rowKey={(e) => e.id}
+            rowClassName={(e) => clsx('hover:bg-slate-800/40',
+              e.date >= today() && e.missing.length > 0 && 'bg-amber-500/5')}
+            columns={[
+              {
+                key: 'venue', header: 'מקום', mobile: 'title', sortValue: (e) => e.venue, className: 'font-medium',
+                render: (e) => (
+                  <div className="flex items-center gap-1.5">
+                    {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-indigo-400 text-xs">◷</span>}
+                    <span>{e.venue}</span>
+                  </div>
+                ),
+              },
+              {
+                key: 'date', header: 'תאריך', sortValue: (e) => e.date, className: 'whitespace-nowrap',
+                render: (e) => e.date,
+              },
+              ...ASSIGNMENT_ROLES.map((role) => ({
+                key: role.key,
+                header: role.name,
+                label: role.name,
+                render: (e: any) => (
+                  <RoleCell
+                    event={e}
+                    role={role}
+                    suppliers={suppliers}
+                    isOwner={isOwner}
+                    onAssign={(value) => assign(e.id, role.key, value)}
+                  />
+                ),
+              })),
+            ]}
+          />
+        )}
+        <p className="text-xs text-slate-500 mt-3">
+          שיבוץ עם ◷ הותאם אוטומטית מרשימת האורחים ביומן; הסכום מתחת לכל שיבוץ הוא שכר התפקיד
+          מתוך הוצאות ההופעה — אדום כל עוד לא שולם, ירוק לאחר תשלום.
+        </p>
+      </Card>
+
+      <Card>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div>
+            <h2 className="font-bold">ספקים</h2>
+            <p className="text-xs text-slate-500">התאמת אימייל לתפקיד — כך אורח ביומן הופך לשיבוץ</p>
+          </div>
+          {isOwner && (
+            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '' })}>
+              + ספק
+            </Button>
+          )}
+        </div>
+
+        {suppliers.length === 0 ? <Empty text="עדיין אין ספקים — הוסיפו ספק כדי להתחיל לשבץ" /> : (
+          <DataTable
+            rows={suppliers}
+            rowKey={(s) => s.id}
+            columns={[
+              { key: 'name', header: 'שם', mobile: 'title', sortValue: (s) => s.name, className: 'font-medium', render: (s) => s.name },
+              {
+                key: 'role', header: 'תפקיד', sortValue: (s) => roleName(s.role),
+                render: (s) => roleName(s.role),
+              },
+              {
+                key: 'email', header: 'אימייל', sortValue: (s) => s.email,
+                render: (s) => <span dir="ltr">{s.email || '—'}</span>,
+              },
+              { key: 'phone', header: 'טלפון', render: (s) => <span dir="ltr">{s.phone || '—'}</span> },
+              {
+                key: 'owed', header: 'חוב פתוח', sortValue: (s) => Number(s.owed) || 0,
+                render: (s) => s.owed > 0 ? (
+                  <button
+                    onClick={() => setDebtsFor(s)}
+                    title="פירוט החוב לפי הופעה"
+                    className="text-rose-400 font-medium hover:underline"
+                  >
+                    {nis(s.owed)} · {s.owed_shows.length} הופעות
+                  </button>
+                ) : <span className="text-emerald-400">—</span>,
+              },
+              isOwner && {
+                key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
+                render: (s: any) => (
+                  <div className="flex gap-3 md:gap-2 justify-end">
+                    <button onClick={() => setSupplierModal({ ...s })} className="text-sm text-indigo-400 hover:underline">עריכה</button>
+                    <button onClick={() => removeSupplier(s)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
+                  </div>
+                ),
+              },
+            ]}
+          />
+        )}
+      </Card>
+
+      <Modal title={supplierModal?.id ? 'עריכת ספק' : 'ספק חדש'} open={!!supplierModal} onClose={() => setSupplierModal(null)}>
+        {supplierModal && (
+          <form onSubmit={saveSupplier} className="space-y-3">
+            <Input label="שם *" value={supplierModal.name} required
+              onChange={(e) => setSupplierModal({ ...supplierModal, name: e.target.value })} />
+            <label className="block">
+              <span className="block text-sm text-slate-400 mb-1">תפקיד *</span>
+              <select value={supplierModal.role}
+                onChange={(e) => setSupplierModal({ ...supplierModal, role: e.target.value })}
+                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                {ASSIGNMENT_ROLES.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
+              </select>
+            </label>
+            <Input label="אימייל (להתאמה מול אורחי היומן)" type="email" dir="ltr" value={supplierModal.email || ''}
+              onChange={(e) => setSupplierModal({ ...supplierModal, email: e.target.value })} />
+            <Input label="טלפון" dir="ltr" value={supplierModal.phone || ''}
+              onChange={(e) => setSupplierModal({ ...supplierModal, phone: e.target.value })} />
+            <Input label="הערות" value={supplierModal.notes || ''}
+              onChange={(e) => setSupplierModal({ ...supplierModal, notes: e.target.value })} />
+            <Button type="submit" className="w-full">שמירה</Button>
+          </form>
+        )}
+      </Modal>
+
+      <Modal title={debtsFor ? `חוב פתוח — ${debtsFor.name}` : ''} open={!!debtsFor} onClose={() => setDebtsFor(null)}>
+        {debtsFor && (
+          <div className="space-y-2">
+            {debtsFor.owed_shows.map((row: any) => (
+              <div key={`${row.event_id}-${row.role}`}
+                className="flex items-center justify-between text-sm border-b border-slate-800/60 pb-2 last:border-0">
+                <div>
+                  <div className="font-medium">{row.venue}</div>
+                  <div className="text-xs text-slate-500">{row.date} · {roleName(row.role)}</div>
+                </div>
+                <span className="text-rose-400 font-medium">{nis(row.amount)}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between pt-2 font-bold">
+              <span>סה״כ</span>
+              <span className="text-rose-400">{nis(debtsFor.owed)}</span>
+            </div>
+            <p className="text-xs text-slate-500">
+              הסימון «שולם» נעשה בלשונית «הוצאות הופעות», בשורת ההופעה המתאימה.
+            </p>
+          </div>
+        )}
+      </Modal>
+    </div>
+  );
+}
+
+/**
+ * One role on one show: the picker of that role's suppliers (plus «לא נדרש»), and beneath it
+ * the role's fee from the show's expense row — the per-supplier, per-show debt.
+ */
+function RoleCell({ event, role, suppliers, isOwner, onAssign }: {
+  event: any;
+  role: { key: string; name: string; required: boolean };
+  suppliers: any[];
+  isOwner: boolean;
+  onAssign: (value: string) => void;
+}) {
+  const assignment = event.roles[role.key];
+  const amount = event.amounts[role.key];
+  const missing = !assignment && role.required && event.date >= today();
+  const options = suppliers.filter((s) => s.role === role.key);
+  // Keep an off-role supplier visible if someone assigned them anyway.
+  if (assignment?.supplier_id && !options.some((s) => s.id === assignment.supplier_id)) {
+    const extra = suppliers.find((s) => s.id === assignment.supplier_id);
+    if (extra) options.push(extra);
+  }
+
+  const value = assignment ? (assignment.not_needed ? 'none' : assignment.supplier_id || '') : '';
+
+  return (
+    <div className="min-w-[7.5rem]">
+      {isOwner ? (
+        <div className="flex items-center gap-1">
+          {assignment?.source === 'calendar' && (
+            <span title="הותאם אוטומטית מרשימת האורחים ביומן" className="text-indigo-400 text-xs">◷</span>
+          )}
+          <select
+            value={value}
+            onChange={(e) => onAssign(e.target.value)}
+            className={clsx(
+              'w-full bg-slate-800 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-indigo-500',
+              missing ? 'border-amber-500/60 text-amber-400' : 'border-slate-700'
+            )}
+          >
+            <option value="">{missing ? '⚠ לא שובץ' : '—'}</option>
+            <option value="none">לא נדרש</option>
+            {options.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      ) : (
+        <span className={clsx('text-sm', missing && 'text-amber-400')}>
+          {assignment?.not_needed ? 'לא נדרש' : assignment?.supplier_name || (missing ? '⚠ לא שובץ' : '—')}
+        </span>
+      )}
+      {amount.amount > 0 && !assignment?.not_needed && (
+        <div className={clsx('text-xs mt-0.5', amount.paid ? 'text-emerald-400' : 'text-rose-400')}
+          title={amount.paid ? 'שולם' : 'טרם שולם — מתוך הוצאות ההופעה'}>
+          {nis(amount.amount)}{amount.paid ? ' ✓' : ''}
+        </div>
+      )}
+    </div>
+  );
+}
