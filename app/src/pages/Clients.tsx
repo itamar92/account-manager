@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
-import { Button, Card, Input, Modal, Table, Empty } from '../ui';
+import { Button, Card, Input, Modal, DataTable, Empty, SearchInput, textMatch } from '../ui';
 
 const emptyForm = { name: '', email: '', phone: '', tax_id: '', payment_terms_days: 30, notes: '' };
 
@@ -11,6 +11,7 @@ export function Clients() {
   const [form, setForm] = useState<any>(emptyForm);
   const [open, setOpen] = useState(false);
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
 
   const load = () => get('/clients').then((d) => setClients(d.clients)).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
@@ -45,6 +46,8 @@ export function Clients() {
     } catch (err: any) { setError(err.message); }
   };
 
+  const visible = clients.filter((c) => textMatch(search, c.name, c.email));
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -53,30 +56,43 @@ export function Clients() {
       </div>
       {error && <div className="text-sm text-rose-400">{error}</div>}
 
+      <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי שם או אימייל…" className="w-full sm:max-w-xs" />
+
       <Card>
-        {clients.length === 0 ? <Empty text="אין לקוחות עדיין" /> : (
-          <Table headers={['שם', 'אימייל', 'עבודות שטרם חויבו', 'חשבוניות פתוחות', '']}>
-            {clients.map((c) => (
-              <tr key={c.id} className="hover:bg-slate-800/40">
-                <td className="px-3 py-2.5 font-medium">{c.name}</td>
-                <td className="px-3 py-2.5 text-slate-400" dir="ltr">{c.email || '—'}</td>
-                <td className="px-3 py-2.5">
-                  {c.unpaid_count > 0 ? (
-                    <Link to={`/works?client=${c.id}`} className="text-sky-400 hover:underline">
-                      {nis(c.unpaid_total)} ({c.unpaid_count})
-                    </Link>
-                  ) : '—'}
-                </td>
-                <td className="px-3 py-2.5">{c.open_invoices_total > 0 ? <span className="text-amber-400">{nis(c.open_invoices_total)}</span> : '—'}</td>
-                <td className="px-3 py-2.5 text-left whitespace-nowrap">
+        {visible.length === 0 ? <Empty text="אין לקוחות עדיין" /> : (
+          <DataTable
+            rows={visible}
+            rowKey={(c) => c.id}
+            rowClassName={() => 'hover:bg-slate-800/40'}
+            columns={[
+              { key: 'name', header: 'שם', mobile: 'title', sortValue: (c) => c.name, className: 'font-medium', render: (c) => c.name },
+              {
+                key: 'email', header: 'אימייל', sortValue: (c) => c.email, className: 'text-slate-400',
+                render: (c) => <span dir="ltr">{c.email || '—'}</span>,
+              },
+              {
+                key: 'unpaid', header: 'עבודות שטרם חויבו', sortValue: (c) => c.unpaid_total || 0,
+                render: (c) => c.unpaid_count > 0 ? (
+                  <Link to={`/works?client=${c.id}`} className="text-sky-400 hover:underline">
+                    {nis(c.unpaid_total)} ({c.unpaid_count})
+                  </Link>
+                ) : '—',
+              },
+              {
+                key: 'open', header: 'חשבוניות פתוחות', sortValue: (c) => c.open_invoices_total || 0,
+                render: (c) => c.open_invoices_total > 0 ? <span className="text-amber-400">{nis(c.open_invoices_total)}</span> : '—',
+              },
+              {
+                key: 'actions', mobile: 'actions', className: 'text-left whitespace-nowrap',
+                render: (c) => (
                   <div className="flex gap-3 justify-end">
                     <button onClick={() => openEdit(c)} className="text-sm text-indigo-400 hover:underline">עריכה</button>
                     <button onClick={() => remove(c)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </Table>
+                ),
+              },
+            ]}
+          />
         )}
       </Card>
 

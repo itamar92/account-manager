@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { del, post, put, nis } from '../../api';
-import { Button, Card, Combobox, EditableCell, Empty, Input, Modal, Table, YearSelect } from '../../ui';
+import { Button, Card, Combobox, DataTable, EditableCell, Empty, Input, Modal, SearchInput, YearSelect, textMatch } from '../../ui';
 import { PAYERS, eventLabel, type TabProps } from './shared';
 
 interface Props extends TabProps {
@@ -23,6 +23,7 @@ const emptyForm = {
 export function GeneralExpensesTab({ expenses, events, year, onYearChange, isOwner, onError, reload }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
+  const [search, setSearch] = useState('');
 
   // 'כללי' first: an expense that belongs to no single show is the common case here.
   const showOptions = [
@@ -60,9 +61,11 @@ export function GeneralExpensesTab({ expenses, events, year, onYearChange, isOwn
     } catch (err: any) { onError(err.message); }
   };
 
+  const visible = expenses.filter((g) => textMatch(search, g.description, g.paid_by));
+
   return (
     <Card>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <h2 className="font-bold">הוצאות כלליות</h2>
           <YearSelect value={year} onChange={onYearChange} />
@@ -70,42 +73,68 @@ export function GeneralExpensesTab({ expenses, events, year, onYearChange, isOwn
         {isOwner && <Button onClick={() => setOpen(true)}>+ הוצאה</Button>}
       </div>
 
-      {expenses.length === 0 ? <Empty text="אין נתונים בטווח הזה" /> : (
-        <Table headers={['תאריך', 'פירוט', 'שיוך להופעה', 'מי שילם', 'סכום', 'שולם', isOwner ? '' : ' ']}>
-          {expenses.map((g) => (
-            <tr key={g.id} className="hover:bg-slate-800/40">
-              <td className="px-3 py-2.5 whitespace-nowrap">
+      <div className="mb-4">
+        <SearchInput value={search} onChange={setSearch} placeholder="חיפוש בפירוט או במשלם…" className="w-full sm:max-w-xs" />
+      </div>
+
+      {visible.length === 0 ? <Empty text="אין נתונים בטווח הזה" /> : (
+        <DataTable
+          rows={visible}
+          rowKey={(g) => g.id}
+          rowClassName={() => 'hover:bg-slate-800/40'}
+          columns={[
+            {
+              key: 'date', header: 'תאריך', sortValue: (g) => g.date, className: 'whitespace-nowrap',
+              render: (g) => (
                 <EditableCell type="date" value={g.date} disabled={!isOwner}
                   onSave={(v) => saveField(g.id, { date: v })} />
-              </td>
-              <td className="px-3 py-2.5 font-medium">
+              ),
+            },
+            {
+              key: 'description', header: 'פירוט', mobile: 'title', sortValue: (g) => g.description, className: 'font-medium',
+              render: (g) => (
                 <EditableCell value={g.description} disabled={!isOwner}
                   onSave={(v) => saveField(g.id, { description: v })} />
-              </td>
-              <td className="px-3 py-2.5 text-slate-400 min-w-[12rem]">
+              ),
+            },
+            {
+              key: 'event', header: 'שיוך להופעה', className: 'text-slate-400 min-w-[12rem]',
+              render: (g) => (
                 <Combobox value={g.event_id || ''} options={showOptions} disabled={!isOwner}
                   onChange={(v) => saveField(g.id, { event_id: v })} />
-              </td>
-              <td className="px-3 py-2.5 min-w-[8rem]">
+              ),
+            },
+            {
+              key: 'payer', header: 'מי שילם', sortValue: (g) => g.paid_by, className: 'min-w-[8rem]',
+              render: (g) => (
                 <Combobox value={g.paid_by || ''} options={payerOptions} disabled={!isOwner}
                   onChange={(v) => saveField(g.id, { paid_by: v })} />
-              </td>
-              <td className="px-3 py-2.5 text-rose-400">
-                <EditableCell type="number" value={g.amount} display={nis(g.amount)} disabled={!isOwner}
-                  onSave={(v) => saveField(g.id, { amount: v })} />
-              </td>
-              <td className="px-3 py-2.5">
+              ),
+            },
+            {
+              key: 'amount', header: 'סכום', sortValue: (g) => Number(g.amount) || 0, className: 'text-rose-400',
+              render: (g) => (
+                <span className="text-rose-400">
+                  <EditableCell type="number" value={g.amount} display={nis(g.amount)} disabled={!isOwner}
+                    onSave={(v) => saveField(g.id, { amount: v })} />
+                </span>
+              ),
+            },
+            {
+              key: 'paid', header: 'שולם', sortValue: (g) => (g.paid ? 1 : 0),
+              render: (g) => (
                 <EditableCell type="checkbox" value={g.paid} disabled={!isOwner}
                   onSave={(v) => saveField(g.id, { paid: v })} />
-              </td>
-              <td className="px-3 py-2.5 text-left">
-                {isOwner && (
-                  <button onClick={() => removeExpense(g)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </Table>
+              ),
+            },
+            isOwner && {
+              key: 'actions', mobile: 'actions' as const, className: 'text-left',
+              render: (g: any) => (
+                <button onClick={() => removeExpense(g)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
+              ),
+            },
+          ]}
+        />
       )}
 
       <Modal title="הוצאה כללית חדשה" open={open} onClose={() => setOpen(false)}>

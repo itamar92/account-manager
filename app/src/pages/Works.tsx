@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
-import { Button, Card, Input, Modal, StatusBadge, Table, Empty, YearSelect } from '../ui';
+import { Button, Card, Input, Modal, StatusBadge, DataTable, Empty, SearchInput, YearSelect, textMatch } from '../ui';
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
@@ -12,6 +12,7 @@ export function Works() {
   const [year, setYear] = useState<number | ''>(new Date().getFullYear());
   const [searchParams] = useSearchParams();
   const [clientFilter, setClientFilter] = useState(searchParams.get('client') || '');
+  const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [form, setForm] = useState({ client_id: '', date: new Date().toISOString().slice(0, 10), description: '', amount: '' });
@@ -38,8 +39,11 @@ export function Works() {
     setSelected(next);
   };
 
+  // The search narrows in place, on what the server filters already returned.
+  const visible = works.filter((w) => textMatch(search, w.description, w.client_name));
+
   const toggleAll = () => {
-    const selectable = works.filter((w) => w.status === 'unpaid');
+    const selectable = visible.filter((w) => w.status === 'unpaid');
     setSelected(selected.size >= selectable.length && selectable.length > 0
       ? new Set()
       : new Set(selectable.map((w) => w.id)));
@@ -171,6 +175,7 @@ export function Works() {
           <option value="paid">שולם</option>
         </select>
         <YearSelect value={year} onChange={setYear} />
+        <SearchInput value={search} onChange={setSearch} placeholder="חיפוש בפירוט או בלקוח…" className="flex-1 min-w-[10rem] sm:max-w-xs" />
       </div>
 
       {error && <div className="text-sm text-rose-400">{error}</div>}
@@ -212,53 +217,72 @@ export function Works() {
       )}
 
       <Card>
-        {works.length === 0 ? <Empty text="אין עבודות" /> : (
-          <Table
-            headers={[
-              <input
-                key="all" type="checkbox" className="accent-indigo-500" title="בחר הכל"
-                checked={selected.size > 0 && selected.size === works.filter((w) => w.status === 'unpaid').length}
-                onChange={toggleAll}
-              />,
-              'תאריך', 'לקוח', 'פירוט', 'סכום', 'כולל מע"מ', 'סטטוס', '',
+        {visible.length === 0 ? <Empty text="אין עבודות" /> : (
+          <DataTable
+            rows={visible}
+            rowKey={(w) => w.id}
+            onRowClick={toggle}
+            rowClassName={(w) => (w.status === 'unpaid' ? 'hover:bg-slate-800/40' : 'opacity-75')}
+            columns={[
+              {
+                key: 'select',
+                mobile: 'lead',
+                header: (
+                  <input
+                    type="checkbox" className="accent-indigo-500" title="בחר הכל"
+                    checked={selected.size > 0 && selected.size === visible.filter((w) => w.status === 'unpaid').length}
+                    onChange={toggleAll}
+                  />
+                ),
+                render: (w) => w.status === 'unpaid' && (
+                  <input type="checkbox" checked={selected.has(w.id)} onChange={() => toggle(w)} onClick={(e) => e.stopPropagation()} className="accent-indigo-500" />
+                ),
+              },
+              {
+                key: 'date', header: 'תאריך', sortValue: (w) => w.date, className: 'whitespace-nowrap',
+                render: (w) => w.date,
+              },
+              {
+                key: 'client', header: 'לקוח', mobile: 'title', sortValue: (w) => w.client_name,
+                className: 'font-medium', render: (w) => w.client_name,
+              },
+              {
+                key: 'description', header: 'פירוט', sortValue: (w) => w.description, className: 'text-slate-300',
+                render: (w) => (
+                  <>
+                    {w.description}
+                    {!!w.description_locked && w.calendar_event_id && (
+                      <span className="text-amber-400 text-xs mr-1" title="הפירוט נערך ידנית — סנכרון מהיומן לא ישנה אותו">✎</span>
+                    )}
+                  </>
+                ),
+              },
+              { key: 'amount', header: 'סכום', sortValue: (w) => w.amount, render: (w) => nis(w.amount) },
+              { key: 'total', header: 'כולל מע"מ', sortValue: (w) => w.total, className: 'font-medium', render: (w) => nis(w.total) },
+              {
+                key: 'status', header: 'סטטוס', sortValue: (w) => w.status,
+                render: (w) => (
+                  <>
+                    <StatusBadge status={w.status} />
+                    {w.invoice_number && <span className="text-xs text-slate-500 mr-1">#{w.invoice_number}</span>}
+                  </>
+                ),
+              },
+              {
+                key: 'actions', mobile: 'actions', className: 'text-left whitespace-nowrap',
+                render: (w) => w.status === 'unpaid' && (
+                  <div className="flex gap-3 md:gap-2 justify-end">
+                    <button onClick={(e) => { e.stopPropagation(); startEdit(w); }} className="text-xs text-indigo-400 hover:underline">עריכה</button>
+                    {w.calendar_event_id && (
+                      <button onClick={(e) => { e.stopPropagation(); excludeFromCalendar(w); }}
+                        className="text-xs text-amber-400 hover:underline">לא עבודה</button>
+                    )}
+                    <button onClick={(e) => { e.stopPropagation(); removeWork(w.id); }} className="text-xs text-rose-400 hover:underline">מחיקה</button>
+                  </div>
+                ),
+              },
             ]}
-          >
-            {works.map((w) => (
-              <tr key={w.id} className={w.status === 'unpaid' ? 'hover:bg-slate-800/40 cursor-pointer' : 'opacity-75'} onClick={() => toggle(w)}>
-                <td className="px-3 py-2.5">
-                  {w.status === 'unpaid' && (
-                    <input type="checkbox" checked={selected.has(w.id)} onChange={() => toggle(w)} onClick={(e) => e.stopPropagation()} className="accent-indigo-500" />
-                  )}
-                </td>
-                <td className="px-3 py-2.5 whitespace-nowrap">{w.date}</td>
-                <td className="px-3 py-2.5 font-medium">{w.client_name}</td>
-                <td className="px-3 py-2.5 text-slate-300">
-                  {w.description}
-                  {!!w.description_locked && w.calendar_event_id && (
-                    <span className="text-amber-400 text-xs mr-1" title="הפירוט נערך ידנית — סנכרון מהיומן לא ישנה אותו">✎</span>
-                  )}
-                </td>
-                <td className="px-3 py-2.5">{nis(w.amount)}</td>
-                <td className="px-3 py-2.5 font-medium">{nis(w.total)}</td>
-                <td className="px-3 py-2.5">
-                  <StatusBadge status={w.status} />
-                  {w.invoice_number && <span className="text-xs text-slate-500 mr-1">#{w.invoice_number}</span>}
-                </td>
-                <td className="px-3 py-2.5 text-left whitespace-nowrap">
-                  {w.status === 'unpaid' && (
-                    <div className="flex gap-2 justify-end">
-                      <button onClick={(e) => { e.stopPropagation(); startEdit(w); }} className="text-xs text-indigo-400 hover:underline">עריכה</button>
-                      {w.calendar_event_id && (
-                        <button onClick={(e) => { e.stopPropagation(); excludeFromCalendar(w); }}
-                          className="text-xs text-amber-400 hover:underline">לא עבודה</button>
-                      )}
-                      <button onClick={(e) => { e.stopPropagation(); removeWork(w.id); }} className="text-xs text-rose-400 hover:underline">מחיקה</button>
-                    </div>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </Table>
+          />
         )}
       </Card>
 

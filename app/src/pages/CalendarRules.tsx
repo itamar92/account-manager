@@ -102,6 +102,9 @@ export function CalendarRules({ onChange, onError }: {
     catch (e: any) { onError(e.message); }
   };
 
+  const closePreview = (ruleId: string) =>
+    setPreview(({ [ruleId]: _closed, ...rest }) => rest);
+
   const runPreview = async (rule: Rule) => {
     setBusy(rule.id);
     onError('');
@@ -199,8 +202,12 @@ export function CalendarRules({ onChange, onError }: {
                 </select>
               </div>
               <div className="flex gap-2">
-                <Button variant="ghost" disabled={busy === rule.id} onClick={() => runPreview(rule)}>
-                  {busy === rule.id ? '…' : 'תצוגה מקדימה'}
+                <Button
+                  variant="ghost"
+                  disabled={busy === rule.id}
+                  onClick={() => (preview[rule.id] ? closePreview(rule.id) : runPreview(rule))}
+                >
+                  {busy === rule.id ? '…' : preview[rule.id] ? 'סגירת התצוגה' : 'תצוגה מקדימה'}
                 </Button>
                 <Button variant="ghost" disabled={busy === rule.id || !rule.enabled} onClick={() => syncOne(rule)}>
                   סנכרון
@@ -307,6 +314,7 @@ export function CalendarRules({ onChange, onError }: {
               <PreviewTable
                 result={preview[rule.id]}
                 onPin={(row, action) => pinEvent(rule, row, action)}
+                onClose={() => closePreview(rule.id)}
               />
             )}
           </div>
@@ -416,26 +424,33 @@ function AmountField({ label, value, onChange }: {
   );
 }
 
-function PreviewTable({ result, onPin }: {
+function PreviewTable({ result, onPin, onClose }: {
   result: any;
   onPin: (row: any, action: 'exclude' | 'include') => void;
+  onClose: () => void;
 }) {
   const [showMisses, setShowMisses] = useState(false);
   const rows = result.rows.filter((r: any) => showMisses || r.matched);
 
   return (
     <div className="mt-3 pt-3 border-t border-slate-800">
-      <div className="flex items-center justify-between mb-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
         <div className="text-xs text-slate-400">
           {result.matched} תואמים מתוך {result.fetched} אירועים בחלון
         </div>
-        <label className="flex items-center gap-2 text-xs text-slate-500">
-          <input type="checkbox" checked={showMisses} onChange={(e) => setShowMisses(e.target.checked)}
-            className="w-3.5 h-3.5 accent-indigo-500" />
-          הצג גם מה שלא נמשך
-        </label>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-slate-500">
+            <input type="checkbox" checked={showMisses} onChange={(e) => setShowMisses(e.target.checked)}
+              className="w-3.5 h-3.5 accent-indigo-500" />
+            הצג גם מה שלא נמשך
+          </label>
+          <button onClick={onClose} title="סגירת התצוגה המקדימה"
+            className="text-xs text-slate-500 hover:text-slate-300">
+            ✕ סגירה
+          </button>
+        </div>
       </div>
-      <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-800">
+      <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-slate-800">
         {rows.length === 0 ? (
           <div className="text-center text-slate-500 py-6 text-sm">אין אירועים תואמים</div>
         ) : (
