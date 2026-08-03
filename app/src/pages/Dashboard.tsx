@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { get, nis } from '../api';
 import { Card, StatCard, StatusBadge, Empty } from '../ui';
-import { MEMBERS, PAYMENT_STATUS_STYLES, paymentStatusLabel } from './moonlight/shared';
 
 export function Dashboard() {
   const [data, setData] = useState<any>(null);
@@ -69,83 +68,16 @@ export function Dashboard() {
         </Card>
       </div>
 
+      {/* The band's money detail — member split, shows awaiting payment, supplier debts —
+          lives on the Moonlight summary tab; here only the headline figure above. */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-bold">Moonlight Finance — חלוקה לחברים</h2>
-          <Link to="/moonlight" className="text-sm text-indigo-400 hover:underline">לאזור המלא ←</Link>
-        </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {MEMBERS.map((m) => (
-            <div key={m.key} className="bg-slate-800/50 rounded-xl p-3 text-center">
-              <div className="text-sm text-slate-400">{m.name}</div>
-              <div className="text-lg font-bold text-indigo-300">{nis(data.band[m.key])}</div>
-            </div>
-          ))}
+        <div className="flex items-center justify-between">
+          <h2 className="font-bold">Moonlight Finance</h2>
+          <Link to="/moonlight" className="text-sm text-indigo-400 hover:underline">
+            לחלוקה בין החברים, כספים בדרך וחובות לספקים ←
+          </Link>
         </div>
       </Card>
-
-      {/* The two loose ends of a show that has already happened: money that has not come in,
-          and suppliers who have not been paid. */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <FollowUpCard
-          title="הופעות שממתינות לתשלום"
-          total={data.bandFollowUps?.awaitingPaymentTotal}
-          rows={data.bandFollowUps?.awaitingPayment}
-          empty="כל ההופעות שולמו"
-          accent="text-amber-400"
-          render={(row: any) => (
-            <>
-              <span className={PAYMENT_STATUS_STYLES[row.payment_status]}>{paymentStatusLabel(row.payment_status)}</span>
-              <span className="font-medium">{nis(row.amount)}</span>
-            </>
-          )}
-        />
-        <FollowUpCard
-          title="הופעות עם חוב לספקים"
-          total={data.bandFollowUps?.owedToSuppliersTotal}
-          rows={data.bandFollowUps?.owedToSuppliers}
-          empty="אין חובות פתוחים לספקים"
-          accent="text-rose-400"
-          render={(row: any) => <span className="font-medium text-rose-400">{nis(row.outstanding)}</span>}
-        />
-      </div>
     </div>
-  );
-}
-
-function FollowUpCard({ title, total, rows, empty, accent, render }: {
-  title: string;
-  total?: number;
-  rows?: any[];
-  empty: string;
-  accent: string;
-  render: (row: any) => React.ReactNode;
-}) {
-  const list = rows ?? [];
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="font-bold">{title}</h2>
-        <span className={`text-lg font-bold ${accent}`}>{nis(total)}</span>
-      </div>
-      {list.length === 0 ? <Empty text={empty} /> : (
-        <div className="space-y-2">
-          {list.slice(0, 6).map((row) => (
-            <div key={row.id} className="flex items-center justify-between text-sm border-b border-slate-800/60 pb-2 last:border-0">
-              <div>
-                <div className="font-medium">{row.venue}</div>
-                <div className="text-xs text-slate-500">{row.date}</div>
-              </div>
-              <div className="flex items-center gap-3">{render(row)}</div>
-            </div>
-          ))}
-          {list.length > 6 && (
-            <Link to="/moonlight" className="block text-xs text-indigo-400 hover:underline pt-1">
-              ועוד {list.length - 6} הופעות ←
-            </Link>
-          )}
-        </div>
-      )}
-    </Card>
   );
 }

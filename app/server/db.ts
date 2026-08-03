@@ -166,6 +166,36 @@ CREATE TABLE IF NOT EXISTS band_general_expenses (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- The band's regular suppliers: who answers to each email, and in what role. The role keys
+-- are the expense-row columns that pay them (lightman, soundman, singer, sound_company),
+-- which is what ties an assignment to the money it costs.
+CREATE TABLE IF NOT EXISTS band_suppliers (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT COLLATE NOCASE,
+  role TEXT NOT NULL CHECK (role IN ('lightman','soundman','singer','sound_company')),
+  phone TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_band_suppliers_email
+  ON band_suppliers(email) WHERE email IS NOT NULL AND email != '';
+
+-- Who is staffed on each show, one row per role. supplier_id NULL with not_needed = 1 is an
+-- explicit "this show has no sound company"; no row at all means nobody decided yet, which
+-- is what the missing-staff alert looks for.
+CREATE TABLE IF NOT EXISTS band_event_assignments (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('lightman','soundman','singer','sound_company')),
+  supplier_id TEXT,
+  not_needed INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','calendar')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(event_id, role)
+);
+
 -- Which calendar events to draw, and where they land. One row per rule so a second
 -- freelance client (its own organizer, its own ignore words) is configuration, not code.
 CREATE TABLE IF NOT EXISTS calendar_rules (
@@ -233,6 +263,8 @@ addColumnIfMissing('band_general_expenses', 'event_id', 'TEXT');
 // A name typed by hand outranks the calendar. Set the moment someone renames a synced show or
 // work, and from then on the sync updates its date and place but leaves the name alone.
 addColumnIfMissing('band_events', 'venue_locked', 'INTEGER NOT NULL DEFAULT 0');
+// The show's calendar guest list, as a JSON array of emails — what the staffing matcher reads.
+addColumnIfMissing('band_events', 'attendees', 'TEXT');
 addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,

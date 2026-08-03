@@ -31,6 +31,21 @@ export const PAYMENT_STATUS_STYLES: Record<string, string> = {
 export const paymentStatusLabel = (value: string) =>
   PAYMENT_STATUSES.find((s) => s.value === value)?.label || value;
 
+/**
+ * The staffed roles of a show, in display order. The keys are the expense-row columns that
+ * pay each role — the same names the server uses — so an assignment and its cost line up.
+ * A sound company is only sometimes needed, so only its absence is not flagged.
+ */
+export const ASSIGNMENT_ROLES = [
+  { key: 'lightman', name: 'תאורן', required: true },
+  { key: 'soundman', name: 'סאונדמן', required: true },
+  { key: 'singer', name: 'זמר/ת', required: true },
+  { key: 'sound_company', name: 'חברת הגברה', required: false },
+] as const;
+
+export const roleName = (key: string) =>
+  ASSIGNMENT_ROLES.find((r) => r.key === key)?.name || key;
+
 export interface TabProps {
   isOwner: boolean;
   onError: (message: string) => void;

@@ -22,6 +22,10 @@ import {
   expenseRowForEvent, expenseTotal, getEvent, normalizePaymentStatus, reassignExpenseRow,
   recomputeEvent, syncExpenseLabel,
 } from './moonlight.js';
+import {
+  ASSIGNMENT_ROLES, assignmentsForEvent, attendeeEmails, autoAssignAll, deleteSupplier,
+  isAssignmentRole, listSuppliers, missingRoles, setAssignment, supplierDebts,
+} from './assignments.js';
 
 /**
  * Drops the rows a calendar event produced, so excluding it takes effect at once.
@@ -154,8 +158,10 @@ router.get('/dashboard', requireOwner, handle((_req, res) => {
      FROM invoices i JOIN clients c ON c.id = i.client_id
      ORDER BY i.date DESC, i.created_at DESC LIMIT 8`
   ).all();
+  // The band's follow-ups (money not yet in, suppliers not yet paid) live on the
+  // moonlight summary, not here — this dashboard keeps only the one headline figure.
   const band = bandSummary();
-  res.json({ openInvoices, paidYtd, unpaidWorks, monthly, recentInvoices, band, bandFollowUps: bandFollowUps() });
+  res.json({ openInvoices, paidYtd, unpaidWorks, monthly, recentInvoices, band });
 }));
 
 // ============ clients (owner) ============
@@ -428,11 +434,21 @@ function bandFollowUps() {
     .filter((r) => r.outstanding > 0)
     .map((r) => ({ id: r.event.id, venue: r.event.venue, date: r.event.date, outstanding: r.outstanding }));
 
+  // The third loose end looks forward rather than back: a show that is coming up with
+  // nobody staffed for one of its required roles.
+  const upcoming = db
+    .prepare('SELECT * FROM band_events WHERE date > ? ORDER BY date')
+    .all(today) as any[];
+  const missingAssignments = upcoming
+    .map((e) => ({ id: e.id, venue: e.venue, date: e.date, missing: missingRoles(e.id) }))
+    .filter((r) => r.missing.length > 0);
+
   return {
     awaitingPayment,
     awaitingPaymentTotal: round2(awaitingPayment.reduce((s, e) => s + e.amount, 0)),
     owedToSuppliers,
     owedToSuppliersTotal: round2(owedToSuppliers.reduce((s, e) => s + e.outstanding, 0)),
+    missingAssignments,
   };
 }
 
@@ -443,7 +459,18 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
     .prepare(`SELECT * FROM band_general_expenses${eventsWhere.sql}`)
     .all(...eventsWhere.params) as any[];
   const sum = (arr: any[], key: string) => round2(arr.reduce((acc, r) => acc + (Number(r[key]) || 0), 0));
+  // The member split is shown for the shows whose profit has not been handed out yet —
+  // "what is still coming to each of us" — so a show marked שולם לנגנים drops out of it.
+  const unsettled = events.filter((e) => !e.paid_to_musicians);
   return {
+    unpaidDivision: {
+      amir: sum(unsettled, 'amir'),
+      itamar: sum(unsettled, 'itamar'),
+      yuval: sum(unsettled, 'yuval'),
+      guy: sum(unsettled, 'guy'),
+      profit: sum(unsettled, 'profit'),
+      count: unsettled.length,
+    },
     totalRevenue: sum(events, 'amount_pre_vat'),
     totalExpenses: sum(events, 'expenses'),
     totalProfit: sum(events, 'profit'),
@@ -682,6 +709,116 @@ router.delete('/moonlight/general-expenses/:id', requireOwner, handle((req, res)
   const result = db.prepare('DELETE FROM band_general_expenses WHERE id = ?').run(req.params.id);
   if (!result.changes) return res.status(404).json({ error: 'expense not found' });
   res.json({ deleted: 1 });
+}));
+
+// ---- moonlight follow-ups: the summary tab's dashboard cards ----
+router.get('/moonlight/follow-ups', requireAuth, handle((_req, res) => {
+  res.json({ followUps: bandFollowUps() });
+}));
+
+// ---- moonlight staffing (שיבוצים): suppliers and who works each show ----
+/** Suppliers with what each is still owed, show by show. */
+function suppliersWithDebts() {
+  const debts = supplierDebts();
+  return listSuppliers().map((s) => ({
+    ...s,
+    owed: debts.get(s.id)?.owed ?? 0,
+    owed_shows: debts.get(s.id)?.shows ?? [],
+  }));
+}
+
+router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
+  res.json({ suppliers: suppliersWithDebts() });
+}));
+
+router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
+  const { name, email, role, phone, notes } = req.body || {};
+  if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
+  if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  const id = uuid();
+  try {
+    db.prepare('INSERT INTO band_suppliers (id, name, email, role, phone, notes) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, name.trim(), email?.trim() || null, role, phone || null, notes || null);
+  } catch {
+    return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
+  }
+  // A new email may belong to guests already on synced shows — match them right away.
+  autoAssignAll();
+  res.json({ supplier: db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(id) });
+}));
+
+router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
+  const existing = db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(req.params.id) as any;
+  if (!existing) return res.status(404).json({ error: 'supplier not found' });
+  const b = { ...existing, ...(req.body || {}) };
+  if (!String(b.name || '').trim()) return res.status(400).json({ error: 'שם ספק חובה' });
+  if (!isAssignmentRole(b.role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  try {
+    db.prepare('UPDATE band_suppliers SET name = ?, email = ?, role = ?, phone = ?, notes = ? WHERE id = ?')
+      .run(String(b.name).trim(), b.email?.trim() || null, b.role, b.phone || null, b.notes || null, req.params.id);
+  } catch {
+    return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
+  }
+  // A changed role invalidates calendar matches made under the old one; redo them.
+  if (b.role !== existing.role) {
+    db.prepare("DELETE FROM band_event_assignments WHERE supplier_id = ? AND source = 'calendar'")
+      .run(req.params.id);
+  }
+  autoAssignAll();
+  res.json({ supplier: db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(req.params.id) });
+}));
+
+router.delete('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
+  deleteSupplier(req.params.id);
+  res.json({ ok: true });
+}));
+
+/**
+ * The staffing board: every show in the range with who holds each role, what that role
+ * costs on the show's expense row, and which required roles still have nobody.
+ */
+router.get('/moonlight/assignments', requireAuth, handle((req, res) => {
+  const where = rangeClause('date', dateRange(req.query));
+  const events = db
+    .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
+    .all(...where.params) as any[];
+  const suppliers = suppliersWithDebts();
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+
+  const rows = events.map((e) => {
+    const expense = expenseRowForEvent(e.id);
+    const roles: Record<string, any> = {};
+    for (const a of assignmentsForEvent(e.id)) {
+      roles[a.role] = {
+        supplier_id: a.supplier_id,
+        supplier_name: a.supplier_id ? byId.get(a.supplier_id)?.name ?? '?' : null,
+        not_needed: !!a.not_needed,
+        source: a.source,
+      };
+    }
+    const amounts: Record<string, { amount: number; paid: boolean }> = {};
+    for (const role of ASSIGNMENT_ROLES) {
+      amounts[role] = { amount: round2(Number(expense?.[role]) || 0), paid: !!expense?.[`${role}_paid`] };
+    }
+    return {
+      id: e.id, venue: e.venue, date: e.date, calendar_event_id: e.calendar_event_id,
+      attendees: attendeeEmails(e), roles, amounts, missing: missingRoles(e.id),
+    };
+  });
+
+  res.json({ events: rows, suppliers });
+}));
+
+/** One staffing decision: who fills `role` on this show, or that it is not needed. */
+router.put('/moonlight/events/:id/assignments', requireOwner, handle((req, res) => {
+  const { role, supplier_id, not_needed } = req.body || {};
+  if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  res.json({ assignment: setAssignment(req.params.id, role, supplier_id || null, !!not_needed) });
+}));
+
+/** Re-matches every stored guest list — for after the supplier table is edited. */
+router.post('/moonlight/assignments/auto-match', requireOwner, handle((_req, res) => {
+  res.json({ assigned: autoAssignAll() });
 }));
 
 // ============ integrations: Morning (Green Invoice) + Google Calendar (owner) ============
