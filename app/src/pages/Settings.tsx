@@ -13,6 +13,9 @@ export function Settings() {
   // Set while editing an existing member; null means the modal is creating a new one.
   const [editUser, setEditUser] = useState<any | null>(null);
   const [vat, setVat] = useState('');
+  const [vatFrequency, setVatFrequency] = useState('bimonthly');
+  const [creditPoints, setCreditPoints] = useState('2.25');
+  const [reportsSaved, setReportsSaved] = useState('');
   const [syncing, setSyncing] = useState('');
   const [syncResult, setSyncResult] = useState('');
   const [business, setBusiness] = useState<any>(null);
@@ -23,6 +26,8 @@ export function Settings() {
       .then((d) => {
         setData(d);
         setVat(String(d.settings.vat_percent));
+        setVatFrequency(d.settings.vat_report_frequency);
+        setCreditPoints(String(d.settings.tax_credit_points));
         setBusiness(d.business);
       })
       .catch((e) => setError(e.message));
@@ -94,6 +99,16 @@ export function Settings() {
     try { await post('/settings', { vat_percent: parseFloat(vat) }); load(); } catch (err: any) { setError(err.message); }
   };
 
+  const saveReportSettings = async () => {
+    setError('');
+    setReportsSaved('');
+    try {
+      await post('/settings', { vat_report_frequency: vatFrequency, tax_credit_points: parseFloat(creditPoints) });
+      setReportsSaved('הגדרות הדוחות נשמרו');
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
   const saveBusiness = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -120,6 +135,29 @@ export function Settings() {
         <div className="flex items-end gap-3 max-w-xs">
           <Input label='מע"מ (%)' type="number" step="0.1" value={vat} onChange={(e) => setVat(e.target.value)} />
           <Button variant="ghost" onClick={saveVat}>שמירה</Button>
+        </div>
+      </Card>
+
+      {/* What the דוחות page needs to know that the books cannot tell it: how often מע"מ is
+          filed, and how many נקודות זיכוי the income-tax estimate should credit. */}
+      <Card>
+        <h2 className="font-bold mb-1">דוחות מס</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          משפיע על חלוקת תקופות הדיווח בדוח המע"מ ועל הערכת המס השנתית.
+        </p>
+        {reportsSaved && <div className="text-sm text-emerald-400 mb-3">{reportsSaved}</div>}
+        <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
+          <label className="block">
+            <span className="block text-sm text-slate-400 mb-1">תדירות דיווח מע"מ</span>
+            <select value={vatFrequency} onChange={(e) => setVatFrequency(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+              <option value="bimonthly">דו-חודשי</option>
+              <option value="monthly">חודשי</option>
+            </select>
+          </label>
+          <Input label="נקודות זיכוי" type="number" step="0.25" min="0" value={creditPoints}
+            onChange={(e) => setCreditPoints(e.target.value)} />
+          <Button variant="ghost" onClick={saveReportSettings}>שמירה</Button>
         </div>
       </Card>
 

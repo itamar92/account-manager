@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, Navigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Briefcase, FileText, Receipt, Moon, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Moon, Settings, LogOut } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
 
@@ -9,6 +9,7 @@ const ownerNav = [
   { to: '/works', label: 'עבודות', icon: Briefcase },
   { to: '/invoices', label: 'חשבוניות', icon: FileText },
   { to: '/expenses', label: 'הוצאות', icon: Receipt },
+  { to: '/reports', label: 'דוחות', icon: FileBarChart },
   { to: '/clients', label: 'לקוחות', icon: Users },
   { to: '/moonlight', label: 'Moonlight', icon: Moon },
   { to: '/settings', label: 'הגדרות', icon: Settings },

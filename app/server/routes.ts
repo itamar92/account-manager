@@ -29,6 +29,9 @@ import {
   ASSIGNMENT_ROLES, assignmentsForEvent, attendeeEmails, autoAssignAll, deleteSupplier,
   isAssignmentRole, listSuppliers, missingRoles, setAssignment, supplierDebts,
 } from './assignments.js';
+import {
+  getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
+} from './reports.js';
 
 /**
  * Drops the rows a calendar event produced, so excluding it takes effect at once.
@@ -134,28 +137,39 @@ router.get('/auth/me', (req, res) => {
 });
 
 // ============ dashboard (owner) ============
-router.get('/dashboard', requireOwner, handle((_req, res) => {
+/** The year a dashboard or report is being read for; anything unparseable is this year. */
+function reportYear(query: any): number {
+  const year = parseInt(query?.year, 10);
+  return Number.isFinite(year) && year > 1970 && year < 3000 ? year : new Date().getFullYear();
+}
+
+router.get('/dashboard', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
   // Revenue figures count tax documents only. A sale usually also has a חשבון עסקה (300)
   // recording the same money, so summing every document would count it twice.
+  //
+  // The two outstanding-balance cards are deliberately not scoped to the year: an invoice
+  // issued last December and still unpaid is money owed now, whichever year is on screen.
   const openInvoices = db.prepare(
     `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM invoices
      WHERE status = 'issued' AND doc_type IN (${REVENUE_DOC_TYPES_SQL})`
   ).get() as any;
-  const paidYtd = db.prepare(
-    `SELECT COALESCE(SUM(total),0) AS total FROM invoices
-     WHERE status = 'paid' AND doc_type IN (${REVENUE_DOC_TYPES_SQL})
-       AND date >= date('now','start of year')`
-  ).get() as any;
   const unpaidWorks = db.prepare(
     "SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE status = 'unpaid'"
   ).get() as any;
-  const monthly = db.prepare(
-    `SELECT substr(date, 1, 7) AS month,
-            SUM(CASE WHEN status = 'paid' THEN total ELSE 0 END) AS paid,
-            SUM(CASE WHEN status = 'issued' THEN total ELSE 0 END) AS open
-     FROM invoices WHERE status IN ('paid','issued') AND doc_type IN (${REVENUE_DOC_TYPES_SQL})
-     GROUP BY month ORDER BY month DESC LIMIT 12`
-  ).all().reverse();
+
+  // Income against expenses, month by month — the chart's series and the profit cards are
+  // the same numbers the דוחות page reports, so the two can never tell different stories.
+  const monthly = monthlyPnl(`${year}-01-01`, `${year}-12-31`);
+  const yearTotals = pnlTotals(monthly);
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  // On a past year "this month" has no meaning; its last month with activity is the useful
+  // stand-in, and December is the backstop — `monthly` always holds the year's twelve months,
+  // so there is always a row to land on.
+  const monthRow = monthly.find((m) => m.month === currentMonth)
+    ?? [...monthly].reverse().find((m) => m.income || m.expenses)
+    ?? monthly[monthly.length - 1];
+
   const recentInvoices = db.prepare(
     `SELECT i.id, i.number, i.date, i.total, i.status, i.doc_type, c.name AS client_name
      FROM invoices i JOIN clients c ON c.id = i.client_id
@@ -164,7 +178,45 @@ router.get('/dashboard', requireOwner, handle((_req, res) => {
   // The band's follow-ups (money not yet in, suppliers not yet paid) live on the
   // moonlight summary, not here — this dashboard keeps only the one headline figure.
   const band = bandSummary();
-  res.json({ openInvoices, paidYtd, unpaidWorks, monthly, recentInvoices, band });
+  res.json({
+    year,
+    openInvoices,
+    unpaidWorks,
+    monthly,
+    yearTotals,
+    month: monthRow,
+    paidYtd: { total: yearTotals.paid },
+    recentInvoices,
+    band,
+  });
+}));
+
+// ============ reports — מע"מ and מס הכנסה (owner) ============
+router.get('/reports/vat', requireOwner, handle((req, res) => {
+  res.json({ report: vatReport(reportYear(req.query)) });
+}));
+
+router.get('/reports/income-tax', requireOwner, handle((req, res) => {
+  res.json({ report: incomeTaxReport(reportYear(req.query)) });
+}));
+
+/**
+ * Ticks a period off as filed and/or paid. The report itself is recomputed from the books
+ * every time it is opened — this records only the decision, which nothing else knows.
+ */
+router.put('/reports/filings/:kind/:periodKey', requireOwner, handle((req, res) => {
+  const { kind, periodKey } = req.params;
+  if (kind !== 'vat' && kind !== 'income_tax') return res.status(400).json({ error: 'invalid filing kind' });
+  const b = req.body || {};
+  res.json({
+    filing: saveFiling(kind, periodKey, {
+      filed: b.filed === undefined ? undefined : !!b.filed,
+      paid: b.paid === undefined ? undefined : !!b.paid,
+      amount: b.amount,
+      reference: b.reference,
+      notes: b.notes,
+    }),
+  });
 }));
 
 // ============ clients (owner) ============
@@ -967,6 +1019,8 @@ router.get('/settings', requireOwner, handle((_req, res) => {
       vat_percent: getVatPercent(),
       app_name: getSetting('app_name', 'Account Manager'),
       morning_sync_days: getMorningSyncDays(),
+      vat_report_frequency: getVatFrequency(),
+      tax_credit_points: getCreditPoints(),
     },
     business: getBusinessDetails(),
     business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
@@ -978,10 +1032,21 @@ router.get('/settings', requireOwner, handle((_req, res) => {
 }));
 
 router.post('/settings', requireOwner, handle((req, res) => {
-  const { vat_percent, app_name, morning_sync_days } = req.body || {};
+  const { vat_percent, app_name, morning_sync_days, vat_report_frequency, tax_credit_points } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
   if (app_name) setSetting('app_name', app_name);
   if (morning_sync_days != null) setSetting('morning_sync_days', String(parseInt(morning_sync_days, 10) || 90));
+  if (vat_report_frequency != null) {
+    if (!['bimonthly', 'monthly'].includes(vat_report_frequency))
+      return res.status(400).json({ error: 'תדירות דיווח מע"מ לא חוקית' });
+    setSetting('vat_report_frequency', vat_report_frequency);
+  }
+  if (tax_credit_points != null) {
+    const points = parseFloat(tax_credit_points);
+    if (!Number.isFinite(points) || points < 0)
+      return res.status(400).json({ error: 'מספר נקודות הזיכוי לא תקין' });
+    setSetting('tax_credit_points', String(points));
+  }
   res.json({ ok: true });
 }));
 

@@ -93,6 +93,68 @@ cannot demote yourself.
   against. Rows Morning has not classified are filterable in their own right (ללא סיווג),
   since those are the ones a filing has to chase.
 
+- **דוחות** (`/reports`) turns the same books into the two filings they have to produce —
+  see [Reports](#reports-דוחות) below.
+
+### Dashboard
+
+The overview chart is income **and** expenses month by month, with profit drawn over them as
+a line — it is the difference between the two, not a third quantity competing for the same
+space. A year picker scopes the whole page, and a לפני מע"מ / כולל מע"מ switch decides
+whether the figures count VAT: profit before VAT is the real one, since neither VAT figure is
+the business's money, while the totals with VAT are what actually moved through the bank.
+
+The money row above it — הכנסות, הוצאות, רווח for the year and רווח for the current month —
+and the מע"מ card below both read the same monthly series the דוחות page reports, so the
+dashboard and the reports can never tell different stories. The two outstanding-balance cards
+(open invoices, uninvoiced works) are deliberately *not* year-scoped: an invoice issued last
+December and still unpaid is money owed now, whichever year is on screen.
+
+## Reports (דוחות)
+
+Nothing on this page is entered by hand. Both reports are computed, every time they are
+opened, from the documents Morning syncs in on the income side and the supplier documents it
+syncs in on the outgoing one, so a report cannot drift from the lists it was built from.
+Everything is on an **accrual basis** (מצטבר), which is what an Israeli מע"מ filing reports: a
+document belongs to the period it was issued in, whether or not the money has arrived.
+Credit invoices (330) are counted here and offset, since a period's turnover has to be net of
+what was credited back — they arrive from Morning with negative amounts, so summing the set
+does that netting for free.
+
+### דוח מע"מ
+
+One row per reporting period, bi-monthly by default and switchable to monthly in
+**Settings → דוחות מס**: turnover and מע"מ עסקאות against expenses and מע"מ תשומות, and what
+the period owes or is owed. The deadline is the 15th of the month after the period ends,
+moved to Sunday when that falls on a Saturday — deferrals for חגים move every year and are
+*not* computed, so a holiday deadline is one to check against the real calendar.
+
+A period's status follows from the dates (תקופה פתוחה → להגשה → באיחור) until it is ticked
+off. The **דווח** and **שולם** ticks are the one thing stored (`tax_filings`), because the
+books cannot know it; unticking one leaves the reference typed against the other alone. The
+page also counts expense documents Morning still holds as unreported in each period — their
+input VAT is included in the figures either way, but they are worth chasing before filing.
+
+### מס הכנסה
+
+The year's profit and loss: monthly income, expenses and profit, expenses by classification
+(before VAT — the deductible figure), and an estimate of what the profit will cost.
+
+The estimate follows the real order — ביטוח לאומי is charged on the profit, 52% of it comes
+off the income the brackets are applied to, and נקודות זיכוי come off the tax itself — and
+for a year still running it is also projected to a full year from the months that have
+closed. **It is an estimate**: the rates live in `TAX_RATES` in `server/reports.ts`, pinned to
+the year they were published for and reported next to the figures so a table left behind by a
+new tax year is visible rather than silently wrong, and the calculation knows nothing about
+other income, pension deposits, personal reliefs or advances already paid. נקודות זיכוי are
+set in **Settings → דוחות מס** (2.25 by default).
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/reports/vat?year=` | periods with turnover, VAT both ways, balance, deadline and status |
+| `GET /api/reports/income-tax?year=` | monthly P&L, expenses by classification, tax estimate and projection |
+| `PUT /api/reports/filings/:kind/:periodKey` | tick a period `{filed?, paid?, amount?, reference?, notes?}` — `:kind` is `vat` or `income_tax` |
+
 ### Document types and revenue
 
 A single sale usually produces two documents in Morning: a **חשבון עסקה (300)** when the
