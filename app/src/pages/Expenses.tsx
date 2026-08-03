@@ -66,6 +66,7 @@ export function Expenses() {
             <option value="">כל הסטטוסים</option>
             <option value="open">טרם דווחו</option>
             <option value="reported">דווחו</option>
+            <option value="unknown">ללא סטטוס</option>
           </select>
           <select value={category} onChange={(e) => setCategory(e.target.value)}
             className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
@@ -172,7 +173,13 @@ export function Expenses() {
               },
               { key: 'vat', header: 'מע"מ', sortValue: (e: any) => e.vat_amount, className: 'text-slate-400', render: (e: any) => nis(e.vat_amount) },
               { key: 'total', header: 'סה"כ', sortValue: (e: any) => e.total, className: 'font-medium text-rose-400', render: (e: any) => nis(e.total) },
-              { key: 'status', header: 'סטטוס', sortValue: (e: any) => e.status, render: (e: any) => <StatusBadge status={e.status} /> },
+              {
+                key: 'status', header: 'סטטוס', sortValue: (e: any) => e.status,
+                // Morning does not always say; an em dash is the honest answer to that.
+                render: (e: any) => e.status === 'unknown'
+                  ? <span className="text-slate-600">—</span>
+                  : <StatusBadge status={e.status} />,
+              },
             ]}
           />
         )}

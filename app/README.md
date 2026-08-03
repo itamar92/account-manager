@@ -139,8 +139,20 @@ a missing credential is visible rather than silent.
   reclaimed. Foreign-currency expenses are converted with the rate Morning sends and keep
   their original currency for display.
 
+  The classification ("סוג הוצאה") arrives as a name, as the id of an accounting
+  classification, or as an object holding either, so it is read field by field and looked
+  up in `GET /accounting/classifications/map` when only an id comes through. The status is
+  documented as 10 (open) / 20 (reported) but is not always sent at all; an expense whose
+  status Morning did not give is stored as `unknown` and shown as `—`, because claiming it
+  is still open would be a made-up answer to "what have I already reported?".
+
   If the expense half of the sync fails — an account whose plan does not expose expenses —
   the documents still land, and the reason is reported next to the result.
+
+  `npx tsx scripts/morning-expense-probe.ts [days]` prints what an account actually returns
+  — one expense verbatim, every key with the types it arrived as, and the distinct values of
+  the fields the mapper has to interpret. It writes nothing anywhere, and is the quickest
+  way to settle a field whose shape the documentation does not pin down.
 
 - **Push** — `POST /api/invoices/:id/push-to-morning` issues a local invoice as a real
   document and stores the returned id and number. An invoice that already exists in

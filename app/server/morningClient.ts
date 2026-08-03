@@ -131,23 +131,25 @@ export async function getDocument(id: string): Promise<MorningDocument> {
  */
 export interface MorningExpense {
   id: string;
-  number?: string;
+  number?: string | number;
   type?: number; // same document-type codes as issued documents (320 = חשבונית מס …)
   documentDate?: string; // YYYY-MM-DD
   date?: string;
   paymentDate?: string | null;
-  status?: number; // 10 = open, 20 = reported to the accountant (locked in Morning)
+  status?: number | string; // 10 = open, 20 = reported to the accountant (locked in Morning)
   amount?: number;
   vat?: number;
   amountTotal?: number;
   currency?: string;
   currencyRate?: number;
-  supplier?: { id?: string; name?: string; taxId?: string };
+  supplier?: { id?: string; name?: string; taxId?: string | number };
   supplierName?: string;
-  accountingClassification?: number | string;
-  category?: string;
-  description?: string;
-  remarks?: string;
+  // The classification arrives as a name, as an id, or as an object holding either — see
+  // `category()` in morningExpenses, which is the one place that has to make sense of it.
+  accountingClassification?: unknown;
+  category?: unknown;
+  description?: unknown;
+  remarks?: unknown;
 }
 
 export interface SearchExpensesOptions {

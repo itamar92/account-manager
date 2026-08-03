@@ -13,13 +13,41 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** 20 = reported to the accountant and locked in Morning; anything else is still open. */
-function mapStatus(exp: MorningExpense): 'open' | 'reported' {
-  return exp.status === 20 ? 'reported' : 'open';
+/**
+ * A field Morning may send as a string, as a number, as an object, or not at all.
+ *
+ * Objects become nothing rather than the string "[object Object]" — a column full of that
+ * is worse than an empty one, and it hides the fact that the field was never read.
+ */
+function text(value: unknown): string | null {
+  if (value == null || typeof value === 'object') return null;
+  return String(value).trim() || null;
+}
+
+/**
+ * Morning's expense status → ours.
+ *
+ * Documented as 10 (open) and 20 (reported to the accountant, which locks the expense),
+ * but the search response does not always carry it. An expense whose status Morning did
+ * not send is recorded as unknown and shown as such: claiming every one of them is still
+ * open would be a made-up answer to "what have I already reported?".
+ */
+function mapStatus(exp: MorningExpense): 'open' | 'reported' | 'unknown' {
+  const raw = exp.status;
+  if (typeof raw === 'number') {
+    if (raw === 20) return 'reported';
+    if (raw === 10) return 'open';
+    return 'unknown';
+  }
+  const value = text(raw)?.toLowerCase();
+  if (!value) return 'unknown';
+  if (['20', 'reported', 'closed'].includes(value)) return 'reported';
+  if (['10', 'open'].includes(value)) return 'open';
+  return 'unknown';
 }
 
 function supplierName(exp: MorningExpense): string {
-  return (exp.supplier?.name || exp.supplierName || '').trim() || 'ספק לא מזוהה';
+  return text(exp.supplier?.name) || text(exp.supplierName) || 'ספק לא מזוהה';
 }
 
 /**
@@ -43,11 +71,29 @@ function money(exp: MorningExpense): { subtotal: number; vat: number; total: num
   return { subtotal: round2(total - vat), vat, total };
 }
 
-/** The category name to file the row under — the classification's name where there is one. */
+/**
+ * What the expense is filed as — "סוג הוצאה" in Morning's own form.
+ *
+ * It arrives in three shapes: the name itself, the id of an accounting classification, or
+ * an object carrying one or both of those. The object is what Morning sends for an expense
+ * classified from the form, so it is read field by field — stringifying it whole is what
+ * wrote "[object Object]" into the column.
+ */
 function category(exp: MorningExpense, classifications: Map<string, string>): string | null {
   const raw = exp.category ?? exp.accountingClassification;
   if (raw == null || raw === '') return null;
-  return classifications.get(String(raw)) || String(raw);
+
+  if (typeof raw === 'object') {
+    const named = raw as Record<string, unknown>;
+    const name = text(named.name ?? named.label ?? named.title ?? named.description);
+    if (name) return name;
+    const id = text(named.id ?? named.value ?? named.code ?? named.key);
+    return id ? classifications.get(id) || id : null;
+  }
+
+  const value = text(raw);
+  if (!value) return null;
+  return classifications.get(value) || value;
 }
 
 export interface ExpensePullResult {
@@ -89,21 +135,21 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
 
       const { subtotal, vat, total } = money(exp);
       const values = {
-        number: String(exp.number ?? ''),
-        doc_type: exp.type ?? null,
+        number: text(exp.number) ?? '',
+        doc_type: typeof exp.type === 'number' ? exp.type : null,
         date,
-        payment_date: exp.paymentDate ? String(exp.paymentDate).slice(0, 10) : null,
+        payment_date: text(exp.paymentDate)?.slice(0, 10) ?? null,
         supplier_name: supplierName(exp),
-        supplier_tax_id: exp.supplier?.taxId ?? null,
-        external_supplier_id: exp.supplier?.id ?? null,
+        supplier_tax_id: text(exp.supplier?.taxId),
+        external_supplier_id: text(exp.supplier?.id),
         category: category(exp, classifications),
-        description: (exp.description || '').trim() || null,
+        description: text(exp.description),
         amount: subtotal,
         vat_amount: vat,
         total,
-        currency: exp.currency || 'ILS',
+        currency: text(exp.currency) || 'ILS',
         status: mapStatus(exp),
-        notes: (exp.remarks || '').trim() || null,
+        notes: text(exp.remarks),
       };
 
       const existing = db.prepare('SELECT id FROM expenses WHERE external_id = ?').get(exp.id) as

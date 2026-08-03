@@ -30,6 +30,19 @@ export function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+/**
+ * The expenses table holds nothing but a copy of what Morning knows, so a shape that has
+ * moved on is dropped and rebuilt by the next sync rather than migrated column by column.
+ * The marker is the status column: it learned an 'unknown' state once it turned out Morning
+ * does not always say whether an expense has been reported.
+ */
+const expensesTable = (
+  db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expenses'").get() as
+    | { sql?: string }
+    | undefined
+)?.sql;
+if (expensesTable && !expensesTable.includes("'unknown'")) db.exec('DROP TABLE expenses');
+
 // ---------- schema ----------
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
@@ -125,7 +138,8 @@ CREATE TABLE IF NOT EXISTS expenses (
   vat_amount REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL DEFAULT 0,
   currency TEXT NOT NULL DEFAULT 'ILS',
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reported')),
+  -- 'unknown' is for the accounts whose expense search does not report a status at all.
+  status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('open','reported','unknown')),
   source TEXT NOT NULL DEFAULT 'morning',
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
