@@ -85,6 +85,13 @@ cannot demote yourself.
   from before the two tables were linked — is **deleted** (`{deleted: 1, cleared: 0}`). The
   expenses tab labels the button accordingly (ניקוי / מחיקה) and says which it is doing
   before it does it. General expenses are plain rows and delete outright.
+- **הוצאות** (`/expenses`) is the business's spending as Morning holds it: the year's
+  expense documents with their supplier, classification and status, the totals for whatever
+  the filters select — before VAT, input VAT (מע"מ תשומות) and what was actually paid — and
+  a breakdown by classification whose rows double as a filter. It is read-only: an expense
+  is entered and classified in Morning, and shown here beside the income it has to be set
+  against. Rows Morning has not classified are filterable in their own right (ללא סיווג),
+  since those are the ones a filing has to chase.
 
 ### Document types and revenue
 
@@ -118,6 +125,23 @@ a missing credential is visible rather than silent.
   documents get a work row per income line, and one placeholder work when Morning returns
   no line detail. VAT comes from the document when present, and is otherwise backed out of
   the total using the configured rate.
+- **Expenses** — the same sync also pulls the expense documents suppliers issued to the
+  business (`POST /api/integrations/morning/expenses-sync` pulls only those, which is what
+  the הוצאות page's own button calls). They are upserted on the Morning expense id into
+  the `expenses` table and refreshed in full on every run: nothing about an expense is
+  edited here, so a category or amount corrected in Morning is meant to arrive.
+
+  Their money is read the other way round from revenue. Morning reports the total in
+  `amount` with VAT included, or — on accounts that send `amountTotal` — the total there
+  and the pre-VAT figure in `amount`; both are read. A missing VAT figure is **not** backed
+  out of the total the way an invoice's is, since suppliers who are עוסק פטור and expenses
+  billed abroad carry no input VAT, and inventing some would overstate what may be
+  reclaimed. Foreign-currency expenses are converted with the rate Morning sends and keep
+  their original currency for display.
+
+  If the expense half of the sync fails — an account whose plan does not expose expenses —
+  the documents still land, and the reason is reported next to the result.
+
 - **Push** — `POST /api/invoices/:id/push-to-morning` issues a local invoice as a real
   document and stores the returned id and number. An invoice that already exists in
   Morning is rejected with 409 rather than duplicated.

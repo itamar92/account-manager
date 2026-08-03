@@ -8,6 +8,7 @@ import { getBusinessDetails, type BusinessDetails } from './business.js';
 import {
   createDocument, documentUrl, isMorningConfigured, MorningError, searchAllDocuments, type MorningDocument,
 } from './morningClient.js';
+import { expensesStatus } from './morningExpenses.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -392,6 +393,7 @@ export async function pushInvoiceToMorning(
 }
 
 export function morningStatus() {
+  const expenses = expensesStatus();
   return {
     configured: isMorningConfigured(),
     last_sync: getSetting('morning_last_sync', '') || null,
@@ -399,5 +401,7 @@ export function morningStatus() {
     synced_invoices: (
       db.prepare("SELECT COUNT(*) AS n FROM invoices WHERE source = 'morning'").get() as { n: number }
     ).n,
+    synced_expenses: expenses.synced,
+    expenses_last_sync: expenses.last_sync,
   };
 }

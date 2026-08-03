@@ -11,6 +11,9 @@ import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js
 import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
 import { buildMorningDraft, morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
+import {
+  expenseCategories, expensesStatus, expensesSummary, listExpenses, pullExpensesFromMorning,
+} from './morningExpenses.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -407,6 +410,26 @@ router.post('/invoices/:id/status', requireOwner, handle((req, res) => {
   const { status, paid_date } = req.body || {};
   if (!['issued', 'paid', 'cancelled'].includes(status)) return res.status(400).json({ error: 'invalid status' });
   res.json({ invoice: setInvoiceStatus(req.params.id, status, paid_date) });
+}));
+
+// ============ expenses (owner) ============
+/**
+ * The expense list with the totals for the same filters — the two are computed from one
+ * WHERE clause, so what the cards say is always what the table shows.
+ */
+router.get('/expenses', requireOwner, handle((req, res) => {
+  const range = dateRange(req.query);
+  const filters = {
+    ...range,
+    status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    category: typeof req.query.category === 'string' ? req.query.category : undefined,
+  };
+  res.json({
+    expenses: listExpenses(filters),
+    summary: expensesSummary(filters),
+    categories: expenseCategories(),
+    status: expensesStatus(),
+  });
 }));
 
 // ============ moonlight (owner + band members) ============
@@ -826,10 +849,26 @@ router.get('/integrations', requireOwner, handle((_req, res) => {
   res.json({ morning: morningStatus(), calendar: calendarStatus() });
 }));
 
-/** Pulls documents from Morning into the local database. */
+/**
+ * Pulls documents and expenses from Morning into the local database — one button's worth
+ * of "fetch everything Morning knows about the period".
+ *
+ * The expense half is reported rather than fatal: an account whose plan does not expose
+ * expenses still gets its documents, and sees why the rest did not arrive.
+ */
 router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  res.json({ result: await pullFromMorning({ days }) });
+  const result = await pullFromMorning({ days });
+  const expenses = await pullExpensesFromMorning({ days }).catch((err: any) => ({
+    error: err.message || 'משיכת ההוצאות נכשלה',
+  }));
+  res.json({ result: { ...result, expenses } });
+}));
+
+/** Pulls expenses only — what the הוצאות page's own sync button asks for. */
+router.post('/integrations/morning/expenses-sync', requireOwner, handleAsync(async (req, res) => {
+  const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
+  res.json({ result: await pullExpensesFromMorning({ days }) });
 }));
 
 /** Pre-fills the issue dialog with the document Morning is about to be asked for. */
