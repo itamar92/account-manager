@@ -1,6 +1,6 @@
 import React from 'react';
 import { NavLink, Outlet, Navigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Users, Briefcase, FileText, Moon, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, Users, Briefcase, FileText, Receipt, Moon, Settings, LogOut } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
 
@@ -8,6 +8,7 @@ const ownerNav = [
   { to: '/', label: 'דשבורד', icon: LayoutDashboard },
   { to: '/works', label: 'עבודות', icon: Briefcase },
   { to: '/invoices', label: 'חשבוניות', icon: FileText },
+  { to: '/expenses', label: 'הוצאות', icon: Receipt },
   { to: '/clients', label: 'לקוחות', icon: Users },
   { to: '/moonlight', label: 'Moonlight', icon: Moon },
   { to: '/settings', label: 'הגדרות', icon: Settings },
@@ -32,7 +33,7 @@ export function Layout() {
   const linkClass = (isActive: boolean, mobile = false) =>
     clsx(
       'flex items-center gap-3 rounded-xl transition-colors',
-      mobile ? 'flex-col gap-1 px-2 py-1.5 text-[11px]' : 'px-3 py-2.5 text-sm',
+      mobile ? 'flex-col gap-1 px-1 py-1.5 text-[11px] shrink-0' : 'px-3 py-2.5 text-sm',
       isActive ? 'bg-indigo-600/20 text-indigo-300' : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
     );
 
@@ -61,14 +62,16 @@ export function Layout() {
         <Outlet />
       </main>
 
-      {/* mobile bottom nav */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 flex justify-around px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      {/* Mobile bottom nav. Tight padding keeps the whole owner nav plus יציאה inside a phone
+          width; the horizontal scroll is the safety valve on the narrowest screens, so no
+          destination is ever simply unreachable. */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-slate-900/95 backdrop-blur border-t border-slate-800 flex justify-around overflow-x-auto px-1 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {nav.map(({ to, label, icon: Icon }) => (
           <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => linkClass(isActive, true)}>
             <Icon size={20} /> {label}
           </NavLink>
         ))}
-        <button onClick={logout} className="flex flex-col items-center gap-1 px-2 py-1.5 text-[11px] text-slate-400">
+        <button onClick={logout} className="flex flex-col items-center gap-1 px-1 py-1.5 text-[11px] text-slate-400 shrink-0">
           <LogOut size={20} /> יציאה
         </button>
       </nav>

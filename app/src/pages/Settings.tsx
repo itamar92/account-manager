@@ -37,7 +37,10 @@ export function Settings() {
       const r = d.result;
       setSyncResult(
         which === 'morning'
-          ? `Morning: ${r.fetched} מסמכים (${r.from} – ${r.to}) · ${r.created} חדשים · ${r.updated} עודכנו`
+          ? `Morning: ${r.fetched} מסמכים (${r.from} – ${r.to}) · ${r.created} חדשים · ${r.updated} עודכנו` +
+            (r.expenses?.error
+              ? `\n· הוצאות: ${r.expenses.error}`
+              : `\n· הוצאות: ${r.expenses.fetched} · ${r.expenses.created} חדשות · ${r.expenses.updated} עודכנו`)
           : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
             (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
       );
@@ -174,7 +177,7 @@ export function Settings() {
             configured={data.integrations.morning.configured}
             missingHint="חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET"
             lastSync={data.integrations.morning.last_sync}
-            detail={`${data.integrations.morning.synced_invoices} מסמכים מסונכרנים · טווח ${data.integrations.morning.sync_days} ימים`}
+            detail={`${data.integrations.morning.synced_invoices} מסמכים · ${data.integrations.morning.synced_expenses} הוצאות · טווח ${data.integrations.morning.sync_days} ימים`}
             busy={syncing === 'morning'}
             onSync={() => runSync('morning')}
           />

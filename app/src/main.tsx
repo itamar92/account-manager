@@ -9,6 +9,7 @@ import { Dashboard } from './pages/Dashboard';
 import { Clients } from './pages/Clients';
 import { Works } from './pages/Works';
 import { Invoices } from './pages/Invoices';
+import { Expenses } from './pages/Expenses';
 import { Moonlight } from './pages/Moonlight';
 import { Settings } from './pages/Settings';
 
@@ -23,6 +24,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/clients" element={<Clients />} />
             <Route path="/works" element={<Works />} />
             <Route path="/invoices" element={<Invoices />} />
+            <Route path="/expenses" element={<Expenses />} />
             <Route path="/moonlight" element={<Moonlight />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

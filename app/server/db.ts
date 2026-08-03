@@ -105,6 +105,32 @@ CREATE TABLE IF NOT EXISTS works (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Expense documents received from suppliers (הוצאות), pulled from Morning. Amounts are in
+-- shekels: amount before VAT, vat_amount the input VAT that can be reclaimed, total what was
+-- actually paid. The currency column records what the supplier billed in, for a row whose
+-- figures were converted on the way in.
+CREATE TABLE IF NOT EXISTS expenses (
+  id TEXT PRIMARY KEY,
+  external_id TEXT,
+  number TEXT,
+  doc_type INTEGER,
+  date TEXT NOT NULL,
+  payment_date TEXT,
+  supplier_name TEXT NOT NULL DEFAULT '',
+  supplier_tax_id TEXT,
+  external_supplier_id TEXT,
+  category TEXT,
+  description TEXT,
+  amount REAL NOT NULL DEFAULT 0,
+  vat_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'ILS',
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reported')),
+  source TEXT NOT NULL DEFAULT 'morning',
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS band_events (
   id TEXT PRIMARY KEY,
   venue TEXT NOT NULL,
@@ -232,6 +258,7 @@ CREATE TABLE IF NOT EXISTS calendar_event_overrides (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
@@ -286,6 +313,11 @@ for (const [name, sql] of [
     'idx_works_calendar',
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_works_calendar
        ON works(calendar_event_id) WHERE calendar_event_id IS NOT NULL`,
+  ],
+  [
+    'idx_expenses_external',
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_expenses_external
+       ON expenses(external_id) WHERE external_id IS NOT NULL`,
   ],
   [
     'idx_band_event_expenses_event',

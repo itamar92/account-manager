@@ -121,6 +121,91 @@ export async function getDocument(id: string): Promise<MorningDocument> {
   return request<MorningDocument>('GET', `/documents/${encodeURIComponent(id)}`);
 }
 
+/**
+ * An expense (הוצאה) — a document received from a supplier, as Morning returns it.
+ *
+ * Its shape is looser than a document's: the date arrives as `documentDate` or `date`,
+ * the supplier as an object or as a bare name, and the category either already resolved
+ * or as the id of an accounting classification. Every alternative is optional here so the
+ * mapper can read whichever the account actually sends.
+ */
+export interface MorningExpense {
+  id: string;
+  number?: string;
+  type?: number; // same document-type codes as issued documents (320 = חשבונית מס …)
+  documentDate?: string; // YYYY-MM-DD
+  date?: string;
+  paymentDate?: string | null;
+  status?: number; // 10 = open, 20 = reported to the accountant (locked in Morning)
+  amount?: number;
+  vat?: number;
+  amountTotal?: number;
+  currency?: string;
+  currencyRate?: number;
+  supplier?: { id?: string; name?: string; taxId?: string };
+  supplierName?: string;
+  accountingClassification?: number | string;
+  category?: string;
+  description?: string;
+  remarks?: string;
+}
+
+export interface SearchExpensesOptions {
+  fromDate?: string;
+  toDate?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/** One page of expenses. Prefer `searchAllExpenses` unless you need manual paging. */
+export async function searchExpenses(opts: SearchExpensesOptions = {}) {
+  return request<{ items?: MorningExpense[]; total?: number; pages?: number }>('POST', '/expenses/search', {
+    page: opts.page ?? 1,
+    pageSize: opts.pageSize ?? 100,
+    ...(opts.fromDate ? { fromDate: opts.fromDate } : {}),
+    ...(opts.toDate ? { toDate: opts.toDate } : {}),
+  });
+}
+
+/** Walks every page of the expense search, with the same runaway guard as documents. */
+export async function searchAllExpenses(opts: SearchExpensesOptions = {}): Promise<MorningExpense[]> {
+  const pageSize = opts.pageSize ?? 100;
+  const all: MorningExpense[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const res = await searchExpenses({ ...opts, page, pageSize });
+    const items = res.items ?? [];
+    all.push(...items);
+    if (items.length < pageSize) break;
+  }
+  return all;
+}
+
+/**
+ * id → name for the expense classifications (סיווג הוצאה) the account defines, so a synced
+ * expense can show the category it was filed under rather than a bare id.
+ *
+ * Morning has returned this map as a list and as a plain object at different times; both
+ * are read here, and an unrecognisable body simply yields no names.
+ */
+export async function expenseClassifications(): Promise<Map<string, string>> {
+  const body = await request<any>('GET', '/accounting/classifications/map');
+  const map = new Map<string, string>();
+  const add = (id: unknown, name: unknown) => {
+    if (id == null || id === '' || !name) return;
+    map.set(String(id), String(name));
+  };
+
+  const items = Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : null;
+  if (items) {
+    for (const item of items) add(item?.id ?? item?.value ?? item?.code, item?.name ?? item?.label);
+  } else if (body && typeof body === 'object') {
+    for (const [id, value] of Object.entries(body)) {
+      add(id, typeof value === 'string' ? value : (value as any)?.name ?? (value as any)?.label);
+    }
+  }
+  return map;
+}
+
 export interface CreateDocumentInput {
   type: number;
   clientName: string;
