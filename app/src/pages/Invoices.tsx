@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { get, post, nis } from '../api';
-import { Button, Card, Modal, StatusBadge, Table, Empty, YearSelect } from '../ui';
+import { Button, Card, Modal, StatusBadge, DataTable, Empty, SearchInput, YearSelect, textMatch } from '../ui';
 import { MorningIssueModal } from './MorningIssueModal';
 
 export function Invoices() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState('');
+  const [search, setSearch] = useState('');
   // Opens on the year you are working in; older years are a deliberate step back.
   const [year, setYear] = useState<number | ''>(new Date().getFullYear());
   const [detail, setDetail] = useState<any | null>(null);
@@ -53,6 +54,8 @@ export function Invoices() {
     load();
   };
 
+  const visible = invoices.filter((inv) => textMatch(search, inv.client_name, inv.number));
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -66,40 +69,50 @@ export function Invoices() {
             <option value="cancelled">בוטלו</option>
           </select>
           <YearSelect value={year} onChange={setYear} />
+          <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי לקוח או מספר…" className="flex-1 min-w-[10rem] sm:max-w-xs" />
         </div>
       </div>
       {error && <div className="text-sm text-rose-400">{error}</div>}
       {notice && <div className="text-sm text-emerald-400">{notice}</div>}
 
       <Card>
-        {invoices.length === 0 ? <Empty text="אין חשבוניות" /> : (
-          <Table headers={['מס׳', 'סוג', 'תאריך', 'לקוח', 'סכום', 'סטטוס', 'שורות', '']}>
-            {invoices.map((inv) => (
-              <tr key={inv.id} className="hover:bg-slate-800/40 cursor-pointer" onClick={() => openDetail(inv.id)}>
-                <td className="px-3 py-2.5 font-mono text-slate-300">#{inv.number}</td>
-                <td className="px-3 py-2.5 whitespace-nowrap">
-                  <span className={`text-xs ${inv.is_revenue ? 'text-slate-400' : 'text-amber-400/80'}`}>
-                    {inv.doc_type_label || '—'}
-                  </span>
-                </td>
-                <td className="px-3 py-2.5 whitespace-nowrap">{inv.date}</td>
-                <td className="px-3 py-2.5 font-medium">{inv.client_name}</td>
-                <td className="px-3 py-2.5 font-medium">{nis(inv.total)}</td>
-                <td className="px-3 py-2.5"><StatusBadge status={inv.status} /></td>
-                <td className="px-3 py-2.5 text-slate-400">{inv.works_count || '—'}</td>
-                <td className="px-3 py-2.5 text-left">
-                  {inv.status === 'issued' && (
+        {visible.length === 0 ? <Empty text="אין חשבוניות" /> : (
+            <DataTable
+              rows={visible}
+              rowKey={(inv) => inv.id}
+              onRowClick={(inv) => openDetail(inv.id)}
+              rowClassName={() => 'hover:bg-slate-800/40'}
+              columns={[
+                {
+                  key: 'number', header: 'מס׳', sortValue: (inv) => Number(inv.number) || inv.number,
+                  className: 'font-mono text-slate-300', render: (inv) => `#${inv.number}`,
+                },
+                {
+                  key: 'type', header: 'סוג', sortValue: (inv) => inv.doc_type_label, className: 'whitespace-nowrap',
+                  render: (inv) => (
+                    <span className={`text-xs ${inv.is_revenue ? 'text-slate-400' : 'text-amber-400/80'}`}>
+                      {inv.doc_type_label || '—'}
+                    </span>
+                  ),
+                },
+                { key: 'date', header: 'תאריך', sortValue: (inv) => inv.date, className: 'whitespace-nowrap', render: (inv) => inv.date },
+                { key: 'client', header: 'לקוח', mobile: 'title', sortValue: (inv) => inv.client_name, className: 'font-medium', render: (inv) => inv.client_name },
+                { key: 'total', header: 'סכום', sortValue: (inv) => inv.total, className: 'font-medium', render: (inv) => nis(inv.total) },
+                { key: 'status', header: 'סטטוס', sortValue: (inv) => inv.status, render: (inv) => <StatusBadge status={inv.status} /> },
+                { key: 'works', header: 'שורות', sortValue: (inv) => inv.works_count || 0, className: 'text-slate-400', render: (inv) => inv.works_count || '—' },
+                {
+                  key: 'actions', mobile: 'actions', className: 'text-left',
+                  render: (inv) => inv.status === 'issued' && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setStatus(inv.id, 'paid'); }}
                       className="text-xs text-emerald-400 hover:underline whitespace-nowrap"
                     >
                       סמן כשולם
                     </button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </Table>
+                  ),
+                },
+              ]}
+            />
         )}
       </Card>
 

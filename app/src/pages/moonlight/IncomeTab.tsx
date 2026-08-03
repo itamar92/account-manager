@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import { del, post, put, nis } from '../../api';
-import { Button, Card, EditableCell, Empty, SelectCell, Table, YearSelect } from '../../ui';
+import { Button, Card, DataTable, EditableCell, Empty, SearchInput, SelectCell, YearSelect, textMatch } from '../../ui';
 import { MEMBERS, PAYMENT_STATUSES, PAYMENT_STATUS_STYLES, type TabProps } from './shared';
 
 interface Props extends TabProps {
@@ -26,6 +26,8 @@ export function IncomeTab({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [excludeCalendar, setExcludeCalendar] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   const saveField = async (id: string, patch: Record<string, any>) => {
     try {
@@ -51,6 +53,10 @@ export function IncomeTab({
     next.has(id) ? next.delete(id) : next.add(id);
     return next;
   };
+
+  const visible = events.filter((e) =>
+    textMatch(search, e.venue, e.location) &&
+    (!statusFilter || (e.payment_status || 'waiting_report') === statusFilter));
 
   const selectedEvents = events.filter((e) => selected.has(e.id));
   const selectedFromCalendar = selectedEvents.filter((e) => e.calendar_event_id).length;
@@ -103,7 +109,7 @@ export function IncomeTab({
       )}
 
       <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <h2 className="font-bold">הכנסות מהופעות</h2>
             <YearSelect value={year} onChange={onYearChange} />
@@ -118,107 +124,142 @@ export function IncomeTab({
           )}
         </div>
 
-        {events.length === 0 ? <Empty text="אין הופעות בטווח הזה" /> : (
-          <Table headers={[
-            isOwner ? (
-              <input type="checkbox" aria-label="בחירת הכל" className="accent-indigo-500"
-                checked={selected.size > 0 && selected.size === events.length}
-                onChange={() => setSelected(selected.size === events.length ? new Set() : new Set(events.map((e) => e.id)))} />
-            ) : '',
-            '', 'מקום', 'תאריך', 'כרטיסים', 'לפני מע"מ', 'הוצאות', 'רווח', 'סטטוס תשלום', 'דמי הפקה', 'שולם לנגנים',
-            isOwner ? '' : ' ',
-          ]}>
-            {events.map((e) => {
-              const isOpen = expanded.has(e.id);
-              return (
-                <React.Fragment key={e.id}>
-                  <tr className="hover:bg-slate-800/40">
-                    <td className="px-3 py-2.5">
-                      {isOwner && (
-                        <input type="checkbox" checked={selected.has(e.id)} className="accent-indigo-500"
-                          aria-label={`בחירת ${e.venue}`}
-                          onChange={() => setSelected(toggleIn(selected, e.id))} />
+        <div className="flex flex-wrap gap-2 mb-4">
+          <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי מקום…" className="flex-1 min-w-[10rem] sm:max-w-xs" />
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+            <option value="">כל סטטוסי התשלום</option>
+            {PAYMENT_STATUSES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+          </select>
+        </div>
+
+        {visible.length === 0 ? <Empty text="אין הופעות בטווח הזה" /> : (
+          <DataTable
+            rows={visible}
+            rowKey={(e) => e.id}
+            rowClassName={() => 'hover:bg-slate-800/40'}
+            isExpanded={(e) => expanded.has(e.id)}
+            renderExpanded={(e) => <DivisionPanel event={e} isOwner={isOwner} onSave={saveField} />}
+            columns={[
+              isOwner && {
+                key: 'select',
+                mobile: 'lead' as const,
+                header: (
+                  <input type="checkbox" aria-label="בחירת הכל" className="accent-indigo-500"
+                    checked={selected.size > 0 && selected.size === visible.length}
+                    onChange={() => setSelected(selected.size === visible.length ? new Set() : new Set(visible.map((e) => e.id)))} />
+                ),
+                render: (e: any) => (
+                  <input type="checkbox" checked={selected.has(e.id)} className="accent-indigo-500"
+                    aria-label={`בחירת ${e.venue}`}
+                    onChange={() => setSelected(toggleIn(selected, e.id))} />
+                ),
+              },
+              {
+                key: 'expand', header: '', label: '', mobile: 'actions', className: 'px-1',
+                render: (e) => (
+                  <button onClick={() => setExpanded(toggleIn(expanded, e.id))}
+                    title="חלוקה בין החברים"
+                    className="text-slate-400 hover:text-slate-200 text-xs md:w-5">
+                    <span className="md:hidden ml-1">חלוקה בין החברים</span>
+                    {expanded.has(e.id) ? '▾' : '◂'}
+                  </button>
+                ),
+              },
+              {
+                key: 'venue', header: 'מקום', mobile: 'title', sortValue: (e) => e.venue, className: 'font-medium',
+                render: (e) => (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-indigo-400 text-xs">◷</span>}
+                      <EditableCell value={e.venue} disabled={!isOwner}
+                        onSave={(v) => saveField(e.id, { venue: v })} />
+                      {/* A name typed by hand stops following the calendar; this hands it back. */}
+                      {e.calendar_event_id && !!e.venue_locked && (
+                        <button
+                          onClick={() => isOwner && saveField(e.id, { venue_locked: 0 })}
+                          disabled={!isOwner}
+                          title={isOwner
+                            ? 'השם נערך ידנית וסנכרון מהיומן לא ישנה אותו — לחצו כדי להחזיר אותו לשם שביומן'
+                            : 'השם נערך ידנית וסנכרון מהיומן לא ישנה אותו'}
+                          className="text-amber-400 text-xs disabled:cursor-default"
+                        >
+                          ✎
+                        </button>
                       )}
-                    </td>
-                    <td className="px-1 py-2.5">
-                      <button onClick={() => setExpanded(toggleIn(expanded, e.id))}
-                        title="חלוקה בין החברים"
-                        className="text-slate-400 hover:text-slate-200 text-xs w-5">
-                        {isOpen ? '▾' : '◂'}
-                      </button>
-                    </td>
-                    <td className="px-3 py-2.5 font-medium">
-                      <div className="flex items-center gap-1.5">
-                        {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-indigo-400 text-xs">◷</span>}
-                        <EditableCell value={e.venue} disabled={!isOwner}
-                          onSave={(v) => saveField(e.id, { venue: v })} />
-                        {/* A name typed by hand stops following the calendar; this hands it back. */}
-                        {e.calendar_event_id && !!e.venue_locked && (
-                          <button
-                            onClick={() => isOwner && saveField(e.id, { venue_locked: 0 })}
-                            disabled={!isOwner}
-                            title={isOwner
-                              ? 'השם נערך ידנית וסנכרון מהיומן לא ישנה אותו — לחצו כדי להחזיר אותו לשם שביומן'
-                              : 'השם נערך ידנית וסנכרון מהיומן לא ישנה אותו'}
-                            className="text-amber-400 text-xs disabled:cursor-default"
-                          >
-                            ✎
-                          </button>
-                        )}
-                      </div>
-                      {e.location && <div className="text-xs text-slate-500 truncate max-w-[16rem]">{e.location}</div>}
-                    </td>
-                    <td className="px-3 py-2.5 whitespace-nowrap">
-                      <EditableCell type="date" value={e.date} disabled={!isOwner}
-                        onSave={(v) => saveField(e.id, { date: v })} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <EditableCell type="number" value={e.tickets} display={e.tickets || '—'} disabled={!isOwner}
-                        onSave={(v) => saveField(e.id, { tickets: v })} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <EditableCell type="number" value={e.amount_pre_vat} display={nis(e.amount_pre_vat)}
-                        disabled={!isOwner} onSave={(v) => saveField(e.id, { amount_pre_vat: v })} />
-                    </td>
-                    {/* Computed from the show's row in the expenses tab. */}
-                    <td className="px-3 py-2.5 text-rose-400" title="מחושב מהוצאות ההופעה">{nis(e.expenses)}</td>
-                    <td className={clsx('px-3 py-2.5 font-medium', e.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}
-                      title="הכנסה פחות הוצאות">
-                      {nis(e.profit)}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <SelectCell value={e.payment_status || 'waiting_report'} options={PAYMENT_STATUSES}
-                        disabled={!isOwner} className={PAYMENT_STATUS_STYLES[e.payment_status]}
-                        onSave={(v) => saveField(e.id, { payment_status: v })} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <EditableCell type="checkbox" value={e.has_commission} disabled={!isOwner}
-                        onSave={(v) => saveField(e.id, { has_commission: v })} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <EditableCell type="checkbox" value={e.paid_to_musicians} disabled={!isOwner}
-                        onSave={(v) => saveField(e.id, { paid_to_musicians: v })} />
-                    </td>
-                    <td className="px-3 py-2.5 text-left whitespace-nowrap">
-                      {isOwner && (
-                        <div className="flex gap-2 justify-end">
-                          <button onClick={() => onEditEvent({ ...e })} className="text-sm text-indigo-400 hover:underline">עריכה</button>
-                          <button onClick={() => removeEvent(e)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                  {isOpen && (
-                    <tr className="bg-slate-800/20">
-                      <td colSpan={12} className="px-4 py-3">
-                        <DivisionPanel event={e} isOwner={isOwner} onSave={saveField} />
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              );
-            })}
-          </Table>
+                    </div>
+                    {e.location && <div className="text-xs text-slate-500 truncate max-w-[16rem] font-normal">{e.location}</div>}
+                  </>
+                ),
+              },
+              {
+                key: 'date', header: 'תאריך', sortValue: (e) => e.date, className: 'whitespace-nowrap',
+                render: (e) => (
+                  <EditableCell type="date" value={e.date} disabled={!isOwner}
+                    onSave={(v) => saveField(e.id, { date: v })} />
+                ),
+              },
+              {
+                key: 'tickets', header: 'כרטיסים', sortValue: (e) => Number(e.tickets) || 0,
+                render: (e) => (
+                  <EditableCell type="number" value={e.tickets} display={e.tickets || '—'} disabled={!isOwner}
+                    onSave={(v) => saveField(e.id, { tickets: v })} />
+                ),
+              },
+              {
+                key: 'amount', header: 'לפני מע"מ', sortValue: (e) => Number(e.amount_pre_vat) || 0,
+                render: (e) => (
+                  <EditableCell type="number" value={e.amount_pre_vat} display={nis(e.amount_pre_vat)}
+                    disabled={!isOwner} onSave={(v) => saveField(e.id, { amount_pre_vat: v })} />
+                ),
+              },
+              {
+                // Computed from the show's row in the expenses tab.
+                key: 'expenses', header: 'הוצאות', sortValue: (e) => Number(e.expenses) || 0, className: 'text-rose-400',
+                render: (e) => <span className="text-rose-400" title="מחושב מהוצאות ההופעה">{nis(e.expenses)}</span>,
+              },
+              {
+                key: 'profit', header: 'רווח', sortValue: (e) => Number(e.profit) || 0, className: 'font-medium',
+                render: (e) => (
+                  <span className={clsx('font-medium', e.profit >= 0 ? 'text-emerald-400' : 'text-rose-400')}
+                    title="הכנסה פחות הוצאות">
+                    {nis(e.profit)}
+                  </span>
+                ),
+              },
+              {
+                key: 'status', header: 'סטטוס תשלום', sortValue: (e) => e.payment_status || 'waiting_report',
+                render: (e) => (
+                  <SelectCell value={e.payment_status || 'waiting_report'} options={PAYMENT_STATUSES}
+                    disabled={!isOwner} className={PAYMENT_STATUS_STYLES[e.payment_status]}
+                    onSave={(v) => saveField(e.id, { payment_status: v })} />
+                ),
+              },
+              {
+                key: 'commission', header: 'דמי הפקה',
+                render: (e) => (
+                  <EditableCell type="checkbox" value={e.has_commission} disabled={!isOwner}
+                    onSave={(v) => saveField(e.id, { has_commission: v })} />
+                ),
+              },
+              {
+                key: 'paid', header: 'שולם לנגנים',
+                render: (e) => (
+                  <EditableCell type="checkbox" value={e.paid_to_musicians} disabled={!isOwner}
+                    onSave={(v) => saveField(e.id, { paid_to_musicians: v })} />
+                ),
+              },
+              isOwner && {
+                key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
+                render: (e: any) => (
+                  <div className="flex gap-3 md:gap-2 justify-end">
+                    <button onClick={() => onEditEvent({ ...e })} className="text-sm text-indigo-400 hover:underline">עריכה</button>
+                    <button onClick={() => removeEvent(e)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
+                  </div>
+                ),
+              },
+            ]}
+          />
         )}
       </Card>
     </div>

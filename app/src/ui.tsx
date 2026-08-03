@@ -130,23 +130,214 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
   );
 }
 
-export function Table({ headers, children }: { headers: React.ReactNode[]; children: React.ReactNode }) {
+export interface DataColumn<T> {
+  /** Stable id; also what the sort state points at. */
+  key: string;
+  /** Desktop column header. Doubles as the mobile label when it is a string. */
+  header?: React.ReactNode;
+  /** Mobile-card / sort-menu label, for columns whose header is not plain text. */
+  label?: string;
+  render: (row: T) => React.ReactNode;
+  /** Providing this makes the column sortable, on both layouts. */
+  sortValue?: (row: T) => string | number | null | undefined;
+  /** Extra classes for the desktop cell. */
+  className?: string;
+  /**
+   * Where the value lives in the mobile card: 'title' is the card heading, 'lead' sits
+   * before it (checkboxes), 'actions' collect in the card footer, 'hidden' drops it.
+   * Default ('field') is a labelled value in the card body.
+   */
+  mobile?: 'title' | 'lead' | 'field' | 'actions' | 'hidden';
+}
+
+type SortState = { key: string; dir: 1 | -1 } | null;
+
+/**
+ * The one way tables are shown: a real table with sortable headers on a wide screen, and
+ * stacked cards with a sort picker on a phone — where a nine-column table is only a strip
+ * you scroll sideways and can never take in whole.
+ *
+ * Columns may be `false` so a page can switch some off (per role) inline.
+ */
+export function DataTable<T>({
+  columns, rows, rowKey, rowClassName, onRowClick, isExpanded, renderExpanded, defaultSort,
+}: {
+  columns: Array<DataColumn<T> | false | null | undefined>;
+  rows: T[];
+  rowKey: (row: T) => string;
+  rowClassName?: (row: T) => string | undefined;
+  onRowClick?: (row: T) => void;
+  /** Rows that currently show their `renderExpanded` panel — the caller keeps the set. */
+  isExpanded?: (row: T) => boolean;
+  renderExpanded?: (row: T) => React.ReactNode;
+  defaultSort?: { key: string; dir: 1 | -1 };
+}) {
+  const cols = columns.filter((c): c is DataColumn<T> => !!c);
+  const [sort, setSort] = React.useState<SortState>(defaultSort ?? null);
+
+  const active = sort ? cols.find((c) => c.key === sort.key) : undefined;
+  let sorted = rows;
+  if (sort && active?.sortValue) {
+    const value = active.sortValue;
+    sorted = [...rows].sort((a, b) => {
+      const va = value(a);
+      const vb = value(b);
+      // Blanks sink to the bottom in either direction.
+      if (va == null || va === '') return vb == null || vb === '' ? 0 : 1;
+      if (vb == null || vb === '') return -1;
+      const cmp = typeof va === 'number' && typeof vb === 'number'
+        ? va - vb
+        : String(va).localeCompare(String(vb), 'he', { numeric: true });
+      return cmp * sort.dir;
+    });
+  }
+
+  const label = (c: DataColumn<T>) => c.label ?? (typeof c.header === 'string' ? c.header : '');
+  const sortable = cols.filter((c) => c.sortValue);
+  const cycle = (key: string) =>
+    setSort((s) => (s?.key !== key ? { key, dir: 1 } : s.dir === 1 ? { key, dir: -1 } : null));
+
+  const leads = cols.filter((c) => c.mobile === 'lead');
+  const titles = cols.filter((c) => c.mobile === 'title');
+  const fields = cols.filter((c) => !c.mobile || c.mobile === 'field');
+  const actions = cols.filter((c) => c.mobile === 'actions');
+
   return (
-    <div className="overflow-x-auto -mx-4 md:mx-0">
-      <table className="w-full text-sm min-w-[600px]">
-        <thead>
-          <tr className="text-right text-slate-400 border-b border-slate-800">
-            {/* Keyed by position: header labels are a fixed list and some are blank
-                (action columns), so the label itself is not unique. */}
-            {headers.map((h, i) => (
-              <th key={i} className="px-3 py-2 font-medium whitespace-nowrap">{h}</th>
+    <>
+      {/* desktop */}
+      <div className="hidden md:block overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-right text-slate-400 border-b border-slate-800">
+              {cols.map((c) => (
+                <th key={c.key} className="px-3 py-2 font-medium whitespace-nowrap">
+                  {c.sortValue ? (
+                    <button
+                      type="button"
+                      onClick={() => cycle(c.key)}
+                      className="inline-flex items-center gap-1 hover:text-slate-200 transition-colors"
+                    >
+                      {c.header}
+                      <span className="text-[10px] text-indigo-400 w-2.5 inline-block">
+                        {sort?.key === c.key ? (sort.dir === 1 ? '▲' : '▼') : ''}
+                      </span>
+                    </button>
+                  ) : c.header}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-800/60">
+            {sorted.map((r) => (
+              <React.Fragment key={rowKey(r)}>
+                <tr
+                  className={clsx(rowClassName?.(r), onRowClick && 'cursor-pointer')}
+                  onClick={onRowClick ? () => onRowClick(r) : undefined}
+                >
+                  {cols.map((c) => (
+                    <td key={c.key} className={clsx('px-3 py-2.5', c.className)}>{c.render(r)}</td>
+                  ))}
+                </tr>
+                {isExpanded?.(r) && renderExpanded && (
+                  <tr className="bg-slate-800/20">
+                    <td colSpan={cols.length} className="px-4 py-3">{renderExpanded(r)}</td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-slate-800/60">{children}</tbody>
-      </table>
-    </div>
+          </tbody>
+        </table>
+      </div>
+
+      {/* mobile */}
+      <div className="md:hidden space-y-3">
+        {sortable.length > 0 && (
+          <div className="flex gap-2">
+            <select
+              aria-label="מיון"
+              value={active?.sortValue ? sort!.key : ''}
+              onChange={(e) => setSort(e.target.value ? { key: e.target.value, dir: sort?.dir ?? 1 } : null)}
+              className="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+            >
+              <option value="">מיון: סדר רגיל</option>
+              {sortable.map((c) => <option key={c.key} value={c.key}>מיון: {label(c)}</option>)}
+            </select>
+            <button
+              type="button"
+              disabled={!sort}
+              onClick={() => setSort((s) => (s ? { ...s, dir: s.dir === 1 ? -1 : 1 } : s))}
+              className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-slate-300 disabled:opacity-40 whitespace-nowrap"
+            >
+              {(sort?.dir ?? 1) === 1 ? '▲ עולה' : '▼ יורד'}
+            </button>
+          </div>
+        )}
+
+        {sorted.map((r) => (
+          <div
+            key={rowKey(r)}
+            onClick={onRowClick ? () => onRowClick(r) : undefined}
+            className={clsx('border border-slate-800 rounded-xl p-3 bg-slate-800/20', rowClassName?.(r))}
+          >
+            {(leads.length > 0 || titles.length > 0) && (
+              <div className="flex items-center gap-2.5">
+                {leads.map((c) => <React.Fragment key={c.key}>{c.render(r)}</React.Fragment>)}
+                <div className="flex-1 min-w-0 font-medium">
+                  {titles.map((c) => <React.Fragment key={c.key}>{c.render(r)}</React.Fragment>)}
+                </div>
+              </div>
+            )}
+            {fields.length > 0 && (
+              <div className="mt-2.5 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                {fields.map((c) => (
+                  <div key={c.key}>
+                    <div className="text-xs text-slate-500 mb-0.5">{label(c)}</div>
+                    <div>{c.render(r)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {actions.length > 0 && (
+              <div className="mt-3 pt-2.5 border-t border-slate-800/60 flex items-center justify-end gap-4">
+                {actions.map((c) => <React.Fragment key={c.key}>{c.render(r)}</React.Fragment>)}
+              </div>
+            )}
+            {isExpanded?.(r) && renderExpanded && (
+              <div className="mt-3 pt-2.5 border-t border-slate-800/60">{renderExpanded(r)}</div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
   );
+}
+
+/** The free-text filter above a table, styled to sit beside the filter selects. */
+export function SearchInput({ value, onChange, placeholder, className }: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  return (
+    <input
+      type="search"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder || 'חיפוש…'}
+      className={clsx(
+        'bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500',
+        className
+      )}
+    />
+  );
+}
+
+/** Case-insensitive "any of these fields contains the query". */
+export function textMatch(query: string, ...fields: Array<string | number | null | undefined>): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  return fields.some((f) => f != null && String(f).toLowerCase().includes(q));
 }
 
 export function Empty({ text }: { text: string }) {
