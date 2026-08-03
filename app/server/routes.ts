@@ -1035,7 +1035,14 @@ router.post('/settings', requireOwner, handle((req, res) => {
   const { vat_percent, app_name, morning_sync_days, vat_report_frequency, tax_credit_points } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
   if (app_name) setSetting('app_name', app_name);
-  if (morning_sync_days != null) setSetting('morning_sync_days', String(parseInt(morning_sync_days, 10) || 90));
+  if (morning_sync_days != null) {
+    // Bounded at both ends: a zero or negative window would ask Morning for a range that ends
+    // before it starts and quietly sync nothing, and five years is well past any real backfill.
+    const days = parseInt(morning_sync_days, 10);
+    if (!Number.isFinite(days) || days < 1 || days > 1825)
+      return res.status(400).json({ error: 'טווח הסנכרון חייב להיות בין 1 ל-1825 ימים' });
+    setSetting('morning_sync_days', String(days));
+  }
   if (vat_report_frequency != null) {
     if (!['bimonthly', 'monthly'].includes(vat_report_frequency))
       return res.status(400).json({ error: 'תדירות דיווח מע"מ לא חוקית' });

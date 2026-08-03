@@ -182,7 +182,11 @@ a missing credential is visible rather than silent.
 ### Morning (Green Invoice)
 
 - **Pull** — `POST /api/integrations/morning/sync` fetches documents from the last N days
-  (default 90) and upserts them on the Morning document id, so re-running is safe. Local
+  and upserts them on the Morning document id, so re-running is safe. N is
+  **טווח סנכרון מ-Morning (ימים)** in Settings → כללי, 90 by default and bounded to 1–1825:
+  a zero or negative window would ask Morning for a range that ends before it starts and
+  quietly sync nothing. Because a sync refreshes every row it finds in full, widening the
+  range and re-syncing is how rows pulled by an earlier version get corrected. Local
   financial edits are preserved; only status, dates and totals are refreshed. Revenue
   documents get a work row per income line, and one placeholder work when Morning returns
   no line detail. VAT comes from the document when present, and is otherwise backed out of

@@ -13,6 +13,8 @@ export function Settings() {
   // Set while editing an existing member; null means the modal is creating a new one.
   const [editUser, setEditUser] = useState<any | null>(null);
   const [vat, setVat] = useState('');
+  const [syncDays, setSyncDays] = useState('90');
+  const [generalSaved, setGeneralSaved] = useState('');
   const [vatFrequency, setVatFrequency] = useState('bimonthly');
   const [creditPoints, setCreditPoints] = useState('2.25');
   const [reportsSaved, setReportsSaved] = useState('');
@@ -26,6 +28,7 @@ export function Settings() {
       .then((d) => {
         setData(d);
         setVat(String(d.settings.vat_percent));
+        setSyncDays(String(d.settings.morning_sync_days));
         setVatFrequency(d.settings.vat_report_frequency);
         setCreditPoints(String(d.settings.tax_credit_points));
         setBusiness(d.business);
@@ -96,8 +99,14 @@ export function Settings() {
     } catch (err: any) { setError(err.message); }
   };
 
-  const saveVat = async () => {
-    try { await post('/settings', { vat_percent: parseFloat(vat) }); load(); } catch (err: any) { setError(err.message); }
+  const saveGeneral = async () => {
+    setError('');
+    setGeneralSaved('');
+    try {
+      await post('/settings', { vat_percent: parseFloat(vat), morning_sync_days: parseInt(syncDays, 10) });
+      setGeneralSaved('ההגדרות נשמרו');
+      load();
+    } catch (err: any) { setError(err.message); }
   };
 
   const saveReportSettings = async () => {
@@ -132,10 +141,17 @@ export function Settings() {
       {error && <div className="text-sm text-rose-400">{error}</div>}
 
       <Card>
-        <h2 className="font-bold mb-3">כללי</h2>
-        <div className="flex items-end gap-3 max-w-xs">
+        <h2 className="font-bold mb-1">כללי</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          טווח הסנכרון קובע כמה אחורה כל משיכה מ-Morning מגיעה. סנכרון מרענן כל שורה שהוא מוצא במלואה,
+          כך שהרחבת הטווח וסנכרון חוזר היא הדרך לתקן שורות ישנות שנמשכו בעבר.
+        </p>
+        {generalSaved && <div className="text-sm text-emerald-400 mb-3">{generalSaved}</div>}
+        <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
           <Input label='מע"מ (%)' type="number" step="0.1" value={vat} onChange={(e) => setVat(e.target.value)} />
-          <Button variant="ghost" onClick={saveVat}>שמירה</Button>
+          <Input label="טווח סנכרון מ-Morning (ימים)" type="number" min="1" max="1825" value={syncDays}
+            onChange={(e) => setSyncDays(e.target.value)} />
+          <Button variant="ghost" onClick={saveGeneral}>שמירה</Button>
         </div>
       </Card>
 
