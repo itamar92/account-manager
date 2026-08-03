@@ -24,6 +24,16 @@ export const CREDIT_DOC_TYPES: number[] = [DOC_TYPE.CREDIT_INVOICE];
 export const REVENUE_DOC_TYPES_SQL = REVENUE_DOC_TYPES.join(',');
 
 /**
+ * What a מע"מ filing or a profit figure is built from: the revenue documents plus the credit
+ * invoices that undo them. The dashboard cards count revenue only — a credit is not a sale —
+ * but a period's turnover has to be net of what was credited back, and a credit arrives from
+ * Morning with negative amounts, so summing the set gives that netting for free.
+ */
+export const ACCOUNTING_DOC_TYPES: number[] = [...REVENUE_DOC_TYPES, ...CREDIT_DOC_TYPES];
+
+export const ACCOUNTING_DOC_TYPES_SQL = ACCOUNTING_DOC_TYPES.join(',');
+
+/**
  * Document types this app is allowed to issue from an invoice.
  *
  * Credit invoices (330) and standalone receipts (400) are deliberately absent — both

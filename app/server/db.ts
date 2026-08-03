@@ -131,6 +131,23 @@ CREATE TABLE IF NOT EXISTS expenses (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Which tax periods have already been filed and paid. The reports themselves are computed
+-- from the invoices and expenses every time they are opened, so nothing about the numbers
+-- lives here — only the decision that a period is done with, which no other table knows.
+-- period_key is the report's own key: '2026-P2' for a מע"מ period, '2026' for a year.
+CREATE TABLE IF NOT EXISTS tax_filings (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('vat','income_tax')),
+  period_key TEXT NOT NULL,
+  filed_at TEXT,
+  paid_at TEXT,
+  amount REAL,
+  reference TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(kind, period_key)
+);
+
 CREATE TABLE IF NOT EXISTS band_events (
   id TEXT PRIMARY KEY,
   venue TEXT NOT NULL,

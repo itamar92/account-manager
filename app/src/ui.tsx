@@ -50,6 +50,28 @@ export function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/**
+ * Where a tax period stands. Separate from StatusBadge because the words collide: an "open"
+ * expense means one Morning has not reported yet, while an open מע"מ period is simply one
+ * still running — nothing anybody has to act on.
+ */
+const periodStyles: Record<string, [string, string]> = {
+  open: ['bg-slate-500/15 text-slate-400 border-slate-500/30', 'תקופה פתוחה'],
+  due: ['bg-amber-500/15 text-amber-400 border-amber-500/30', 'להגשה'],
+  overdue: ['bg-rose-500/15 text-rose-400 border-rose-500/30', 'באיחור'],
+  filed: ['bg-sky-500/15 text-sky-400 border-sky-500/30', 'דווח'],
+  paid: ['bg-emerald-500/15 text-emerald-400 border-emerald-500/30', 'שולם'],
+};
+
+export function PeriodBadge({ status }: { status: string }) {
+  const [style, label] = periodStyles[status] ?? periodStyles.open;
+  return (
+    <span className={clsx('inline-block px-2 py-0.5 rounded-full text-xs border whitespace-nowrap', style)}>
+      {label}
+    </span>
+  );
+}
+
 export function Button({
   children, onClick, variant = 'primary', type = 'button', disabled, className,
 }: {
@@ -463,11 +485,15 @@ function recentYears(span = 6): number[] {
 const selectClass =
   'bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500';
 
-/** `''` means every year — lists default to the current one. */
-export function YearSelect({ value, onChange, label }: {
+/**
+ * `''` means every year — lists default to the current one. Reports and the dashboard pass
+ * `allowAll={false}`: a מע"מ period or a year's profit only means anything within one year.
+ */
+export function YearSelect({ value, onChange, label, allowAll = true }: {
   value: number | '';
   onChange: (value: number | '') => void;
   label?: string;
+  allowAll?: boolean;
 }) {
   return (
     <select
@@ -476,7 +502,7 @@ export function YearSelect({ value, onChange, label }: {
       onChange={(e) => onChange(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
       className={selectClass}
     >
-      <option value="">כל השנים</option>
+      {allowAll && <option value="">כל השנים</option>}
       {recentYears().map((year) => (
         <option key={year} value={year}>{year}</option>
       ))}
