@@ -18,7 +18,7 @@ export interface MorningDocument {
   amount: number; // total, including VAT
   vat?: number;
   currency?: string;
-  client?: { id?: string; name?: string };
+  client?: { id?: string; name?: string; emails?: string[] };
   income?: Array<{ description?: string; quantity?: number; price?: number; amount?: number }>;
   url?: { origin?: string } | string;
   remarks?: string;

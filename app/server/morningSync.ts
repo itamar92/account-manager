@@ -18,12 +18,19 @@ function mapStatus(doc: MorningDocument): 'issued' | 'paid' | 'cancelled' {
   return 'issued';
 }
 
-function resolveClientByName(name: string): string {
-  const clean = (name || 'לקוח ללא שם').trim();
+/** Fills a client's missing email from a Morning document — never overwrites one already set. */
+function fillClientEmail(clientId: string, client: MorningDocument['client']) {
+  const email = (client?.emails?.[0] || '').trim();
+  if (!email) return;
+  db.prepare("UPDATE clients SET email = ? WHERE id = ? AND (email IS NULL OR email = '')").run(email, clientId);
+}
+
+function resolveClient(client: MorningDocument['client']): string {
+  const clean = (client?.name || 'לקוח ללא שם').trim();
   const existing = db.prepare('SELECT id FROM clients WHERE name = ?').get(clean) as { id: string } | undefined;
-  if (existing) return existing.id;
-  const id = uuid();
-  db.prepare('INSERT INTO clients (id, name) VALUES (?, ?)').run(id, clean);
+  const id = existing?.id ?? uuid();
+  if (!existing) db.prepare('INSERT INTO clients (id, name) VALUES (?, ?)').run(id, clean);
+  fillClientEmail(id, client);
   return id;
 }
 
@@ -80,8 +87,8 @@ export function pullFromMorning(options: { days?: number } = {}): Promise<PullRe
           skipped++;
           continue;
         }
-        const existing = db.prepare('SELECT id FROM invoices WHERE external_id = ?').get(doc.id) as
-          | { id: string }
+        const existing = db.prepare('SELECT id, client_id FROM invoices WHERE external_id = ?').get(doc.id) as
+          | { id: string; client_id: string }
           | undefined;
 
         const { subtotal, vat, total } = splitVat(doc);
@@ -100,11 +107,14 @@ export function pullFromMorning(options: { days?: number } = {}): Promise<PullRe
           );
           updated++;
           syncWorkStatuses(existing.id, status);
+          // The client may have been renamed locally, so it is found by the invoice rather
+          // than by name — a rename must not spawn a duplicate client here.
+          fillClientEmail(existing.client_id, doc.client);
           continue;
         }
 
         const invoiceId = uuid();
-        const clientId = resolveClientByName(doc.client?.name || '');
+        const clientId = resolveClient(doc.client);
         db.prepare(
           `INSERT INTO invoices (id, number, doc_type, client_id, date, due_date, subtotal, vat_amount, total,
              status, paid_date, external_id, source, notes)
