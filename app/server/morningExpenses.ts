@@ -13,9 +13,32 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** 20 = reported to the accountant and locked in Morning; anything else is still open. */
+/** Morning's expense status codes. */
+const STATUS_REPORTED = 20;
+
+/**
+ * Whether the expense has been reported to the accountant and locked in Morning.
+ *
+ * Two things are read, because Morning states the same fact two ways: the numeric `status`
+ * (10 open / 20 reported) and a `reported` boolean — the spelling its own search filter uses.
+ * The status is compared after coercion rather than with `===`, since a payload that sends
+ * `"20"` as a string would otherwise silently report every expense as still open.
+ */
 function mapStatus(exp: MorningExpense): 'open' | 'reported' {
-  return exp.status === 20 ? 'reported' : 'open';
+  if (typeof exp.reported === 'boolean') return exp.reported ? 'reported' : 'open';
+  return Number(exp.status) === STATUS_REPORTED ? 'reported' : 'open';
+}
+
+/**
+ * The document type — 300/305/320/400, the same codes an issued document uses.
+ *
+ * Morning calls it `documentType` on an expense, not `type` as it does on a document; `type`
+ * is still read as a fallback so a payload using the older spelling keeps its label.
+ */
+function docType(exp: MorningExpense): number | null {
+  const raw = exp.documentType ?? exp.type;
+  const value = typeof raw === 'string' ? parseInt(raw, 10) : raw;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
 function supplierName(exp: MorningExpense): string {
@@ -43,11 +66,32 @@ function money(exp: MorningExpense): { subtotal: number; vat: number; total: num
   return { subtotal: round2(total - vat), vat, total };
 }
 
-/** The category name to file the row under — the classification's name where there is one. */
+/**
+ * The סיווג to file the row under — what Morning's UI calls the expense type.
+ *
+ * It arrives as an `accountingClassification` **object** whose name is in `title`, so the
+ * value has to be read out of it rather than stringified: `String(object)` is what put
+ * "[object Object]" in this column. A payload that sends a bare id instead is looked up in
+ * the account's classifications map, and only a value that names itself is stored — an
+ * unresolvable id is left null, so the row shows up under ללא סיווג where it can be found
+ * and fixed, rather than under a number that means nothing.
+ */
 function category(exp: MorningExpense, classifications: Map<string, string>): string | null {
   const raw = exp.category ?? exp.accountingClassification;
   if (raw == null || raw === '') return null;
-  return classifications.get(String(raw)) || String(raw);
+
+  if (typeof raw === 'object') {
+    const named = (raw.title ?? raw.name ?? '').trim();
+    if (named) return named;
+    // Named nowhere on the object itself — fall back to whichever key the map knows it by.
+    for (const key of [raw.id, raw.key, raw.code]) {
+      const found = key != null && key !== '' ? classifications.get(String(key)) : undefined;
+      if (found) return found;
+    }
+    return null;
+  }
+
+  return classifications.get(String(raw)) ?? null;
 }
 
 export interface ExpensePullResult {
@@ -55,6 +99,8 @@ export interface ExpensePullResult {
   created: number;
   updated: number;
   skipped: number;
+  /** How many of the fetched expenses Morning reports as already filed (status 20). */
+  reported: number;
   from: string;
   to: string;
 }
@@ -78,6 +124,10 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
   let created = 0;
   let updated = 0;
   let skipped = 0;
+  // Counted and reported back so the דווח/טרם דווח mapping is checkable from the UI: if
+  // Morning shows expenses as filed and this comes back 0, the status is arriving in some
+  // field this mapper does not read — and the `raw` column then has the answer.
+  let reported = 0;
 
   const tx = db.transaction(() => {
     for (const exp of expenses) {
@@ -90,7 +140,7 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
       const { subtotal, vat, total } = money(exp);
       const values = {
         number: String(exp.number ?? ''),
-        doc_type: exp.type ?? null,
+        doc_type: docType(exp),
         date,
         payment_date: exp.paymentDate ? String(exp.paymentDate).slice(0, 10) : null,
         supplier_name: supplierName(exp),
@@ -104,7 +154,9 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         currency: exp.currency || 'ILS',
         status: mapStatus(exp),
         notes: (exp.remarks || '').trim() || null,
+        raw: JSON.stringify(exp),
       };
+      if (values.status === 'reported') reported++;
 
       const existing = db.prepare('SELECT id FROM expenses WHERE external_id = ?').get(exp.id) as
         | { id: string }
@@ -114,13 +166,13 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         db.prepare(
           `UPDATE expenses SET number = ?, doc_type = ?, date = ?, payment_date = ?, supplier_name = ?,
              supplier_tax_id = ?, external_supplier_id = ?, category = ?, description = ?,
-             amount = ?, vat_amount = ?, total = ?, currency = ?, status = ?, notes = ?
+             amount = ?, vat_amount = ?, total = ?, currency = ?, status = ?, notes = ?, raw = ?
            WHERE id = ?`
         ).run(
           values.number, values.doc_type, values.date, values.payment_date, values.supplier_name,
           values.supplier_tax_id, values.external_supplier_id, values.category, values.description,
           values.amount, values.vat_amount, values.total, values.currency, values.status, values.notes,
-          existing.id
+          values.raw, existing.id
         );
         updated++;
         continue;
@@ -129,13 +181,13 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
       db.prepare(
         `INSERT INTO expenses (id, external_id, number, doc_type, date, payment_date, supplier_name,
            supplier_tax_id, external_supplier_id, category, description, amount, vat_amount, total,
-           currency, status, source, notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?)`
+           currency, status, source, notes, raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?, ?)`
       ).run(
         uuid(), exp.id, values.number, values.doc_type, values.date, values.payment_date,
         values.supplier_name, values.supplier_tax_id, values.external_supplier_id, values.category,
         values.description, values.amount, values.vat_amount, values.total, values.currency,
-        values.status, values.notes
+        values.status, values.notes, values.raw
       );
       created++;
     }
@@ -143,7 +195,7 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
   });
 
   tx();
-  return { fetched: expenses.length, created, updated, skipped, from, to };
+  return { fetched: expenses.length, created, updated, skipped, reported, from, to };
 }
 
 export interface ExpenseFilters {
@@ -174,7 +226,9 @@ export function listExpenses(filters: ExpenseFilters = {}) {
   const rows = db
     .prepare(`SELECT * FROM expenses${clause.sql} ORDER BY date DESC, created_at DESC`)
     .all(...clause.params) as any[];
-  return rows.map((row) => ({
+  // `raw` stays on the server: it is there to diagnose a mapping problem, not to be shipped
+  // to the browser with every row of the table.
+  return rows.map(({ raw, ...row }) => ({
     ...row,
     doc_type_label: row.doc_type != null ? DOC_TYPE_LABELS[row.doc_type] ?? null : null,
   }));

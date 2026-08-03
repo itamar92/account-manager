@@ -193,6 +193,34 @@ a missing credential is visible rather than silent.
   the `expenses` table and refreshed in full on every run: nothing about an expense is
   edited here, so a category or amount corrected in Morning is meant to arrive.
 
+  **An expense does not have quite the shape of an issued document**, and two fields are
+  easy to get wrong — both did, and both showed up in the table:
+
+  | Field | Expense | Issued document |
+  |-------|---------|-----------------|
+  | document type | `documentType` | `type` |
+  | סיווג / expense type | `accountingClassification`, an **object** named by `title` | — |
+  | reported | `status` — 10 open, 20 reported (some payloads say `reported: true`) | `status` — 0 open, 1 closed |
+
+  Reading the classification as a scalar is what wrote **`[object Object]`** into every
+  category; reading the document type from `type` left the מסמך column without its label.
+  The classification's own `title` is preferred, a bare id is resolved through the
+  account's classifications map, and anything that names itself nowhere is left null so the
+  row lands under **ללא סיווג** — findable — rather than under a number that means nothing.
+  The reported flag is read from either spelling, and the status is compared after numeric
+  coercion, so a payload sending `"20"` as a string does not silently mark everything open.
+
+  Existing rows carrying `[object Object]` are cleared on boot rather than left to the next
+  sync, which only refreshes its own window and would leave older rows with a category that
+  is not a category — in the list and in the filter.
+
+  Each synced row also keeps the Morning payload it was mapped from, in `expenses.raw`
+  (server-side only; it is stripped before the list is sent to the browser). It is there so
+  a field Morning spells differently than expected can be *seen* rather than guessed at.
+  The sync result reports how many expenses came back reported, so the mapping is checkable
+  from the UI: if Morning shows them filed and the count is 0, the flag is arriving
+  somewhere `raw` will show.
+
   Their money is read the other way round from revenue. Morning reports the total in
   `amount` with VAT included, or — on accounts that send `amountTotal` — the total there
   and the pre-VAT figure in `amount`; both are read. A missing VAT figure is **not** backed

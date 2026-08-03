@@ -42,6 +42,7 @@ export function Expenses() {
       const { result } = await post('/integrations/morning/expenses-sync');
       setNotice(
         `${result.fetched} הוצאות (${result.from} – ${result.to}) · ${result.created} חדשות · ${result.updated} עודכנו` +
+        ` · ${result.reported} מסומנות כדווחו ב-Morning` +
         (result.skipped ? ` · ${result.skipped} דולגו` : '')
       );
       load();
