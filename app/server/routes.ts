@@ -642,7 +642,15 @@ function bandDivision(range: { from?: string; to?: string } = {}) {
   const fundTotal = round2(fundExpenses.reduce((sum, g) => sum + g.amount, 0));
   const fundShare = round2(fundTotal / memberKeys.length);
 
-  const payout = perMember((key) => showsTotal[key] + refundsByMember[key] - fundShare);
+  // What each member's own share works out to once the shared costs are taken off, before any
+  // money they fronted comes back to them. It is the figure that says how the shows actually
+  // went for everybody — a refund is the band returning someone's own money, not a share of
+  // anything, and leaving it in makes one member look like they earned more than the rest.
+  const beforeRefund = perMember((key) => showsTotal[key] - fundShare);
+  const payout = perMember((key) => beforeRefund[key] + refundsByMember[key]);
+
+  const sumOver = (values: Record<MemberKey, number>) =>
+    round2(memberKeys.reduce((sum, key) => sum + values[key], 0));
 
   return {
     members: BAND_MEMBERS,
@@ -654,8 +662,10 @@ function bandDivision(range: { from?: string; to?: string } = {}) {
     fundExpenses,
     fundTotal,
     fundShare,
+    beforeRefund,
+    beforeRefundTotal: sumOver(beforeRefund),
     payout,
-    payoutTotal: round2(memberKeys.reduce((sum, key) => sum + payout[key], 0)),
+    payoutTotal: sumOver(payout),
   };
 }
 

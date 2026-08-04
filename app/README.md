@@ -178,9 +178,16 @@ checked rather than trusted:
 sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/moonlight/division`
 returns each step with the rows behind it.
 
-The card shows what each member is owed and nothing else; **איך זה מחושב?** opens the whole
-working — every show with its shares, the two adjustment lines, and the list of exactly which
-expenses were refunded and which the float paid — so no figure in it is unaccounted for.
+The card always shows two figures per member: **חלק ברווח**, their share once the shared costs
+are off but before any refund, and **סה״כ לתשלום**, the same plus what they fronted. They are
+separate because a refund is the band handing someone their own money back rather than a share of
+anything — counted in, one member looks like they earned more than the rest, and the line that
+says how the shows actually went for everybody disappears.
+
+**איך זה מחושב?** opens the whole working — every show with its shares, each adjustment, and the
+list of exactly which expenses were refunded and which the float paid — so no figure is
+unaccounted for. The shared costs come off before the refunds go back on, so both of the figures
+on the card appear in the working as lines of it.
 
 ### Moonlight — the producer fee
 

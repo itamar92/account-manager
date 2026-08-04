@@ -17,7 +17,10 @@ export function DivisionTable({ division }: { division: any }) {
   const [showWorking, setShowWorking] = useState(false);
   if (!division) return <Card><Empty text="טוען…" /></Card>;
 
-  const { members, shows, showsTotal, refunds, refundsByMember, fundExpenses, fundTotal, fundShare, payout } = division;
+  const {
+    members, shows, showsTotal, refunds, refundsByMember,
+    fundExpenses, fundTotal, fundShare, beforeRefund, payout,
+  } = division;
   const nothing = shows.length === 0 && refunds.length === 0 && fundExpenses.length === 0;
 
   const cell = 'px-3 py-2 whitespace-nowrap text-center';
@@ -37,20 +40,46 @@ export function DivisionTable({ division }: { division: any }) {
         )}
       </div>
       <p className="text-xs text-slate-500 mb-4">
-        רווח מהופעות שטרם סומנו «שולם לנגנים», ועוד החזר למי ששילם מכיסו, פחות חלק שווה בהוצאות
-        ששולמו מהקופה. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
+        רווח מהופעות שטרם סומנו «שולם לנגנים», פחות חלק שווה בהוצאות ששולמו מהקופה, ועוד החזר
+        למי ששילם מכיסו. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
       </p>
 
-      {/* The answer first: the working is there for whoever wants to check it, but the figure
-          most days need is simply what each member is owed. */}
+      {/* The two figures worth seeing without asking. They are separate because a refund is the
+          band handing someone their own money back, not a share of anything: counted in, one
+          member looks like they earned more than the rest, and the line that says how the shows
+          actually went for everybody disappears. */}
       {!nothing && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {members.map((m: any) => (
-            <div key={m.key} className="bg-slate-800/50 rounded-xl p-4 text-center">
-              <div className="text-sm text-slate-400">{m.name}</div>
-              <div className="text-xl font-bold text-amber-300">{nis(payout[m.key])}</div>
-            </div>
-          ))}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-800">
+                <th className="px-3 py-2 text-right font-medium text-slate-400" />
+                {members.map((m: any) => <th key={m.key} className={head}>{m.name}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="bg-slate-800/40">
+                {/* Held at its natural width so a phone scrolls the table sideways rather than
+                    folding the label into a column of single words. */}
+                <td className="px-3 py-2.5 text-right text-slate-300 whitespace-nowrap">
+                  חלק ברווח <span className="text-xs text-slate-500">(לפני החזרי הוצאות)</span>
+                </td>
+                {members.map((m: any) => (
+                  <td key={m.key} className={clsx(cell, 'font-medium text-indigo-300')}>
+                    {nis(beforeRefund[m.key])}
+                  </td>
+                ))}
+              </tr>
+              <tr className="bg-amber-500/10 border-t-2 border-amber-500/40">
+                <td className="px-3 py-2.5 text-right font-bold whitespace-nowrap">סה״כ לתשלום</td>
+                {members.map((m: any) => (
+                  <td key={m.key} className={clsx(cell, 'font-bold text-amber-300 text-base')}>
+                    {nis(payout[m.key])}
+                  </td>
+                ))}
+              </tr>
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -83,8 +112,9 @@ export function DivisionTable({ division }: { division: any }) {
               ))}
             </tbody>
 
-            {/* The three steps and the result, kept apart from the show rows so the arithmetic
-                reads as arithmetic. */}
+            {/* The steps and the result, kept apart from the show rows so the arithmetic reads
+                as arithmetic. The shared costs come off before the refunds go back on, so that
+                both of the figures shown above the table appear here as lines of it. */}
             <tfoot>
               <tr className="bg-slate-800/40 border-t-2 border-slate-700">
                 <td className="px-3 py-2 text-right font-bold">סה״כ ({showsTotal.count} הופעות)</td>
@@ -95,21 +125,35 @@ export function DivisionTable({ division }: { division: any }) {
               </tr>
 
               <StepRow
-                sign="+"
-                label="החזר למי ששילם מכיסו"
-                values={members.map((m: any) => refundsByMember[m.key])}
-                total={division.refundsTotal}
-                accent="text-emerald-400"
-                cell={cell}
-              />
-
-              <StepRow
                 sign="−"
                 label="הוצאות ששולמו מהקופה (חלק שווה)"
                 values={members.map(() => fundShare)}
                 total={fundTotal}
                 accent="text-rose-400"
                 negate
+                cell={cell}
+              />
+
+              <tr className="bg-slate-800/30 border-t border-slate-700">
+                <td className="px-3 py-2 text-right font-medium text-slate-300">
+                  = חלק ברווח (לפני החזרי הוצאות)
+                </td>
+                {members.map((m: any) => (
+                  <td key={m.key} className={clsx(cell, 'font-medium text-indigo-300')}>
+                    {nis(beforeRefund[m.key])}
+                  </td>
+                ))}
+                <td className={clsx(cell, 'font-medium text-indigo-300')}>
+                  {nis(division.beforeRefundTotal)}
+                </td>
+              </tr>
+
+              <StepRow
+                sign="+"
+                label="החזר למי ששילם מכיסו"
+                values={members.map((m: any) => refundsByMember[m.key])}
+                total={division.refundsTotal}
+                accent="text-emerald-400"
                 cell={cell}
               />
 
