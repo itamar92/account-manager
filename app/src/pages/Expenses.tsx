@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { get, post, nis } from '../api';
 import {
-  Button, Card, DataTable, Empty, SearchInput, StatCard, StatusBadge, YearSelect, textMatch,
+  Button, Card, DataTable, Empty, PeriodSelect, SearchInput, StatCard, StatusBadge, textMatch, usePeriodFilter,
 } from '../ui';
 
 /** The category filter's value for expenses Morning has not classified — matches the server. */
@@ -17,7 +17,7 @@ const UNCATEGORIZED = '__none__';
 export function Expenses() {
   const [data, setData] = useState<any>(null);
   // Opens on the current year, as the invoice list does — older years are a step back.
-  const [year, setYear] = useState<number | ''>(new Date().getFullYear());
+  const period = usePeriodFilter();
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
   const [search, setSearch] = useState('');
@@ -26,13 +26,12 @@ export function Expenses() {
   const [notice, setNotice] = useState('');
 
   const load = () => {
-    const qs = new URLSearchParams();
-    if (year !== '') qs.set('year', String(year));
+    const qs = period.params();
     if (status) qs.set('status', status);
     if (category) qs.set('category', category);
     return get(`/expenses?${qs}`).then(setData).catch((e) => setError(e.message));
   };
-  useEffect(() => { load(); }, [year, status, category]);
+  useEffect(() => { load(); }, [period.year, period.month, status, category]);
 
   const sync = async () => {
     setSyncing(true);
@@ -74,7 +73,8 @@ export function Expenses() {
             {data.categories.map((c: string) => <option key={c} value={c}>{c}</option>)}
             <option value={UNCATEGORIZED}>ללא סיווג</option>
           </select>
-          <YearSelect value={year} onChange={setYear} />
+          <PeriodSelect year={period.year} month={period.month}
+            onYearChange={period.setYear} onMonthChange={period.setMonth} />
           <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי ספק, פירוט או סיווג…"
             className="flex-1 min-w-[10rem] sm:max-w-xs" />
           <Button variant="ghost" onClick={sync} disabled={!integration.configured || syncing}>

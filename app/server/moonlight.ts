@@ -65,6 +65,31 @@ export function expenseOutstanding(row: any): number {
   return round2(expenseTotal(row) - expensePaidTotal(row));
 }
 
+/**
+ * The band, and the names the tables record them under.
+ *
+ * `paid_by` on a general expense holds one of these names or the fund's, which is how a cost
+ * a member covered out of their own pocket is told from one the band's own float paid for —
+ * the two are settled in opposite directions when the money is divided up.
+ */
+export const BAND_MEMBERS = [
+  { key: 'amir', name: 'אמיר' },
+  { key: 'itamar', name: 'איתמר' },
+  { key: 'yuval', name: 'יובל' },
+  { key: 'guy', name: 'גיא' },
+] as const;
+
+export type MemberKey = (typeof BAND_MEMBERS)[number]['key'];
+
+/** The band's own float — an expense it paid is one everybody shares. */
+export const FUND_PAYER = 'קופה';
+
+/** Which member a `paid_by` names, or null when it names the fund or nobody recognisable. */
+export function memberByName(name: unknown): MemberKey | null {
+  const trimmed = String(name ?? '').trim();
+  return BAND_MEMBERS.find((m) => m.name === trimmed)?.key ?? null;
+}
+
 export interface Division { amir: number; itamar: number; yuval: number; guy: number; commission_amount: number }
 
 /**

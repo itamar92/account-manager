@@ -155,6 +155,34 @@ set in **Settings → דוחות מס** (2.25 by default).
 | `GET /api/reports/income-tax?year=` | monthly P&L, expenses by classification, tax estimate and projection |
 | `PUT /api/reports/filings/:kind/:periodKey` | tick a period `{filed?, paid?, amount?, reference?, notes?}` — `:kind` is `vat` or `income_tax` |
 
+### Filtering by period
+
+Every dated list — works, invoices, expenses and all four Moonlight tabs — filters by year and,
+within it, by a single month. A month is only meaningful inside a year, so the month select is
+disabled while the year is "כל השנים" and the server ignores a month sent without one: "March"
+of no particular year is not a period. Both selects go through one `dateRange` on the server, so
+every list narrows the same way and there is one place where a period is turned into dates.
+
+### Moonlight — how the division is worked out
+
+The band's summary shows what each member is owed **and how that figure was reached**, laid out
+in the three steps their spreadsheet has always used, because the point is that the total can be
+checked rather than trusted:
+
+1. every show not yet marked «שולם לנגנים» contributes its per-member share of the profit;
+2. **plus** a general expense a member paid out of their own pocket, added back to them in full —
+   that is a refund, not a share of anything;
+3. **minus** an equal part of what the band's float (קופה) covered, since everybody bore it.
+
+`paid` on a general expense is what settled means here — the moonlight migration set it from the
+sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/moonlight/division`
+returns each step with the rows behind it, and the table can expand to list exactly which expenses
+were refunded and which the float paid, so no figure in it is unaccounted for.
+
+The per-show split itself is unchanged and still comes from `computeDivision`: 35/35/15/15 with
+the producer fee on (20% of the profit each to איתמר and אמיר, the remaining 60% split four ways),
+a plain quarter each with it off, or whatever was typed by hand on a row set to manual.
+
 ### Document types and revenue
 
 A single sale usually produces two documents in Morning: a **חשבון עסקה (300)** when the

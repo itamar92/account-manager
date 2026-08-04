@@ -1,3 +1,5 @@
+import type { PeriodFilter } from '../../ui';
+
 /** The band, in the order the tables and the summary show them. */
 export const MEMBERS = [
   { key: 'amir', name: 'אמיר' },
@@ -50,4 +52,9 @@ export interface TabProps {
   isOwner: boolean;
   onError: (message: string) => void;
   reload: () => void;
+}
+
+/** The tabs that show a table share the shell's period filter and its selects. */
+export interface PeriodTabProps extends TabProps {
+  period: PeriodFilter;
 }

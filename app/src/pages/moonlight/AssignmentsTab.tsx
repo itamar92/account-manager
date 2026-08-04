@@ -1,13 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
-import { Button, Card, DataTable, Empty, Input, Modal, SearchInput, YearSelect, textMatch } from '../../ui';
-import { ASSIGNMENT_ROLES, roleName, type TabProps } from './shared';
-
-interface Props extends TabProps {
-  year: number | '';
-  onYearChange: (year: number | '') => void;
-}
+import { Button, Card, DataTable, Empty, Input, Modal, PeriodSelect, SearchInput, textMatch } from '../../ui';
+import { ASSIGNMENT_ROLES, roleName, type PeriodTabProps } from './shared';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -18,7 +13,7 @@ const today = () => new Date().toISOString().slice(0, 10);
  * Three pieces: an alert for upcoming shows missing someone, the show-by-role grid, and the
  * supplier table itself — each supplier with the open debt across the shows they worked.
  */
-export function AssignmentsTab({ isOwner, onError, year, onYearChange }: Props) {
+export function AssignmentsTab({ isOwner, onError, period }: PeriodTabProps) {
   const [events, setEvents] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [search, setSearch] = useState('');
@@ -27,12 +22,12 @@ export function AssignmentsTab({ isOwner, onError, year, onYearChange }: Props) 
   const [matching, setMatching] = useState(false);
 
   const load = () => {
-    const qs = year === '' ? '' : `?year=${year}`;
-    get(`/moonlight/assignments${qs}`)
+    const query = period.params().toString();
+    get(`/moonlight/assignments${query ? `?${query}` : ''}`)
       .then((d) => { setEvents(d.events); setSuppliers(d.suppliers); })
       .catch((e) => onError(e.message));
   };
-  useEffect(load, [year]);
+  useEffect(load, [period.year, period.month]);
 
   const assign = async (eventId: string, role: string, value: string) => {
     try {
@@ -104,7 +99,8 @@ export function AssignmentsTab({ isOwner, onError, year, onYearChange }: Props) 
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <h2 className="font-bold">שיבוצים להופעות</h2>
-            <YearSelect value={year} onChange={onYearChange} />
+            <PeriodSelect year={period.year} month={period.month}
+              onYearChange={period.setYear} onMonthChange={period.setMonth} />
           </div>
           {isOwner && (
             <span title="משווה את רשימת האורחים של כל הופעה מהיומן לאימיילים של הספקים">

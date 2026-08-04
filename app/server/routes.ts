@@ -21,9 +21,9 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  deleteEventCascade, deleteExpenseRow, ensureExpenseRow, eventLabel, expenseOutstanding,
-  expenseRowForEvent, expenseTotal, getEvent, normalizePaymentStatus, reassignExpenseRow,
-  recomputeEvent, syncExpenseLabel,
+  BAND_MEMBERS, FUND_PAYER, deleteEventCascade, deleteExpenseRow, ensureExpenseRow, eventLabel,
+  expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent, memberByName,
+  normalizePaymentStatus, reassignExpenseRow, recomputeEvent, syncExpenseLabel, type MemberKey,
 } from './moonlight.js';
 import {
   ASSIGNMENT_ROLES, assignmentsForEvent, attendeeEmails, autoAssignAll, deleteSupplier,
@@ -81,12 +81,24 @@ function handle(fn: (req: any, res: any) => void) {
 
 /**
  * The date window a list is asking for. Every end is optional: the tables ask for one year,
- * the moonlight summary can ask for any span, and callers that ask for nothing — the
- * dashboard — keep getting everything.
+ * optionally narrowed to one month within it, the moonlight summary can ask for any span, and
+ * callers that ask for nothing — the dashboard — keep getting everything.
+ *
+ * A month is only meaningful inside a year, so one sent without a year is ignored rather than
+ * guessed at against the current one: "March" of no particular year is not a period.
  */
 function dateRange(query: any): { from?: string; to?: string } {
   const year = parseInt(query?.year, 10);
-  if (Number.isFinite(year) && year > 1970) return { from: `${year}-01-01`, to: `${year}-12-31` };
+  if (Number.isFinite(year) && year > 1970) {
+    const month = parseInt(query?.month, 10);
+    if (Number.isFinite(month) && month >= 1 && month <= 12) {
+      const mm = String(month).padStart(2, '0');
+      // Day 0 of the next month is the last day of this one, so February is right in a leap year.
+      const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      return { from: `${year}-${mm}-01`, to: `${year}-${mm}-${lastDay}` };
+    }
+    return { from: `${year}-01-01`, to: `${year}-12-31` };
+  }
   return {
     from: typeof query?.from === 'string' && query.from ? query.from : undefined,
     to: typeof query?.to === 'string' && query.to ? query.to : undefined,
@@ -560,8 +572,99 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
   };
 }
 
+/**
+ * How the money owed to each member is arrived at, step by step — the three steps the band's
+ * own spreadsheet has always laid out, so the final figure can be checked rather than trusted.
+ *
+ * 1. Every show not yet marked «שולם לנגנים» contributes its per-member share of the profit.
+ * 2. A general expense a member paid out of their own pocket is added back to them in full —
+ *    it is a refund, not a share of anything.
+ * 3. A general expense the band's float (קופה) covered was borne by everybody, so it comes off
+ *    each member's payout in equal parts.
+ *
+ * `paid` is what settled means for a general expense: the moonlight migration set it from the
+ * sheet's «הוחזר» columns, so a row already squared takes no further part in the division.
+ * Both halves follow the selected range, as the rest of the summary does.
+ */
+function bandDivision(range: { from?: string; to?: string } = {}) {
+  const where = rangeClause('date', range);
+  const events = db
+    .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
+    .all(...where.params) as any[];
+  const general = db
+    .prepare(`SELECT * FROM band_general_expenses${where.sql} ORDER BY date`)
+    .all(...where.params) as any[];
+
+  const memberKeys = BAND_MEMBERS.map((m) => m.key);
+  const perMember = (fn: (key: MemberKey) => number) =>
+    Object.fromEntries(memberKeys.map((key) => [key, round2(fn(key))])) as Record<MemberKey, number>;
+
+  // Step 1 — shows whose profit has not been handed out yet.
+  const shows = events
+    .filter((e) => !e.paid_to_musicians)
+    .map((e) => ({
+      id: e.id,
+      venue: e.venue,
+      date: e.date,
+      profit: round2(Number(e.profit) || 0),
+      ...perMember((key) => Number(e[key]) || 0),
+    }));
+  const showsTotal = {
+    ...perMember((key) => shows.reduce((sum, s) => sum + (s as any)[key], 0)),
+    profit: round2(shows.reduce((sum, s) => sum + s.profit, 0)),
+    count: shows.length,
+  };
+
+  // Step 2 — what a member fronted and has not had back.
+  const unsettled = general.filter((g) => !g.paid);
+  const refunds = unsettled
+    .map((g) => ({ row: g, member: memberByName(g.paid_by) }))
+    .filter((r) => r.member)
+    .map((r) => ({
+      id: r.row.id,
+      date: r.row.date,
+      description: r.row.description,
+      paid_by: r.row.paid_by,
+      member: r.member as MemberKey,
+      amount: round2(Number(r.row.amount) || 0),
+    }));
+  const refundsByMember = perMember((key) =>
+    refunds.filter((r) => r.member === key).reduce((sum, r) => sum + r.amount, 0)
+  );
+
+  // Step 3 — what the float covered, split evenly.
+  const fundExpenses = unsettled
+    .filter((g) => String(g.paid_by ?? '').trim() === FUND_PAYER)
+    .map((g) => ({
+      id: g.id, date: g.date, description: g.description, amount: round2(Number(g.amount) || 0),
+    }));
+  const fundTotal = round2(fundExpenses.reduce((sum, g) => sum + g.amount, 0));
+  const fundShare = round2(fundTotal / memberKeys.length);
+
+  const payout = perMember((key) => showsTotal[key] + refundsByMember[key] - fundShare);
+
+  return {
+    members: BAND_MEMBERS,
+    shows,
+    showsTotal,
+    refunds,
+    refundsByMember,
+    refundsTotal: round2(refunds.reduce((sum, r) => sum + r.amount, 0)),
+    fundExpenses,
+    fundTotal,
+    fundShare,
+    payout,
+    payoutTotal: round2(memberKeys.reduce((sum, key) => sum + payout[key], 0)),
+  };
+}
+
 router.get('/moonlight/summary', requireAuth, handle((req, res) => {
   res.json({ summary: bandSummary(dateRange(req.query)) });
+}));
+
+/** The worked-out version of the summary's division figures — every step and its rows. */
+router.get('/moonlight/division', requireAuth, handle((req, res) => {
+  res.json({ division: bandDivision(dateRange(req.query)) });
 }));
 
 router.get('/moonlight/events', requireAuth, handle((req, res) => {

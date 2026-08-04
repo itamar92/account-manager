@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import { del, post, put, nis } from '../../api';
-import { Button, Card, DataTable, EditableCell, Empty, SearchInput, SelectCell, YearSelect, textMatch } from '../../ui';
-import { MEMBERS, PAYMENT_STATUSES, PAYMENT_STATUS_STYLES, type TabProps } from './shared';
+import { Button, Card, DataTable, EditableCell, Empty, PeriodSelect, SearchInput, SelectCell, textMatch } from '../../ui';
+import { MEMBERS, PAYMENT_STATUSES, PAYMENT_STATUS_STYLES, type PeriodTabProps } from './shared';
 
-interface Props extends TabProps {
+interface Props extends PeriodTabProps {
   events: any[];
-  year: number | '';
-  onYearChange: (year: number | '') => void;
   onNewEvent: () => void;
   onEditEvent: (event: any) => void;
 }
@@ -20,7 +18,7 @@ interface Props extends TabProps {
  * shown as results rather than fields.
  */
 export function IncomeTab({
-  events, year, onYearChange, isOwner, onError, reload, onNewEvent, onEditEvent,
+  events, period, isOwner, onError, reload, onNewEvent, onEditEvent,
 }: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -112,7 +110,8 @@ export function IncomeTab({
         <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2">
             <h2 className="font-bold">הכנסות מהופעות</h2>
-            <YearSelect value={year} onChange={onYearChange} />
+            <PeriodSelect year={period.year} month={period.month}
+              onYearChange={period.setYear} onMonthChange={period.setMonth} />
           </div>
           {isOwner && (
             <div className="flex gap-2">

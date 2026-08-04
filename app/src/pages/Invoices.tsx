@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { get, post, nis } from '../api';
-import { Button, Card, Modal, StatusBadge, DataTable, Empty, SearchInput, YearSelect, textMatch } from '../ui';
+import { Button, Card, Modal, StatusBadge, DataTable, Empty, PeriodSelect, SearchInput, textMatch, usePeriodFilter } from '../ui';
 import { MorningIssueModal } from './MorningIssueModal';
 
 export function Invoices() {
@@ -9,7 +9,7 @@ export function Invoices() {
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
   // Opens on the year you are working in; older years are a deliberate step back.
-  const [year, setYear] = useState<number | ''>(new Date().getFullYear());
+  const period = usePeriodFilter();
   const [detail, setDetail] = useState<any | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -17,14 +17,13 @@ export function Invoices() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const load = () => {
-    const qs = new URLSearchParams();
+    const qs = period.params();
     if (statusFilter) qs.set('status', statusFilter);
-    if (year !== '') qs.set('year', String(year));
     return get(`/invoices?${qs}`)
       .then((d) => setInvoices(d.invoices))
       .catch((e) => setError(e.message));
   };
-  useEffect(() => { load(); }, [statusFilter, year]);
+  useEffect(() => { load(); }, [statusFilter, period.year, period.month]);
 
   useEffect(() => {
     const openId = searchParams.get('open');
@@ -68,7 +67,8 @@ export function Invoices() {
             <option value="paid">שולמו</option>
             <option value="cancelled">בוטלו</option>
           </select>
-          <YearSelect value={year} onChange={setYear} />
+          <PeriodSelect year={period.year} month={period.month}
+            onYearChange={period.setYear} onMonthChange={period.setMonth} />
           <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי לקוח או מספר…" className="flex-1 min-w-[10rem] sm:max-w-xs" />
         </div>
       </div>
