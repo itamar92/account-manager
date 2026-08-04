@@ -14,7 +14,7 @@ import { eventLabel } from './shared';
  * the band's float covered for everyone.
  */
 export function DivisionTable({ division }: { division: any }) {
-  const [showDetail, setShowDetail] = useState(false);
+  const [showWorking, setShowWorking] = useState(false);
   if (!division) return <Card><Empty text="טוען…" /></Card>;
 
   const { members, shows, showsTotal, refunds, refundsByMember, fundExpenses, fundTotal, fundShare, payout } = division;
@@ -26,13 +26,13 @@ export function DivisionTable({ division }: { division: any }) {
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-        <h2 className="font-bold">חלוקת כספים</h2>
+        <h2 className="font-bold">חלוקת כספים — כמה מגיע לכל אחד</h2>
         {!nothing && (
           <button
-            onClick={() => setShowDetail(!showDetail)}
+            onClick={() => setShowWorking(!showWorking)}
             className="text-sm text-indigo-400 hover:underline"
           >
-            {showDetail ? 'הסתרת הפירוט' : 'הצגת הפירוט של ההוצאות'}
+            {showWorking ? 'הסתרת אופן החישוב' : 'איך זה מחושב?'}
           </button>
         )}
       </div>
@@ -41,10 +41,23 @@ export function DivisionTable({ division }: { division: any }) {
         ששולמו מהקופה. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
       </p>
 
+      {/* The answer first: the working is there for whoever wants to check it, but the figure
+          most days need is simply what each member is owed. */}
+      {!nothing && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {members.map((m: any) => (
+            <div key={m.key} className="bg-slate-800/50 rounded-xl p-4 text-center">
+              <div className="text-sm text-slate-400">{m.name}</div>
+              <div className="text-xl font-bold text-amber-300">{nis(payout[m.key])}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {nothing ? (
         <Empty text="אין מה לחלק בטווח הנבחר — כל ההופעות חולקו וכל ההוצאות הוסדרו" />
-      ) : (
-        <div className="overflow-x-auto">
+      ) : !showWorking ? null : (
+        <div className="overflow-x-auto mt-5 pt-4 border-t border-slate-800">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-800">
@@ -114,7 +127,7 @@ export function DivisionTable({ division }: { division: any }) {
         </div>
       )}
 
-      {showDetail && !nothing && (
+      {showWorking && !nothing && (
         <div className="grid md:grid-cols-2 gap-4 mt-5 pt-4 border-t border-slate-800">
           <ExpenseList
             title="הוצאות להחזר"

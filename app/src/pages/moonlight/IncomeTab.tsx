@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { clsx } from 'clsx';
 import { del, post, put, nis } from '../../api';
 import { Button, Card, DataTable, EditableCell, Empty, PeriodSelect, SearchInput, SelectCell, textMatch } from '../../ui';
-import { MEMBERS, PAYMENT_STATUSES, PAYMENT_STATUS_STYLES, type PeriodTabProps } from './shared';
+import { MEMBERS, PAYMENT_STATUSES, PAYMENT_STATUS_STYLES, divisionSplitLabel, type PeriodTabProps } from './shared';
 
 interface Props extends PeriodTabProps {
   events: any[];
@@ -235,10 +235,25 @@ export function IncomeTab({
                 ),
               },
               {
-                key: 'commission', header: 'דמי הפקה',
+                // The tick and what it is worth, together: a fee with no percentage beside it
+                // says nothing about how the show was actually split.
+                key: 'commission', header: 'דמי הפקה', label: 'דמי הפקה',
                 render: (e) => (
-                  <EditableCell type="checkbox" value={e.has_commission} disabled={!isOwner}
-                    onSave={(v) => saveField(e.id, { has_commission: v })} />
+                  <div className="flex items-center gap-2">
+                    <EditableCell type="checkbox" value={e.has_commission} disabled={!isOwner}
+                      onSave={(v) => saveField(e.id, { has_commission: v })} />
+                    {e.has_commission ? (
+                      <span className="text-xs text-slate-400 whitespace-nowrap">
+                        <EditableCell
+                          type="number"
+                          value={e.commission_percent}
+                          display={`${e.commission_percent}%`}
+                          disabled={!isOwner}
+                          onSave={(v) => saveField(e.id, { commission_percent: v })}
+                        />
+                      </span>
+                    ) : <span className="text-xs text-slate-600">—</span>}
+                  </div>
                 ),
               },
               {
@@ -285,9 +300,12 @@ function DivisionPanel({ event, isOwner, onSave }: {
           manual ? 'bg-amber-500/15 text-amber-400 border-amber-500/30' : 'bg-slate-500/15 text-slate-400 border-slate-500/30')}>
           {manual ? 'ידני' : 'אוטומטי'}
         </span>
+        {/* Spelled out with this show's own percentage, so the shares below can be checked
+            against the rule that produced them. */}
         <span className="text-xs text-slate-500">
           {event.has_commission
-            ? 'עם דמי הפקה — 40% ראשונים לאיתמר ואמיר (20% כל אחד), והשאר בחלוקה שווה'
+            ? `עם דמי הפקה — ${event.commission_percent}% מהרווח לאיתמר ולאמיר בחלקים שווים `
+              + `(${divisionSplitLabel(event.commission_percent)}), והשאר בחלוקה שווה בין כולם`
             : 'ללא דמי הפקה — 25% לכל אחד'}
         </span>
         {isOwner && manual && (

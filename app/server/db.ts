@@ -309,6 +309,9 @@ addColumnIfMissing('band_general_expenses', 'event_id', 'TEXT');
 addColumnIfMissing('band_events', 'venue_locked', 'INTEGER NOT NULL DEFAULT 0');
 // The show's calendar guest list, as a JSON array of emails — what the staffing matcher reads.
 addColumnIfMissing('band_events', 'attendees', 'TEXT');
+// What the producer fee is worth on this show, as a percentage of its profit. Per show,
+// because that is a decision about the show; 20 (the default) nets the band's 30/30/20/20.
+addColumnIfMissing('band_events', 'commission_percent', 'REAL NOT NULL DEFAULT 20');
 addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
 // The Morning payload a synced expense was mapped from. Kept so a field Morning spells
 // differently than expected can be seen in the data instead of guessed at — reading the

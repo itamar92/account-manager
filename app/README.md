@@ -176,12 +176,26 @@ checked rather than trusted:
 
 `paid` on a general expense is what settled means here — the moonlight migration set it from the
 sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/moonlight/division`
-returns each step with the rows behind it, and the table can expand to list exactly which expenses
-were refunded and which the float paid, so no figure in it is unaccounted for.
+returns each step with the rows behind it.
 
-The per-show split itself is unchanged and still comes from `computeDivision`: 35/35/15/15 with
-the producer fee on (20% of the profit each to איתמר and אמיר, the remaining 60% split four ways),
-a plain quarter each with it off, or whatever was typed by hand on a row set to manual.
+The card shows what each member is owed and nothing else; **איך זה מחושב?** opens the whole
+working — every show with its shares, the two adjustment lines, and the list of exactly which
+expenses were refunded and which the float paid — so no figure in it is unaccounted for.
+
+### Moonlight — the producer fee
+
+`computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, going to
+איתמר and אמיר in equal halves, and the rest is shared equally by all four. The percentage is the
+**whole** fee, so 20% nets 30/30/20/20 and 40% nets 35/35/15/15. It is stored per show, because
+what the fee is worth is a decision about that show, and it is editable both in the show dialog
+and inline in the income table beside the דמי הפקה tick. With the fee off (or at 0%) it is a plain
+quarter each; a row set to manual keeps whatever was typed on it.
+
+The default is **20% (30/30/20/20)**. It was a fixed 40% before, so a one-time migration stamps
+`commission_percent = 40` on shows already marked «שולם לנגנים» — their profit has changed hands
+under the old figure, and the boot recompute would otherwise silently re-divide it while leaving
+the percentage on the row unable to explain the shares beside it. Every show still open takes the
+new default, which is the point of changing it.
 
 ### Document types and revenue
 

@@ -21,9 +21,10 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  BAND_MEMBERS, FUND_PAYER, deleteEventCascade, deleteExpenseRow, ensureExpenseRow, eventLabel,
-  expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent, memberByName,
-  normalizePaymentStatus, reassignExpenseRow, recomputeEvent, syncExpenseLabel, type MemberKey,
+  BAND_MEMBERS, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, deleteEventCascade, deleteExpenseRow,
+  ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
+  memberByName, normalizeCommissionPercent, normalizePaymentStatus, reassignExpenseRow,
+  recomputeEvent, syncExpenseLabel, type MemberKey,
 } from './moonlight.js';
 import {
   ASSIGNMENT_ROLES, assignmentsForEvent, attendeeEmails, autoAssignAll, deleteSupplier,
@@ -708,11 +709,13 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   const id = uuid();
   db.prepare(
     `INSERT INTO band_events (id, venue, date, tickets, amount_pre_vat, amount_with_vat,
-      receiver, invoice, has_commission, paid_to_musicians, payment_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      receiver, invoice, has_commission, commission_percent, paid_to_musicians, payment_status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     id, b.venue, b.date, b.tickets || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
-    b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0,
+    b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0,
+    b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT,
+    b.paid_to_musicians ? 1 : 0,
     normalizePaymentStatus(b.payment_status) || 'waiting_report'
   );
   ensureExpenseRow(getEvent(id));
@@ -742,12 +745,13 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
 
   db.prepare(
     `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?,
-      receiver=?, invoice=?, has_commission=?, paid_to_musicians=?, division_mode=?, payment_status=?,
-      amir=?, itamar=?, yuval=?, guy=?, venue_locked=?
+      receiver=?, invoice=?, has_commission=?, commission_percent=?, paid_to_musicians=?,
+      division_mode=?, payment_status=?, amir=?, itamar=?, yuval=?, guy=?, venue_locked=?
      WHERE id=?`
   ).run(
     b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat,
-    b.receiver, b.invoice, b.has_commission ? 1 : 0, b.paid_to_musicians ? 1 : 0, divisionMode,
+    b.receiver, b.invoice, b.has_commission ? 1 : 0, normalizeCommissionPercent(b.commission_percent),
+    b.paid_to_musicians ? 1 : 0, divisionMode,
     normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',
     b.amir, b.itamar, b.yuval, b.guy, venueLocked, req.params.id
   );

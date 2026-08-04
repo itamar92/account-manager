@@ -8,7 +8,7 @@ import { EventExpensesTab } from './moonlight/EventExpensesTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
 import { AssignmentsTab } from './moonlight/AssignmentsTab';
-import { MEMBERS } from './moonlight/shared';
+import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
 
 type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses';
 
@@ -84,7 +84,7 @@ export function Moonlight() {
           {...tabProps}
           events={events}
           period={period}
-          onNewEvent={() => setEventModal({ venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1 })}
+          onNewEvent={() => setEventModal({ venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1, commission_percent: DEFAULT_COMMISSION_PERCENT })}
           onEditEvent={setEventModal}
         />
       )}
@@ -116,11 +116,24 @@ export function Moonlight() {
               <Input label='כולל מע"מ' type="number" step="0.01" value={eventModal.amount_with_vat}
                 onChange={(e) => setEventModal({ ...eventModal, amount_with_vat: parseFloat(e.target.value) || 0 })} />
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input type="checkbox" checked={!!eventModal.has_commission} className="accent-indigo-500"
-                onChange={(e) => setEventModal({ ...eventModal, has_commission: e.target.checked ? 1 : 0 })} />
-              דמי הפקה (40% ראשונים לאיתמר ואמיר, השאר בחלוקה שווה)
-            </label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={!!eventModal.has_commission} className="accent-indigo-500"
+                  onChange={(e) => setEventModal({ ...eventModal, has_commission: e.target.checked ? 1 : 0 })} />
+                דמי הפקה — לאיתמר ולאמיר בחלקים שווים, והשאר בחלוקה שווה בין כולם
+              </label>
+              {/* The percentage only means anything with the fee on, so it appears with it. */}
+              {!!eventModal.has_commission && (
+                <div className="flex items-end gap-3 pr-6">
+                  <Input label="אחוז דמי הפקה" type="number" step="1" min="0" max="100"
+                    value={eventModal.commission_percent}
+                    onChange={(e) => setEventModal({ ...eventModal, commission_percent: e.target.value })} />
+                  <span className="text-xs text-slate-500 pb-2.5 whitespace-nowrap">
+                    יוצא {divisionSplitLabel(eventModal.commission_percent)}
+                  </span>
+                </div>
+              )}
+            </div>
             <label className="flex items-center gap-2 text-sm text-slate-300">
               <input type="checkbox" checked={!!eventModal.paid_to_musicians} className="accent-indigo-500"
                 onChange={(e) => setEventModal({ ...eventModal, paid_to_musicians: e.target.checked ? 1 : 0 })} />
