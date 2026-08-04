@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { del, post, put, nis } from '../../api';
-import { Card, Combobox, DataTable, EditableCell, Empty, SearchInput, YearSelect, textMatch } from '../../ui';
-import { eventLabel, type TabProps } from './shared';
+import { Card, Combobox, DataTable, EditableCell, Empty, PeriodSelect, SearchInput, textMatch } from '../../ui';
+import { eventLabel, type PeriodTabProps } from './shared';
 
 /** The cost lines of a show, in table order. `paid` marks the ones settled separately. */
 const COLUMNS: Array<{ key: string; label: string; paid?: boolean }> = [
@@ -21,11 +21,9 @@ const COLUMNS: Array<{ key: string; label: string; paid?: boolean }> = [
 
 const rowTotal = (row: any) => COLUMNS.reduce((sum, c) => sum + (Number(row[c.key]) || 0), 0);
 
-interface Props extends TabProps {
+interface Props extends PeriodTabProps {
   expenses: any[];
   events: any[];
-  year: number | '';
-  onYearChange: (year: number | '') => void;
 }
 
 /**
@@ -41,7 +39,7 @@ interface Props extends TabProps {
  * linked name their show in prose, and the ones that could not be matched automatically are
  * attached by hand — which is also how a row filed against the wrong show gets moved.
  */
-export function EventExpensesTab({ expenses, events, year, onYearChange, isOwner, onError, reload }: Props) {
+export function EventExpensesTab({ expenses, events, period, isOwner, onError, reload }: Props) {
   const [search, setSearch] = useState('');
 
   const saveField = async (id: string, patch: Record<string, any>) => {
@@ -81,7 +79,8 @@ export function EventExpensesTab({ expenses, events, year, onYearChange, isOwner
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <h2 className="font-bold">הוצאות הופעות</h2>
-          <YearSelect value={year} onChange={onYearChange} />
+          <PeriodSelect year={period.year} month={period.month}
+            onYearChange={period.setYear} onMonthChange={period.setMonth} />
         </div>
         <p className="text-xs text-slate-500">שם ההופעה מגיע מטבלת ההכנסות · הסכומים כאן מזינים את «הוצאות» ו«רווח»</p>
       </div>

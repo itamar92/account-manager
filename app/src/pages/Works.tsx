@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
-import { Button, Card, Input, Modal, StatusBadge, DataTable, Empty, SearchInput, YearSelect, textMatch } from '../ui';
+import { Button, Card, Input, Modal, StatusBadge, DataTable, Empty, PeriodSelect, SearchInput, textMatch, usePeriodFilter } from '../ui';
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
@@ -9,7 +9,7 @@ export function Works() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [statusFilter, setStatusFilter] = useState('');
   // Lists open on the year you are working in; older years are a deliberate step back.
-  const [year, setYear] = useState<number | ''>(new Date().getFullYear());
+  const period = usePeriodFilter();
   const [searchParams] = useSearchParams();
   const [clientFilter, setClientFilter] = useState(searchParams.get('client') || '');
   const [search, setSearch] = useState('');
@@ -23,13 +23,12 @@ export function Works() {
   const navigate = useNavigate();
 
   const load = () => {
-    const qs = new URLSearchParams();
+    const qs = period.params();
     if (statusFilter) qs.set('status', statusFilter);
     if (clientFilter) qs.set('client_id', clientFilter);
-    if (year !== '') qs.set('year', String(year));
     get(`/works?${qs}`).then((d) => setWorks(d.works)).catch((e) => setError(e.message));
   };
-  useEffect(() => { load(); setSelected(new Set()); }, [statusFilter, clientFilter, year]);
+  useEffect(() => { load(); setSelected(new Set()); }, [statusFilter, clientFilter, period.year, period.month]);
   useEffect(() => { get('/clients').then((d) => setClients(d.clients)); }, []);
 
   const toggle = (w: any) => {
@@ -174,7 +173,8 @@ export function Works() {
           <option value="invoiced">בחשבונית</option>
           <option value="paid">שולם</option>
         </select>
-        <YearSelect value={year} onChange={setYear} />
+        <PeriodSelect year={period.year} month={period.month}
+          onYearChange={period.setYear} onMonthChange={period.setMonth} />
         <SearchInput value={search} onChange={setSearch} placeholder="חיפוש בפירוט או בלקוח…" className="flex-1 min-w-[10rem] sm:max-w-xs" />
       </div>
 

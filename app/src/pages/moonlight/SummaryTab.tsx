@@ -1,16 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, nis } from '../../api';
-import { Button, Card, Empty, Input, StatCard, YearSelect } from '../../ui';
-import { MEMBERS, PAYMENT_STATUS_STYLES, paymentStatusLabel, roleName } from './shared';
+import { Button, Card, Empty, Input, MonthSelect, StatCard, YearSelect } from '../../ui';
+import { PAYMENT_STATUS_STYLES, paymentStatusLabel, roleName } from './shared';
+import { DivisionTable } from './DivisionTable';
 
 const yearBounds = (year: number) => ({ from: `${year}-01-01`, to: `${year}-12-31` });
 
-const DIVISION_TOOLTIP =
-  'איך זה מחושב: לכל הופעה שעדיין לא סומנה «שולם לנגנים» נלקח הרווח (הכנסה לפני מע״מ פחות '
-  + 'הוצאות ההופעה), מחולק לפי כללי החלוקה של אותה הופעה (עם או בלי דמי הפקה, או חלוקה ידנית). '
-  + 'הסכום המוצג לכל חבר הוא סך החלקים האלה — כלומר מה שעוד מגיע לו ולא חולק. '
-  + 'הופעות שסומנו «שולם לנגנים» לא נספרות.';
+/** The bounds of one month, for narrowing the summary to a single period. */
+const monthBounds = (year: number, month: number) => {
+  const mm = String(month).padStart(2, '0');
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return { from: `${year}-${mm}-01`, to: `${year}-${mm}-${lastDay}` };
+};
 
 /**
  * Moonlight's own dashboard: the statistics over any span, the money still coming to each
@@ -23,13 +25,16 @@ const DIVISION_TOOLTIP =
 export function SummaryTab({ onError }: { onError: (message: string) => void }) {
   const thisYear = new Date().getFullYear();
   const [range, setRange] = useState(yearBounds(thisYear));
+  const [month, setMonth] = useState<number | ''>('');
   const [custom, setCustom] = useState(false);
   const [summary, setSummary] = useState<any>(null);
+  const [division, setDivision] = useState<any>(null);
   const [followUps, setFollowUps] = useState<any>(null);
 
   useEffect(() => {
     const qs = new URLSearchParams({ from: range.from, to: range.to });
     get(`/moonlight/summary?${qs}`).then((d) => setSummary(d.summary)).catch((e) => onError(e.message));
+    get(`/moonlight/division?${qs}`).then((d) => setDivision(d.division)).catch((e) => onError(e.message));
   }, [range.from, range.to]);
 
   // The follow-ups are not range-bound: an unpaid show is a loose end whatever year it is in.
@@ -42,7 +47,15 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
     ? parseInt(range.from.slice(0, 4), 10)
     : '';
 
-  const division = summary?.unpaidDivision;
+  const setPeriod = (year: number | '', nextMonth: number | '') => {
+    setCustom(false);
+    setMonth(year === '' ? '' : nextMonth);
+    setRange(
+      year === '' ? { from: '2000-01-01', to: '2099-12-31' }
+        : nextMonth === '' ? yearBounds(year)
+        : monthBounds(year, nextMonth)
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -50,10 +63,14 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
         <div className="flex flex-wrap items-end gap-3">
           <div>
             <span className="block text-sm text-slate-400 mb-1">טווח תאריכים</span>
-            <YearSelect value={selectedYear} onChange={(year) => {
-              setCustom(false);
-              setRange(year === '' ? { from: '2000-01-01', to: '2099-12-31' } : yearBounds(year));
-            }} />
+            <div className="flex gap-2">
+              <YearSelect value={selectedYear} onChange={(year) => setPeriod(year, month)} />
+              <MonthSelect
+                value={selectedYear === '' ? '' : month}
+                disabled={selectedYear === ''}
+                onChange={(next) => setPeriod(selectedYear, next)}
+              />
+            </div>
           </div>
           <Button variant="ghost" onClick={() => setCustom(!custom)}>
             {custom ? 'לפי שנה' : 'טווח מותאם'}
@@ -80,29 +97,7 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
               sub={`מתוכן מהקופה ${nis(summary.fundExpenses)}`} />
           </div>
 
-          <Card>
-            <div className="flex items-center gap-2 mb-1">
-              <h2 className="font-bold">חלוקה לחברי הלהקה — הופעות שטרם שולמו</h2>
-              <span
-                title={DIVISION_TOOLTIP}
-                className="cursor-help text-slate-500 border border-slate-700 rounded-full w-5 h-5 inline-flex items-center justify-center text-xs"
-              >
-                ?
-              </span>
-            </div>
-            <p className="text-xs text-slate-500 mb-4">
-              רק חלקי הרווח מהופעות שעדיין לא סומנו «שולם לנגנים» —
-              {' '}{division?.count ?? 0} הופעות, רווח {nis(division?.profit)} בטווח הנבחר
-            </p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {MEMBERS.map((m) => (
-                <div key={m.key} className="bg-slate-800/50 rounded-xl p-4 text-center">
-                  <div className="text-sm text-slate-400">{m.name}</div>
-                  <div className="text-xl font-bold text-indigo-300">{nis(division?.[m.key])}</div>
-                </div>
-              ))}
-            </div>
-          </Card>
+          <DivisionTable division={division} />
 
           {/* The loose ends: money that has not come in, suppliers who have not been paid,
               and upcoming shows with nobody staffed. */}

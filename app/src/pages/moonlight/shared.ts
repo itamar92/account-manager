@@ -1,3 +1,5 @@
+import type { PeriodFilter } from '../../ui';
+
 /** The band, in the order the tables and the summary show them. */
 export const MEMBERS = [
   { key: 'amir', name: 'אמיר' },
@@ -8,6 +10,22 @@ export const MEMBERS = [
 
 /** Who a general expense can have been paid by: any member, or the band's own float. */
 export const PAYERS = [...MEMBERS.map((m) => m.name), 'קופה'];
+
+/** The producer fee a new show starts with — matches the server's default. 20% is 30/30/20/20. */
+export const DEFAULT_COMMISSION_PERCENT = 20;
+
+/**
+ * What a producer-fee percentage works out to per member, for showing beside the input.
+ * Mirrors computeDivision on the server: half the fee to each of אמיר and איתמר, and the rest
+ * split four ways.
+ */
+export function divisionSplitLabel(percent: unknown): string {
+  const rate = Math.min(100, Math.max(0, Number(percent) || 0)) / 100;
+  const even = ((1 - rate) / 4) * 100;
+  const lead = (rate / 2) * 100 + even;
+  const round = (n: number) => Math.round(n * 10) / 10;
+  return `${round(lead)}/${round(lead)}/${round(even)}/${round(even)}`;
+}
 
 /** Mirrors eventLabel on the server, for labelling shows in dropdowns before a save. */
 export function eventLabel(event: { venue: string; date: string }): string {
@@ -50,4 +68,9 @@ export interface TabProps {
   isOwner: boolean;
   onError: (message: string) => void;
   reload: () => void;
+}
+
+/** The tabs that show a table share the shell's period filter and its selects. */
+export interface PeriodTabProps extends TabProps {
+  period: PeriodFilter;
 }

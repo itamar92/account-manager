@@ -65,22 +65,68 @@ export function expenseOutstanding(row: any): number {
   return round2(expenseTotal(row) - expensePaidTotal(row));
 }
 
+/**
+ * The band, and the names the tables record them under.
+ *
+ * `paid_by` on a general expense holds one of these names or the fund's, which is how a cost
+ * a member covered out of their own pocket is told from one the band's own float paid for —
+ * the two are settled in opposite directions when the money is divided up.
+ */
+export const BAND_MEMBERS = [
+  { key: 'amir', name: 'אמיר' },
+  { key: 'itamar', name: 'איתמר' },
+  { key: 'yuval', name: 'יובל' },
+  { key: 'guy', name: 'גיא' },
+] as const;
+
+export type MemberKey = (typeof BAND_MEMBERS)[number]['key'];
+
+/** The band's own float — an expense it paid is one everybody shares. */
+export const FUND_PAYER = 'קופה';
+
+/** Which member a `paid_by` names, or null when it names the fund or nobody recognisable. */
+export function memberByName(name: unknown): MemberKey | null {
+  const trimmed = String(name ?? '').trim();
+  return BAND_MEMBERS.find((m) => m.name === trimmed)?.key ?? null;
+}
+
 export interface Division { amir: number; itamar: number; yuval: number; guy: number; commission_amount: number }
+
+/**
+ * The producer fee a show takes off the top by default, as a percentage of its profit, when
+ * nothing else is said. 20% nets 30/30/20/20 — the split the band settled on.
+ */
+export const DEFAULT_COMMISSION_PERCENT = 20;
+
+/** A show's fee percentage, clamped to something a percentage can be. */
+export function normalizeCommissionPercent(value: unknown): number {
+  const percent = Number(value);
+  if (!Number.isFinite(percent)) return DEFAULT_COMMISSION_PERCENT;
+  return Math.min(100, Math.max(0, round2(percent)));
+}
 
 /**
  * Splits a show's profit four ways.
  *
- * With the producer fee on, the first 40% is the fee — 20% to איתמר and 20% to אמיר — and the
- * remaining 60% is shared equally by all four, which nets 35/35/15/15. With it off it is a
- * plain quarter each. The rounding remainder lands on איתמר so the four shares always add up
- * to the profit exactly; without that the summary drifts by agorot per show.
+ * With the producer fee on, `percent` of the profit is the fee and goes to איתמר and אמיר in
+ * equal halves; the rest is shared equally by all four. The percentage is the *whole* fee, so
+ * 20% nets 30/30/20/20 and 40% nets 35/35/15/15 — it is per show, because what the fee is worth
+ * is a decision about that show. With the fee off it is a plain quarter each.
+ *
+ * The rounding remainder lands on איתמר so the four shares always add up to the profit exactly;
+ * without that the summary drifts by agorot per show.
  */
-export function computeDivision(profit: number, hasProducerFee: boolean): Division {
+export function computeDivision(
+  profit: number,
+  hasProducerFee: boolean,
+  percent: number = DEFAULT_COMMISSION_PERCENT
+): Division {
   const total = round2(Number(profit) || 0);
-  if (hasProducerFee) {
-    const fee = round2(total * 0.2);
-    const even = round2((total * 0.6) / 4);
-    const amir = round2(fee + even);
+  const rate = normalizeCommissionPercent(percent) / 100;
+  if (hasProducerFee && rate > 0) {
+    const half = round2((total * rate) / 2);
+    const even = round2((total * (1 - rate)) / 4);
+    const amir = round2(half + even);
     const yuval = even;
     const guy = even;
     return {
@@ -88,7 +134,7 @@ export function computeDivision(profit: number, hasProducerFee: boolean): Divisi
       itamar: round2(total - amir - yuval - guy),
       yuval,
       guy,
-      commission_amount: round2(total * 0.4),
+      commission_amount: round2(total * rate),
     };
   }
   const even = round2(total / 4);
@@ -158,7 +204,7 @@ export const recomputeEvent = db.transaction((eventId: string) => {
     db.prepare('UPDATE band_events SET expenses = ?, expenses_paid = ?, profit = ? WHERE id = ?')
       .run(expenses, expensesPaid, profit, eventId);
   } else {
-    const d = computeDivision(profit, !!event.has_commission);
+    const d = computeDivision(profit, !!event.has_commission, event.commission_percent);
     db.prepare(
       `UPDATE band_events SET expenses = ?, expenses_paid = ?, profit = ?,
          amir = ?, itamar = ?, yuval = ?, guy = ?, commission_amount = ?
@@ -271,6 +317,7 @@ export const deleteEventCascade = db.transaction(
  */
 export function backfillMoonlight() {
   const firstRun = getSetting('moonlight_backfill_v1', '') !== 'done';
+  const commissionDone = getSetting('moonlight_commission_percent_v1', '') === 'done';
 
   db.transaction(() => {
     // Adopt the free-text labels as real links, where they are unambiguous.
@@ -321,6 +368,18 @@ export function backfillMoonlight() {
       }
     }
 
+    // The producer fee used to be a fixed 40% of the profit for every show that had one; it is
+    // now per show, defaulting to the 20% that nets 30/30/20/20. A show whose profit has
+    // already been handed out was divided under the old figure, so it keeps it: the boot
+    // recompute below would otherwise silently re-divide money that has already changed hands,
+    // and the percentage on the row would no longer explain the shares beside it. Everything
+    // still open takes the new default, which is the point of changing it.
+    if (!commissionDone) {
+      db.prepare(
+        'UPDATE band_events SET commission_percent = 40 WHERE paid_to_musicians = 1 AND has_commission = 1'
+      ).run();
+    }
+
     for (const event of events) ensureExpenseRow(event, true);
   })();
 
@@ -328,4 +387,5 @@ export function backfillMoonlight() {
   for (const event of db.prepare('SELECT * FROM band_events').all() as any[]) recomputeEvent(event.id);
 
   if (firstRun) setSetting('moonlight_backfill_v1', 'done');
+  if (!commissionDone) setSetting('moonlight_commission_percent_v1', 'done');
 }

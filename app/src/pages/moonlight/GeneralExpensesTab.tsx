@@ -1,13 +1,11 @@
 import React, { useState } from 'react';
 import { del, post, put, nis } from '../../api';
-import { Button, Card, Combobox, DataTable, EditableCell, Empty, Input, Modal, SearchInput, YearSelect, textMatch } from '../../ui';
-import { PAYERS, eventLabel, type TabProps } from './shared';
+import { Button, Card, Combobox, DataTable, EditableCell, Empty, Input, Modal, PeriodSelect, SearchInput, textMatch } from '../../ui';
+import { PAYERS, eventLabel, type PeriodTabProps } from './shared';
 
-interface Props extends TabProps {
+interface Props extends PeriodTabProps {
   expenses: any[];
   events: any[];
-  year: number | '';
-  onYearChange: (year: number | '') => void;
 }
 
 const emptyForm = {
@@ -20,7 +18,7 @@ const emptyForm = {
 };
 
 /** Costs that belong to the band rather than to one show — though they can be assigned to one. */
-export function GeneralExpensesTab({ expenses, events, year, onYearChange, isOwner, onError, reload }: Props) {
+export function GeneralExpensesTab({ expenses, events, period, isOwner, onError, reload }: Props) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [search, setSearch] = useState('');
@@ -68,7 +66,8 @@ export function GeneralExpensesTab({ expenses, events, year, onYearChange, isOwn
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-2">
           <h2 className="font-bold">הוצאות כלליות</h2>
-          <YearSelect value={year} onChange={onYearChange} />
+          <PeriodSelect year={period.year} month={period.month}
+            onYearChange={period.setYear} onMonthChange={period.setMonth} />
         </div>
         {isOwner && <Button onClick={() => setOpen(true)}>+ הוצאה</Button>}
       </div>

@@ -2,13 +2,13 @@ import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { get, post, put, nis } from '../api';
 import { useAuth } from '../AuthContext';
-import { Button, Input, Modal } from '../ui';
+import { Button, Input, Modal, usePeriodFilter } from '../ui';
 import { IncomeTab } from './moonlight/IncomeTab';
 import { EventExpensesTab } from './moonlight/EventExpensesTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
 import { AssignmentsTab } from './moonlight/AssignmentsTab';
-import { MEMBERS } from './moonlight/shared';
+import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
 
 type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses';
 
@@ -24,8 +24,8 @@ export function Moonlight() {
   const { user } = useAuth();
   const isOwner = user?.role === 'owner';
   const [tab, setTab] = useState<Tab>('summary');
-  // The tables show the year you are working in; the summary keeps its own, wider range.
-  const [year, setYear] = useState<number | ''>(new Date().getFullYear());
+  // The tables show the period you are working in; the summary keeps its own, wider range.
+  const period = usePeriodFilter();
   const [events, setEvents] = useState<any[]>([]);
   const [eventExpenses, setEventExpenses] = useState<any[]>([]);
   const [generalExpenses, setGeneralExpenses] = useState<any[]>([]);
@@ -34,14 +34,15 @@ export function Moonlight() {
   const [eventModal, setEventModal] = useState<any | null>(null);
 
   const load = () => {
-    const qs = year === '' ? '' : `?year=${year}`;
+    const query = period.params().toString();
+    const qs = query ? `?${query}` : '';
     get(`/moonlight/events${qs}`).then((d) => setEvents(d.events)).catch((e) => setError(e.message));
     get(`/moonlight/event-expenses${qs}`).then((d) => setEventExpenses(d.expenses)).catch((e) => setError(e.message));
     get(`/moonlight/general-expenses${qs}`).then((d) => setGeneralExpenses(d.expenses)).catch((e) => setError(e.message));
     // Unfiltered, so an expense can still be assigned to a show from another year.
     get('/moonlight/events').then((d) => setAllEvents(d.events)).catch(() => {});
   };
-  useEffect(load, [year]);
+  useEffect(load, [period.year, period.month]);
 
   const saveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,23 +83,22 @@ export function Moonlight() {
         <IncomeTab
           {...tabProps}
           events={events}
-          year={year}
-          onYearChange={setYear}
-          onNewEvent={() => setEventModal({ venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1 })}
+          period={period}
+          onNewEvent={() => setEventModal({ venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1, commission_percent: DEFAULT_COMMISSION_PERCENT })}
           onEditEvent={setEventModal}
         />
       )}
 
       {tab === 'assignments' && (
-        <AssignmentsTab {...tabProps} year={year} onYearChange={setYear} />
+        <AssignmentsTab {...tabProps} period={period} />
       )}
 
       {tab === 'eventExpenses' && (
-        <EventExpensesTab {...tabProps} expenses={eventExpenses} events={allEvents} year={year} onYearChange={setYear} />
+        <EventExpensesTab {...tabProps} expenses={eventExpenses} events={allEvents} period={period} />
       )}
 
       {tab === 'generalExpenses' && (
-        <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} year={year} onYearChange={setYear} />
+        <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} period={period} />
       )}
 
       <Modal title={eventModal?.id ? 'עריכת הופעה' : 'הופעה חדשה'} open={!!eventModal} onClose={() => setEventModal(null)}>
@@ -116,11 +116,24 @@ export function Moonlight() {
               <Input label='כולל מע"מ' type="number" step="0.01" value={eventModal.amount_with_vat}
                 onChange={(e) => setEventModal({ ...eventModal, amount_with_vat: parseFloat(e.target.value) || 0 })} />
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input type="checkbox" checked={!!eventModal.has_commission} className="accent-indigo-500"
-                onChange={(e) => setEventModal({ ...eventModal, has_commission: e.target.checked ? 1 : 0 })} />
-              דמי הפקה (40% ראשונים לאיתמר ואמיר, השאר בחלוקה שווה)
-            </label>
+            <div className="space-y-2">
+              <label className="flex items-center gap-2 text-sm text-slate-300">
+                <input type="checkbox" checked={!!eventModal.has_commission} className="accent-indigo-500"
+                  onChange={(e) => setEventModal({ ...eventModal, has_commission: e.target.checked ? 1 : 0 })} />
+                דמי הפקה — לאיתמר ולאמיר בחלקים שווים, והשאר בחלוקה שווה בין כולם
+              </label>
+              {/* The percentage only means anything with the fee on, so it appears with it. */}
+              {!!eventModal.has_commission && (
+                <div className="flex items-end gap-3 pr-6">
+                  <Input label="אחוז דמי הפקה" type="number" step="1" min="0" max="100"
+                    value={eventModal.commission_percent}
+                    onChange={(e) => setEventModal({ ...eventModal, commission_percent: e.target.value })} />
+                  <span className="text-xs text-slate-500 pb-2.5 whitespace-nowrap">
+                    יוצא {divisionSplitLabel(eventModal.commission_percent)}
+                  </span>
+                </div>
+              )}
+            </div>
             <label className="flex items-center gap-2 text-sm text-slate-300">
               <input type="checkbox" checked={!!eventModal.paid_to_musicians} className="accent-indigo-500"
                 onChange={(e) => setEventModal({ ...eventModal, paid_to_musicians: e.target.checked ? 1 : 0 })} />

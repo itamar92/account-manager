@@ -122,21 +122,48 @@ export async function getDocument(id: string): Promise<MorningDocument> {
 }
 
 /**
+ * The סיווג an expense is filed under — what Morning's own UI calls the expense type, and
+ * what its API returns as an `accountingClassification`.
+ *
+ * It comes back as an **object**, and the human-readable name is in `title`. Reading it as
+ * a scalar is what put "[object Object]" in the category column. Older or partial payloads
+ * have also sent a bare id, so both are accepted and the scalar is looked up in the
+ * classifications map.
+ */
+export interface MorningClassification {
+  id?: number | string;
+  key?: string;
+  code?: number | string;
+  title?: string;
+  name?: string;
+}
+
+/**
  * An expense (הוצאה) — a document received from a supplier, as Morning returns it.
  *
- * Its shape is looser than a document's: the date arrives as `documentDate` or `date`,
- * the supplier as an object or as a bare name, and the category either already resolved
- * or as the id of an accounting classification. Every alternative is optional here so the
- * mapper can read whichever the account actually sends.
+ * Its shape is looser than a document's: the date arrives as `documentDate` or `date`, the
+ * supplier as an object or as a bare name. Every alternative is optional here so the mapper
+ * can read whichever the account actually sends.
+ *
+ * Two fields differ from an issued document's and are easy to get wrong:
+ * - the document type is `documentType`, not `type` (it carries the same 300/305/320/400
+ *   codes as issued documents, not a status-style enum);
+ * - `status` is 10 = open, 20 = reported to the accountant and locked in Morning. Some
+ *   payloads express the same fact as a `reported` boolean, which is why the search filter
+ *   is spelled that way, so both are read.
  */
 export interface MorningExpense {
   id: string;
   number?: string;
-  type?: number; // same document-type codes as issued documents (320 = חשבונית מס …)
+  documentType?: number | string;
+  /** Legacy/alternate spelling of `documentType`; read only as a fallback. */
+  type?: number | string;
   documentDate?: string; // YYYY-MM-DD
   date?: string;
   paymentDate?: string | null;
-  status?: number; // 10 = open, 20 = reported to the accountant (locked in Morning)
+  /** 10 = open, 20 = reported. Sent as a number, but tolerated as a numeric string. */
+  status?: number | string;
+  reported?: boolean;
   amount?: number;
   vat?: number;
   amountTotal?: number;
@@ -144,8 +171,8 @@ export interface MorningExpense {
   currencyRate?: number;
   supplier?: { id?: string; name?: string; taxId?: string };
   supplierName?: string;
-  accountingClassification?: number | string;
-  category?: string;
+  accountingClassification?: MorningClassification | number | string;
+  category?: MorningClassification | string;
   description?: string;
   remarks?: string;
 }
@@ -195,12 +222,21 @@ export async function expenseClassifications(): Promise<Map<string, string>> {
     map.set(String(id), String(name));
   };
 
+  // A classification names itself with `title`; `name`/`label` are read too, since this map
+  // has changed shape before and the cost of accepting all three is nothing.
+  const nameOf = (value: any) => value?.title ?? value?.name ?? value?.label;
+
   const items = Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : null;
   if (items) {
-    for (const item of items) add(item?.id ?? item?.value ?? item?.code, item?.name ?? item?.label);
+    for (const item of items) {
+      const name = nameOf(item);
+      // Indexed under every key an expense might refer to it by, so the lookup works
+      // whichever of them the expense carries.
+      for (const key of [item?.id, item?.key, item?.value, item?.code]) add(key, name);
+    }
   } else if (body && typeof body === 'object') {
     for (const [id, value] of Object.entries(body)) {
-      add(id, typeof value === 'string' ? value : (value as any)?.name ?? (value as any)?.label);
+      add(id, typeof value === 'string' ? value : nameOf(value));
     }
   }
   return map;

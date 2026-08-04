@@ -309,7 +309,20 @@ addColumnIfMissing('band_general_expenses', 'event_id', 'TEXT');
 addColumnIfMissing('band_events', 'venue_locked', 'INTEGER NOT NULL DEFAULT 0');
 // The show's calendar guest list, as a JSON array of emails — what the staffing matcher reads.
 addColumnIfMissing('band_events', 'attendees', 'TEXT');
+// What the producer fee is worth on this show, as a percentage of its profit. Per show,
+// because that is a decision about the show; 20 (the default) nets the band's 30/30/20/20.
+addColumnIfMissing('band_events', 'commission_percent', 'REAL NOT NULL DEFAULT 20');
 addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
+// The Morning payload a synced expense was mapped from. Kept so a field Morning spells
+// differently than expected can be seen in the data instead of guessed at — reading the
+// classification object as a scalar once wrote "[object Object]" into every category, and
+// there was nothing stored to diagnose it from.
+addColumnIfMissing('expenses', 'raw', 'TEXT');
+
+// That bad value is cleared here rather than left for the next sync: the sync only refreshes
+// its own window (90 days by default), so anything older would keep a category that is not a
+// category, in the list and in the filter. Cleared rows read as ללא סיווג until re-synced.
+db.prepare("UPDATE expenses SET category = NULL WHERE category = '[object Object]'").run();
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing

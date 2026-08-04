@@ -510,6 +510,81 @@ export function YearSelect({ value, onChange, label, allowAll = true }: {
   );
 }
 
+const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+  'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+
+/**
+ * Narrows a year down to one month. `''` is the whole year, which is what every list opens on.
+ *
+ * It is disabled without a year, because a month on its own is not a period — the server
+ * ignores one sent without a year, and the control says so rather than looking broken.
+ */
+export function MonthSelect({ value, onChange, disabled, label }: {
+  value: number | '';
+  onChange: (value: number | '') => void;
+  disabled?: boolean;
+  label?: string;
+}) {
+  return (
+    <select
+      aria-label={label || 'חודש'}
+      value={value === '' ? '' : String(value)}
+      disabled={disabled}
+      title={disabled ? 'בחרו שנה כדי לסנן לפי חודש' : undefined}
+      onChange={(e) => onChange(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+      className={clsx(selectClass, 'disabled:opacity-40 disabled:cursor-not-allowed')}
+    >
+      <option value="">כל החודשים</option>
+      {MONTHS.map((name, i) => (
+        <option key={name} value={i + 1}>{name}</option>
+      ))}
+    </select>
+  );
+}
+
+/**
+ * The year+month pair the lists filter by, and the query string they send. Kept here so every
+ * table filters the same way and the server sees one shape.
+ */
+export function usePeriodFilter(initialYear: number | '' = new Date().getFullYear()) {
+  const [year, setYear] = React.useState<number | ''>(initialYear);
+  const [month, setMonth] = React.useState<number | ''>('');
+
+  // A month belongs to a year; dropping to "all years" leaves it pointing at nothing.
+  const changeYear = (next: number | '') => {
+    setYear(next);
+    if (next === '') setMonth('');
+  };
+
+  const params = () => {
+    const qs = new URLSearchParams();
+    if (year !== '') qs.set('year', String(year));
+    if (year !== '' && month !== '') qs.set('month', String(month));
+    return qs;
+  };
+
+  return { year, month, setYear: changeYear, setMonth, params };
+}
+
+/** What a page holding a period filter passes down to the tables that share it. */
+export type PeriodFilter = ReturnType<typeof usePeriodFilter>;
+
+/** The two selects together, in the order every filter bar shows them. */
+export function PeriodSelect({ year, month, onYearChange, onMonthChange, allowAll = true }: {
+  year: number | '';
+  month: number | '';
+  onYearChange: (value: number | '') => void;
+  onMonthChange: (value: number | '') => void;
+  allowAll?: boolean;
+}) {
+  return (
+    <>
+      <YearSelect value={year} onChange={onYearChange} allowAll={allowAll} />
+      <MonthSelect value={month} onChange={onMonthChange} disabled={year === ''} />
+    </>
+  );
+}
+
 export interface ComboOption { value: string; label: string }
 
 /**

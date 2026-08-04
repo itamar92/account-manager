@@ -155,6 +155,55 @@ set in **Settings → דוחות מס** (2.25 by default).
 | `GET /api/reports/income-tax?year=` | monthly P&L, expenses by classification, tax estimate and projection |
 | `PUT /api/reports/filings/:kind/:periodKey` | tick a period `{filed?, paid?, amount?, reference?, notes?}` — `:kind` is `vat` or `income_tax` |
 
+### Filtering by period
+
+Every dated list — works, invoices, expenses and all four Moonlight tabs — filters by year and,
+within it, by a single month. A month is only meaningful inside a year, so the month select is
+disabled while the year is "כל השנים" and the server ignores a month sent without one: "March"
+of no particular year is not a period. Both selects go through one `dateRange` on the server, so
+every list narrows the same way and there is one place where a period is turned into dates.
+
+### Moonlight — how the division is worked out
+
+The band's summary shows what each member is owed **and how that figure was reached**, laid out
+in the three steps their spreadsheet has always used, because the point is that the total can be
+checked rather than trusted:
+
+1. every show not yet marked «שולם לנגנים» contributes its per-member share of the profit;
+2. **plus** a general expense a member paid out of their own pocket, added back to them in full —
+   that is a refund, not a share of anything;
+3. **minus** an equal part of what the band's float (קופה) covered, since everybody bore it.
+
+`paid` on a general expense is what settled means here — the moonlight migration set it from the
+sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/moonlight/division`
+returns each step with the rows behind it.
+
+The card always shows two figures per member: **חלק ברווח**, their share once the shared costs
+are off but before any refund, and **סה״כ לתשלום**, the same plus what they fronted. They are
+separate because a refund is the band handing someone their own money back rather than a share of
+anything — counted in, one member looks like they earned more than the rest, and the line that
+says how the shows actually went for everybody disappears.
+
+**איך זה מחושב?** opens the whole working — every show with its shares, each adjustment, and the
+list of exactly which expenses were refunded and which the float paid — so no figure is
+unaccounted for. The shared costs come off before the refunds go back on, so both of the figures
+on the card appear in the working as lines of it.
+
+### Moonlight — the producer fee
+
+`computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, going to
+איתמר and אמיר in equal halves, and the rest is shared equally by all four. The percentage is the
+**whole** fee, so 20% nets 30/30/20/20 and 40% nets 35/35/15/15. It is stored per show, because
+what the fee is worth is a decision about that show, and it is editable both in the show dialog
+and inline in the income table beside the דמי הפקה tick. With the fee off (or at 0%) it is a plain
+quarter each; a row set to manual keeps whatever was typed on it.
+
+The default is **20% (30/30/20/20)**. It was a fixed 40% before, so a one-time migration stamps
+`commission_percent = 40` on shows already marked «שולם לנגנים» — their profit has changed hands
+under the old figure, and the boot recompute would otherwise silently re-divide it while leaving
+the percentage on the row unable to explain the shares beside it. Every show still open takes the
+new default, which is the point of changing it.
+
 ### Document types and revenue
 
 A single sale usually produces two documents in Morning: a **חשבון עסקה (300)** when the
@@ -182,7 +231,11 @@ a missing credential is visible rather than silent.
 ### Morning (Green Invoice)
 
 - **Pull** — `POST /api/integrations/morning/sync` fetches documents from the last N days
-  (default 90) and upserts them on the Morning document id, so re-running is safe. Local
+  and upserts them on the Morning document id, so re-running is safe. N is
+  **טווח סנכרון מ-Morning (ימים)** in Settings → כללי, 90 by default and bounded to 1–1825:
+  a zero or negative window would ask Morning for a range that ends before it starts and
+  quietly sync nothing. Because a sync refreshes every row it finds in full, widening the
+  range and re-syncing is how rows pulled by an earlier version get corrected. Local
   financial edits are preserved; only status, dates and totals are refreshed. Revenue
   documents get a work row per income line, and one placeholder work when Morning returns
   no line detail. VAT comes from the document when present, and is otherwise backed out of
@@ -192,6 +245,34 @@ a missing credential is visible rather than silent.
   the הוצאות page's own button calls). They are upserted on the Morning expense id into
   the `expenses` table and refreshed in full on every run: nothing about an expense is
   edited here, so a category or amount corrected in Morning is meant to arrive.
+
+  **An expense does not have quite the shape of an issued document**, and two fields are
+  easy to get wrong — both did, and both showed up in the table:
+
+  | Field | Expense | Issued document |
+  |-------|---------|-----------------|
+  | document type | `documentType` | `type` |
+  | סיווג / expense type | `accountingClassification`, an **object** named by `title` | — |
+  | reported | `status` — 10 open, 20 reported (some payloads say `reported: true`) | `status` — 0 open, 1 closed |
+
+  Reading the classification as a scalar is what wrote **`[object Object]`** into every
+  category; reading the document type from `type` left the מסמך column without its label.
+  The classification's own `title` is preferred, a bare id is resolved through the
+  account's classifications map, and anything that names itself nowhere is left null so the
+  row lands under **ללא סיווג** — findable — rather than under a number that means nothing.
+  The reported flag is read from either spelling, and the status is compared after numeric
+  coercion, so a payload sending `"20"` as a string does not silently mark everything open.
+
+  Existing rows carrying `[object Object]` are cleared on boot rather than left to the next
+  sync, which only refreshes its own window and would leave older rows with a category that
+  is not a category — in the list and in the filter.
+
+  Each synced row also keeps the Morning payload it was mapped from, in `expenses.raw`
+  (server-side only; it is stripped before the list is sent to the browser). It is there so
+  a field Morning spells differently than expected can be *seen* rather than guessed at.
+  The sync result reports how many expenses came back reported, so the mapping is checkable
+  from the UI: if Morning shows them filed and the count is 0, the flag is arriving
+  somewhere `raw` will show.
 
   Their money is read the other way round from revenue. Morning reports the total in
   `amount` with VAT included, or — on accounts that send `amountTotal` — the total there
