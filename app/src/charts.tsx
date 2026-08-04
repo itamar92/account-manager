@@ -3,6 +3,7 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from 'recharts';
 import { monthLabel, monthName, nis } from './api';
+import { Empty } from './ui';
 
 /**
  * Whether figures count VAT. Profit before VAT is the real one — neither VAT figure is the
@@ -70,6 +71,36 @@ export function IncomeExpenseChart({ rows, basis, height = 'h-72 md:h-80' }: {
           <Bar name="הוצאות" dataKey={keys.expenses} fill={CHART_COLORS.expenses} radius={[6, 6, 0, 0]} maxBarSize={28} />
           <Line name="רווח" type="monotone" dataKey={keys.profit} stroke={CHART_COLORS.profit} strokeWidth={2}
             dot={{ r: 3, fill: CHART_COLORS.profit }} activeDot={{ r: 5 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * Income, expenses and profit per show, oldest first — the same three quantities as the
+ * monthly chart above, broken down by show instead of by month for a closer look at a range.
+ *
+ * The show labels run along the bottom rather than the side: there can be many more shows in a
+ * year than months, so they are angled to stay readable without eating the chart's height.
+ */
+export function PerShowChart({ rows, height = 'h-72 md:h-80' }: { rows: any[]; height?: string }) {
+  if (rows.length === 0) return <Empty text="אין הופעות בטווח הנבחר" />;
+  return (
+    <div className={height} dir="ltr">
+      <ResponsiveContainer>
+        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 32 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+          <XAxis dataKey="label" stroke="#64748b" fontSize={10} angle={-35} textAnchor="end" height={70} />
+          <YAxis stroke="#64748b" fontSize={11} width={64} tickFormatter={(v: number) => nis(v)} />
+          <Tooltip
+            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 12 }}
+            formatter={(v: any, name: any) => [nis(v), name]}
+          />
+          <Legend wrapperStyle={{ fontSize: 12 }} />
+          <Bar name="הכנסות" dataKey="income" fill={CHART_COLORS.income} radius={[6, 6, 0, 0]} maxBarSize={28} />
+          <Bar name="הוצאות" dataKey="expenses" fill={CHART_COLORS.expenses} radius={[6, 6, 0, 0]} maxBarSize={28} />
+          <Bar name="רווח" dataKey="profit" fill={CHART_COLORS.profit} radius={[6, 6, 0, 0]} maxBarSize={28} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
