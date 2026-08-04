@@ -40,8 +40,8 @@ export function DivisionTable({ division }: { division: any }) {
         )}
       </div>
       <p className="text-xs text-slate-500 mb-4">
-        רווח מהופעות שטרם סומנו «שולם לנגנים», פחות חלק שווה בהוצאות ששולמו מהקופה, ועוד החזר
-        למי ששילם מכיסו. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
+        רווח מהופעות שהכסף בגינן התקבל וטרם סומנו «שולם לנגנים», פחות חלק שווה בהוצאות ששולמו
+        מהקופה, ועוד החזר למי ששילם מכיסו. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
       </p>
 
       {/* The two figures worth seeing without asking. They are separate because a refund is the

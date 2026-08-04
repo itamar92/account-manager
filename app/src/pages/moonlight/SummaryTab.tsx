@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, nis } from '../../api';
+import { PerShowChart } from '../../charts';
 import { Button, Card, Empty, Input, MonthSelect, StatCard, YearSelect } from '../../ui';
-import { PAYMENT_STATUS_STYLES, paymentStatusLabel, roleName } from './shared';
+import { MEMBERS, PAYMENT_STATUS_STYLES, paymentStatusLabel, roleName } from './shared';
 import { DivisionTable } from './DivisionTable';
 
 const yearBounds = (year: number) => ({ from: `${year}-01-01`, to: `${year}-12-31` });
@@ -96,6 +97,23 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
             <StatCard label="הוצאות כלליות" value={nis(summary.generalExpenses)} accent="text-rose-400"
               sub={`מתוכן מהקופה ${nis(summary.fundExpenses)}`} />
           </div>
+
+          <Card>
+            <h2 className="font-bold mb-3">רווח כולל לכל אחד בטווח הנבחר</h2>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              {MEMBERS.map((m) => (
+                <div key={m.key} className="bg-slate-800/40 rounded-xl p-3 text-center">
+                  <div className="text-sm text-slate-400">{m.name}</div>
+                  <div className="text-xl font-bold mt-1 text-indigo-300">{nis(summary[m.key])}</div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <h2 className="font-bold mb-3">הכנסות, הוצאות ורווח לפי הופעה</h2>
+            <PerShowChart rows={summary.perShow ?? []} />
+          </Card>
 
           <DivisionTable division={division} />
 

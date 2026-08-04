@@ -19,10 +19,15 @@ export const del = <T = any>(path: string) => api<T>(path, { method: 'DELETE' })
 /**
  * The sign is placed before the ₪ rather than between it and the digits: a loss-making month
  * reads as ־₪1,000 instead of the ₪־1,000 that a bidirectional line turns into nonsense.
+ *
+ * The whole thing is wrapped in an LRI/PDI pair (U+2066/U+2069) so it renders left-to-right as
+ * one block wherever it lands — inside a right-to-left page, an unwrapped "-₪1,000" gets its
+ * minus sign reordered to the far side by the bidi algorithm and reads as "1,000-".
  */
 const shekels = (n: number | null | undefined, options: Intl.NumberFormatOptions) => {
   const value = Number(n) || 0;
-  return `${value < 0 ? '-' : ''}₪${Math.abs(value).toLocaleString('he-IL', options)}`;
+  const sign = value < 0 ? '-' : '';
+  return `⁦${sign}₪${Math.abs(value).toLocaleString('he-IL', options)}⁩`;
 };
 
 export const nis = (n: number | null | undefined) => shekels(n, { maximumFractionDigits: 0 });

@@ -547,9 +547,10 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
     .prepare(`SELECT * FROM band_general_expenses${eventsWhere.sql}`)
     .all(...eventsWhere.params) as any[];
   const sum = (arr: any[], key: string) => round2(arr.reduce((acc, r) => acc + (Number(r[key]) || 0), 0));
-  // The member split is shown for the shows whose profit has not been handed out yet —
-  // "what is still coming to each of us" — so a show marked שולם לנגנים drops out of it.
-  const unsettled = events.filter((e) => !e.paid_to_musicians);
+  // The member split is shown for the shows whose money has come in but has not been handed
+  // out yet — "what is still coming to each of us" — so a show marked שולם לנגנים drops out of
+  // it, and one whose money has not actually arrived yet is not counted as profit either.
+  const unsettled = events.filter((e) => !e.paid_to_musicians && e.payment_status === 'received');
   return {
     unpaidDivision: {
       amir: sum(unsettled, 'amir'),
@@ -570,6 +571,17 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
     generalExpenses: sum(general, 'amount'),
     eventCount: events.length,
     upcomingEvents: events.filter((e) => e.date >= new Date().toISOString().slice(0, 10)).length,
+    // One bar per show, oldest first, for the moonlight dashboard's income/expenses/profit chart.
+    perShow: events
+      .slice()
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map((e) => ({
+        id: e.id,
+        label: eventLabel(e.venue, e.date),
+        income: round2(Number(e.amount_pre_vat) || 0),
+        expenses: round2(Number(e.expenses) || 0),
+        profit: round2(Number(e.profit) || 0),
+      })),
   };
 }
 
@@ -577,7 +589,8 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
  * How the money owed to each member is arrived at, step by step — the three steps the band's
  * own spreadsheet has always laid out, so the final figure can be checked rather than trusted.
  *
- * 1. Every show not yet marked «שולם לנגנים» contributes its per-member share of the profit.
+ * 1. Every show whose money has come in («התקבל») and is not yet marked «שולם לנגנים»
+ *    contributes its per-member share of the profit.
  * 2. A general expense a member paid out of their own pocket is added back to them in full —
  *    it is a refund, not a share of anything.
  * 3. A general expense the band's float (קופה) covered was borne by everybody, so it comes off
@@ -600,9 +613,11 @@ function bandDivision(range: { from?: string; to?: string } = {}) {
   const perMember = (fn: (key: MemberKey) => number) =>
     Object.fromEntries(memberKeys.map((key) => [key, round2(fn(key))])) as Record<MemberKey, number>;
 
-  // Step 1 — shows whose profit has not been handed out yet.
+  // Step 1 — shows whose money has actually come in but whose profit has not been handed
+  // out yet. A show still waiting on payment is not profit to divide, whatever its calculated
+  // share would be.
   const shows = events
-    .filter((e) => !e.paid_to_musicians)
+    .filter((e) => !e.paid_to_musicians && e.payment_status === 'received')
     .map((e) => ({
       id: e.id,
       venue: e.venue,
