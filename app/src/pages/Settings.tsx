@@ -63,6 +63,9 @@ export function Settings() {
           ? `Meta: ${r.campaigns} קמפיינים (${r.from} – ${r.to}) · ${amount(r.spend)} ${r.currency}` +
             `\n· ${r.applied.written} הופעות עודכנו · ${r.applied.unchanged} ללא שינוי` +
             (r.applied.locked ? ` · ${r.applied.locked} עם סכום ידני (לא נדרסו)` : '') +
+            (r.applied.settled
+              ? ` · ${r.applied.settled} שולמו לנגנים (מוקפאות${r.applied.settled_stale ? `, מתוכן ${r.applied.settled_stale} עם הוצאה שגדלה מאז` : ''})`
+              : '') +
             (r.applied.unmapped_campaigns
               ? `\n· ${r.applied.unmapped_campaigns} קמפיינים ללא שיוך להופעה — ${amount(r.applied.unmapped_spend)} ₪ ממתינים לשיוך ב-Moonlight → פרסום`
               : '') +

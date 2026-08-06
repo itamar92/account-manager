@@ -468,6 +468,30 @@ spend on campaigns no show claims is totalled separately (**פרסום לא מש
 always be read against the account's real spend; and `cost_per_ticket` is null rather than 0
 for a show with no ticket count, since dividing by nothing is not a cost of zero.
 
+#### Monthly invoices vs. per-show cost — two different partitions
+
+Ads are billed **monthly**, but a campaign started at the end of a month keeps running into the
+next two. So one campaign lands on two or three invoices, and any one invoice is a slice of
+several campaigns rather than the cost of anything in particular. A campaign spending ₪1,000 in
+October, ₪6,000 in November and ₪6,000 in December cost ₪13,000 and promoted one show.
+
+The page answers both questions separately, because they are not the same partition of the money:
+
+- **עלות פרסום לפי הופעה** — a show's promotion costs what its campaigns cost, whichever months
+  those landed in. This is the figure that says whether a show was worth advertising, and it is
+  what goes in the show's books. Rows show how many monthly invoices the spend spans.
+- **חיוב חודשי מ-Meta** — one row per month, i.e. per invoice, expandable into the campaigns
+  behind it. Each campaign is marked `2/3` for the month you are looking at, with its full cost
+  beside it, so an invoice in hand can be reconciled and it is obvious when more is still coming.
+
+**A show already marked «שולם לנגנים» is frozen**, and this matters precisely because campaigns
+outlive shows. Without it, a campaign still spending in January would raise a December show's
+costs, re-divide its profit, and change what each member is owed for a night whose money has
+already changed hands. Growth after the payout still appears in the monthly breakdown and the
+unattributed totals — it just never rewrites a settled division. Each sync reports how many shows
+it froze and how many of those have in fact moved on (`settled_stale`), and the show's row flags
+it, so this is visible rather than silent.
+
 **Two caveats worth knowing.** Meta's reported `spend` is management reporting, not a tax
 document — the deductible expense stays the Meta invoice that Morning syncs in, and the two
 will differ slightly. And spend arrives in the ad account's own currency: an account not billed
@@ -482,6 +506,7 @@ at all rather than putting dollars in a shekel column.
 | `POST /api/integrations/meta/campaigns/:id/mappings` | map to a show `{event_id, weight?}` |
 | `DELETE /api/integrations/meta/campaigns/:id/mappings/:eventId` | unmap (the show keeps its figure) |
 | `GET /api/moonlight/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
+| `GET /api/moonlight/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
 
 ## External API (`/api/v1`)
 

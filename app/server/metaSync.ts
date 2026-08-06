@@ -201,6 +201,13 @@ export interface ApplyResult {
   unchanged: number;
   /** Shows whose קמפיין was typed by hand, so the sync left it alone. */
   locked: number;
+  /**
+   * Shows already paid out to the musicians, whose costs the sync will not touch even though
+   * the campaign that promoted them has spent more since.
+   */
+  settled: number;
+  /** Of those, the ones where the campaign has in fact moved on — worth knowing about. */
+  settled_stale: number;
   /** Campaigns with spend that no show claims — the ones needing a mapping. */
   unmapped_campaigns: number;
   /** Spend sitting in those unmapped campaigns, in shekels. */
@@ -214,6 +221,15 @@ export interface ApplyResult {
  * A row whose קמפיין was typed by hand is never overwritten: `campaign_locked` is the same
  * escape hatch a renamed show uses against the calendar sync, and the count of held-back rows
  * is reported so a figure that stopped tracking Meta is visible rather than mysterious.
+ *
+ * **A show already paid out to the musicians is never touched either**, and this is the more
+ * important of the two guards. Campaigns are bought per month but run across months, so a
+ * campaign promoting a show keeps spending after it — the ads are produced monthly and one
+ * campaign lands on two or three invoices. Left to itself the sync would raise a past show's
+ * costs every month, re-divide its profit, and change what each member is owed for a night
+ * whose money has already changed hands. Growth after the payout is real spend and it is
+ * counted in the monthly reconciliation and the unattributed totals; what it must not do is
+ * silently rewrite a settled division.
  *
  * An account billed in a currency other than shekels with no rate configured writes nothing at
  * all — putting a dollar figure in a shekel column would understate every show's costs.
@@ -231,6 +247,8 @@ export function applyCampaignSpend(): ApplyResult {
     written: 0,
     unchanged: 0,
     locked: 0,
+    settled: 0,
+    settled_stale: 0,
     unmapped_campaigns: unmapped.n,
     unmapped_spend: round2(unmapped.spend * getMetaCurrencyRate()),
   };
@@ -243,13 +261,26 @@ export function applyCampaignSpend(): ApplyResult {
   db.transaction(() => {
     for (const [eventId, totals] of attributed) {
       const row = db
-        .prepare('SELECT id, campaign, campaign_locked FROM band_event_expenses WHERE event_id = ?')
-        .get(eventId) as { id: string; campaign: number; campaign_locked: number } | undefined;
+        .prepare(
+          `SELECT x.id, x.campaign, x.campaign_locked, e.paid_to_musicians
+           FROM band_event_expenses x JOIN band_events e ON e.id = x.event_id
+           WHERE x.event_id = ?`
+        )
+        .get(eventId) as
+        | { id: string; campaign: number; campaign_locked: number; paid_to_musicians: number }
+        | undefined;
       // No row means no such show — a mapping to a show that has since been deleted. Harmless
       // and self-correcting: the mapping is cleaned up with the show.
       if (!row) continue;
       if (row.campaign_locked) {
         base.locked++;
+        continue;
+      }
+      if (row.paid_to_musicians) {
+        base.settled++;
+        // Counted separately from the plain settled case: this is the one that means a campaign
+        // has kept spending on a night already paid for, which someone may want to act on.
+        if (round2(Number(row.campaign) || 0) !== totals.spend) base.settled_stale++;
         continue;
       }
       if (round2(Number(row.campaign) || 0) === totals.spend) {
@@ -447,7 +478,17 @@ export interface AdAnalysisRow {
   /** What the campaign figure on the expense row says, which differs when it was typed by hand. */
   campaign_on_row: number;
   campaign_locked: boolean;
+  /** Paid out to the musicians — its costs are frozen whatever the campaigns do next. */
+  settled: boolean;
   campaigns: number;
+  /**
+   * The months this show's promotion was invoiced in, earliest first. A campaign bought at the
+   * end of one month runs into the next two, so a single show's ads routinely appear on three
+   * separate Meta invoices — this is what says which.
+   */
+  spend_months: string[];
+  /** A mapped campaign was still spending after the show. Ordinary while it runs; worth a look once it is settled. */
+  spending_after_show: number;
   impressions: number;
   clicks: number;
   cost_per_ticket: number | null;
@@ -481,7 +522,7 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
 
   const events = db
     .prepare(
-      `SELECT e.id, e.venue, e.date, e.tickets, e.amount_pre_vat, e.profit,
+      `SELECT e.id, e.venue, e.date, e.tickets, e.amount_pre_vat, e.profit, e.paid_to_musicians,
               x.id AS expense_id, x.campaign AS campaign_on_row, x.campaign_locked
        FROM band_events e LEFT JOIN band_event_expenses x ON x.event_id = e.id${where}
        ORDER BY e.date DESC`
@@ -489,6 +530,29 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
     .all(...params) as any[];
 
   const attributed = attributedSpendByEvent();
+
+  // Which months each show's campaigns were billed in, and whether any of them carried on
+  // spending past the show itself. One query for every show rather than one per row.
+  const monthsByEvent = new Map<string, Set<string>>();
+  const afterByEvent = new Map<string, Set<string>>();
+  for (const row of db
+    .prepare(
+      `SELECT m.event_id, substr(d.date, 1, 7) AS month, d.date, e.date AS event_date, d.campaign_id
+       FROM meta_campaign_events m
+       JOIN meta_campaign_daily d ON d.campaign_id = m.campaign_id
+       JOIN band_events e ON e.id = m.event_id
+       WHERE d.spend > 0`
+    )
+    .all() as Array<{ event_id: string; month: string; date: string; event_date: string; campaign_id: string }>) {
+    const months = monthsByEvent.get(row.event_id) ?? new Set<string>();
+    months.add(row.month);
+    monthsByEvent.set(row.event_id, months);
+    if (row.event_date && row.date > row.event_date) {
+      const after = afterByEvent.get(row.event_id) ?? new Set<string>();
+      after.add(row.campaign_id);
+      afterByEvent.set(row.event_id, after);
+    }
+  }
 
   const rows: AdAnalysisRow[] = events.map((event) => {
     const totals = attributed.get(event.id);
@@ -506,7 +570,10 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
       ad_spend: adSpend,
       campaign_on_row: round2(Number(event.campaign_on_row) || 0),
       campaign_locked: !!event.campaign_locked,
+      settled: !!event.paid_to_musicians,
       campaigns: totals?.campaigns ?? 0,
+      spend_months: [...(monthsByEvent.get(event.id) ?? [])].sort(),
+      spending_after_show: (afterByEvent.get(event.id) ?? new Set()).size,
       impressions: totals?.impressions ?? 0,
       clicks: totals?.clicks ?? 0,
       cost_per_ticket: tickets > 0 && adSpend > 0 ? round2(adSpend / tickets) : null,
@@ -537,6 +604,138 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
       cost_per_ticket: tickets > 0 && spend > 0 ? round2(spend / tickets) : null,
       spend_share_of_revenue: revenue > 0 && spend > 0 ? round2((spend / revenue) * 100) : null,
       unmapped_spend: round2((Number(unmapped.spend) || 0) * getMetaCurrencyRate()),
+    },
+  };
+}
+
+export interface MonthlyCampaignRow {
+  campaign_id: string;
+  name: string;
+  /** What this campaign cost **in this month** — its share of this month's invoice. */
+  spend: number;
+  /** What the campaign has cost in total, across every month it ran. */
+  total_spend: number;
+  /** How many calendar months it has spent in, and which of them this row is. */
+  months_spanned: number;
+  month_index: number;
+  events: Array<{ event_id: string; label: string; attributed: number }>;
+}
+
+export interface MonthlyRow {
+  /** YYYY-MM — one month, which is one Meta invoice. */
+  month: string;
+  spend: number;
+  /** Of that, what no show claims. */
+  unmapped_spend: number;
+  campaigns: MonthlyCampaignRow[];
+}
+
+/**
+ * Spend by calendar month — the axis the invoices arrive on.
+ *
+ * Ads are produced monthly, so each month is one Meta invoice; but a campaign started at the end
+ * of a month keeps running into the next two, so that invoice is a slice of several campaigns
+ * rather than the cost of anything in particular. This is the view that reconciles: for a given
+ * month, what Meta charged, which campaigns it was for, how far through each campaign that month
+ * was, and which shows the month's portion belongs to.
+ *
+ * It is deliberately a different question from `adAnalysis`. A show's promotion costs what its
+ * campaigns cost, whichever months those landed on — that figure answers "was this show worth
+ * advertising". This one answers "what is this invoice, and does it add up", and the two will
+ * never be the same partition of the money.
+ */
+export function monthlyBreakdown(range: { from?: string; to?: string } = {}): {
+  months: MonthlyRow[];
+  totals: { spend: number; unmapped_spend: number; months: number };
+} {
+  const clauses: string[] = [];
+  const params: string[] = [];
+  if (range.from) { clauses.push('d.date >= ?'); params.push(range.from); }
+  if (range.to) { clauses.push('d.date <= ?'); params.push(range.to); }
+  const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
+
+  const rate = getMetaCurrencyRate();
+  // Grouped in SQL rather than in JS: the daily table is the only place a month's spend is
+  // recorded, and summing it here keeps the month totals and the campaign rows in step.
+  const rows = db
+    .prepare(
+      `SELECT substr(d.date, 1, 7) AS month, d.campaign_id, c.name,
+              COALESCE(SUM(d.spend), 0) AS spend
+       FROM meta_campaign_daily d
+       LEFT JOIN meta_campaigns c ON c.id = d.campaign_id${where}
+       GROUP BY month, d.campaign_id
+       ORDER BY month DESC, spend DESC`
+    )
+    .all(...params) as Array<{ month: string; campaign_id: string; name: string | null; spend: number }>;
+
+  // Every month a campaign spent in, unfiltered by the range — a campaign is "1 of 3" by its own
+  // life, not by how much of it the current filter happens to show.
+  const spans = new Map<string, string[]>();
+  for (const row of db
+    .prepare(
+      `SELECT campaign_id, substr(date, 1, 7) AS month FROM meta_campaign_daily
+       WHERE spend > 0 GROUP BY campaign_id, month ORDER BY month`
+    )
+    .all() as Array<{ campaign_id: string; month: string }>) {
+    const list = spans.get(row.campaign_id) ?? [];
+    list.push(row.month);
+    spans.set(row.campaign_id, list);
+  }
+
+  const totalSpend = new Map<string, number>();
+  for (const row of db
+    .prepare('SELECT id, spend FROM meta_campaigns').all() as Array<{ id: string; spend: number }>) {
+    totalSpend.set(row.id, Number(row.spend) || 0);
+  }
+
+  // The weights, so a month's portion of a shared campaign is divided the same way its whole is.
+  const mappings = new Map<string, Array<{ event_id: string; label: string; weight: number }>>();
+  for (const m of db
+    .prepare(
+      `SELECT m.campaign_id, m.event_id, m.weight, e.venue, e.date
+       FROM meta_campaign_events m JOIN band_events e ON e.id = m.event_id`
+    )
+    .all() as any[]) {
+    const list = mappings.get(m.campaign_id) ?? [];
+    list.push({ event_id: m.event_id, label: eventLabel(m.venue, m.date), weight: Number(m.weight) || 1 });
+    mappings.set(m.campaign_id, list);
+  }
+
+  const byMonth = new Map<string, MonthlyRow>();
+  for (const row of rows) {
+    const month = byMonth.get(row.month) ?? { month: row.month, spend: 0, unmapped_spend: 0, campaigns: [] };
+    const spend = round2((Number(row.spend) || 0) * rate);
+    const mapped = mappings.get(row.campaign_id) ?? [];
+    const totalWeight = mapped.reduce((sum, m) => sum + m.weight, 0) || 1;
+    const months = spans.get(row.campaign_id) ?? [];
+
+    month.spend = round2(month.spend + spend);
+    if (mapped.length === 0) month.unmapped_spend = round2(month.unmapped_spend + spend);
+    month.campaigns.push({
+      campaign_id: row.campaign_id,
+      name: row.name || row.campaign_id,
+      spend,
+      total_spend: round2((totalSpend.get(row.campaign_id) ?? 0) * rate),
+      months_spanned: months.length,
+      // 1-based, so a campaign's second month reads "2/3" — which is what says the invoice in
+      // hand is not the whole of what this campaign will cost.
+      month_index: Math.max(1, months.indexOf(row.month) + 1),
+      events: mapped.map((m) => ({
+        event_id: m.event_id,
+        label: m.label,
+        attributed: round2(spend * (m.weight / totalWeight)),
+      })),
+    });
+    byMonth.set(row.month, month);
+  }
+
+  const months = [...byMonth.values()];
+  return {
+    months,
+    totals: {
+      spend: round2(months.reduce((sum, m) => sum + m.spend, 0)),
+      unmapped_spend: round2(months.reduce((sum, m) => sum + m.unmapped_spend, 0)),
+      months: months.length,
     },
   };
 }

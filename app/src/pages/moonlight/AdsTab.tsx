@@ -27,6 +27,8 @@ const pct = (value: number | null) => (value == null ? '—' : `${value}%`);
  */
 export function AdsTab({ events, period, isOwner, onError }: Props) {
   const [analysis, setAnalysis] = useState<any>(null);
+  const [monthly, setMonthly] = useState<any[]>([]);
+  const [openMonth, setOpenMonth] = useState('');
   const [campaigns, setCampaigns] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [unmappedOnly, setUnmappedOnly] = useState(false);
@@ -36,6 +38,9 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
     const query = period.params().toString();
     get(`/moonlight/ad-analysis${query ? `?${query}` : ''}`)
       .then(setAnalysis)
+      .catch((e) => onError(e.message));
+    get(`/moonlight/ad-monthly${query ? `?${query}` : ''}`)
+      .then((d) => setMonthly(d.months))
       .catch((e) => onError(e.message));
     // Campaigns are never period-filtered: a campaign for next month's show has to be mappable
     // while the table is showing this month.
@@ -153,7 +158,24 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                       {r.ad_spend ? nis(r.ad_spend) : '—'}
                     </span>
                     {r.campaigns > 0 && (
-                      <div className="text-xs text-slate-500">{r.campaigns} קמפיינים</div>
+                      <div className="text-xs text-slate-500">
+                        {r.campaigns} קמפיינים
+                        {/* A show's ads routinely land on more than one monthly invoice, so the
+                            count is worth stating rather than leaving to be discovered. */}
+                        {r.spend_months.length > 1 && (
+                          <span title={`חויב ב-${r.spend_months.length} חשבוניות חודשיות: ${r.spend_months.join(', ')}`}>
+                            {' · '}{r.spend_months.length} חשבוניות
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {r.spending_after_show > 0 && (
+                      <div className={clsx('text-xs', r.settled ? 'text-amber-400' : 'text-slate-500')}
+                        title={r.settled
+                          ? 'הקמפיין המשיך לרוץ אחרי ההופעה, אבל ההופעה סומנה «שולם לנגנים» — העלות בספרים קפואה ולא עודכנה'
+                          : 'הקמפיין ממשיך לרוץ אחרי ההופעה — הסכום עוד יגדל'}>
+                        {r.settled ? '⚠ המשיך לרוץ (מוקפא)' : 'עוד רץ'}
+                      </div>
                     )}
                   </div>
                 ),
@@ -188,10 +210,16 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                 key: 'on_row', header: 'בספרים', sortValue: (r: any) => r.campaign_on_row,
                 render: (r: any) => {
                   const differs = Math.abs(r.campaign_on_row - r.ad_spend) >= 1;
-                  if (!differs && !r.campaign_locked) return <span className="text-slate-600">—</span>;
+                  if (!differs && !r.campaign_locked && !r.settled) return <span className="text-slate-600">—</span>;
                   return (
                     <div className="whitespace-nowrap">
                       <span className={differs ? 'text-amber-400' : ''}>{nis(r.campaign_on_row)}</span>
+                      {r.settled && !r.campaign_locked && (
+                        <div className="text-xs text-slate-500"
+                          title="שולם לנגנים — עלות הפרסום קפואה כדי לא לשנות חלוקה שכבר בוצעה">
+                          🔒 שולם לנגנים
+                        </div>
+                      )}
                       {r.campaign_locked && (
                         <div className="text-xs text-slate-500 flex items-center gap-1">
                           <span title="הסכום הוזן ידנית — הסנכרון לא דורס אותו">🔒 ידני</span>
@@ -212,11 +240,76 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
           />
         )}
         <p className="text-xs text-slate-500 mt-3">
-          «בספרים» מופיע רק כשהסכום בעמודת «קמפיין» בהוצאות ההופעה שונה ממה ש-Meta מדווחת. סכום
-          שהוזן ידנית מסומן 🔒 והסנכרון לא דורס אותו — כולל כל הסכומים שהיו בספרים לפני חיבור
-          Meta, שנשארים כפי שהם עד ש«לסנכרון» נלחץ עליהם במפורש.
+          העלות של הופעה היא מה שהקמפיינים שלה עלו, גם אם התפרסו על כמה חשבוניות חודשיות — הפירוט
+          לפי חשבונית נמצא ב«חיוב חודשי מ-Meta» למטה. «בספרים» מופיע רק כשהסכום בעמודת «קמפיין»
+          שונה ממה ש-Meta מדווחת. סכום מסומן 🔒 אינו נדרס על ידי הסנכרון: או שהוזן ידנית, או
+          שההופעה סומנה «שולם לנגנים» — קמפיין שממשיך לרוץ אחרי הופעה שכבר חולקה לא ישנה בדיעבד את
+          מה שכל אחד קיבל.
         </p>
       </Card>
+
+      {/* The invoice axis. Ads are billed monthly but a campaign runs across months, so a
+          month's charge is a slice of several campaigns — this is what a Meta invoice can be
+          checked against, and it is a different partition of the money from the table above. */}
+      {monthly.length > 0 && (
+        <Card>
+          <h2 className="font-bold mb-1">חיוב חודשי מ-Meta</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            כל שורה היא חודש אחד — כלומר חשבונית אחת מ-Meta. קמפיין שהתחיל בסוף חודש ממשיך לתוך
+            החודשים הבאים, ולכן «2/3» ליד קמפיין אומר שזו החשבונית השנייה מתוך שלוש שהוא ייצור, ומה
+            שמופיע כאן הוא רק החלק שחויב בחודש הזה.
+          </p>
+          <div className="space-y-1">
+            {monthly.map((month) => (
+              <div key={month.month} className="bg-slate-800/40 border border-slate-800 rounded-xl">
+                <button
+                  onClick={() => setOpenMonth(openMonth === month.month ? '' : month.month)}
+                  className="w-full flex items-center justify-between gap-3 p-3 text-right hover:bg-slate-800/60 rounded-xl"
+                >
+                  <span className="flex items-center gap-2">
+                    <span className="text-slate-500 text-xs">{openMonth === month.month ? '▾' : '▸'}</span>
+                    <span className="font-medium">{month.month}</span>
+                    <span className="text-xs text-slate-500">{month.campaigns.length} קמפיינים</span>
+                    {month.unmapped_spend > 0 && (
+                      <span className="text-xs text-amber-400" title="חלק מהחיוב לא משויך לאף הופעה">
+                        {nis(month.unmapped_spend)} ללא שיוך
+                      </span>
+                    )}
+                  </span>
+                  <span className="text-rose-400 font-medium whitespace-nowrap">{nis(month.spend)}</span>
+                </button>
+
+                {openMonth === month.month && (
+                  <div className="px-3 pb-3 space-y-1.5">
+                    {month.campaigns.map((c: any) => (
+                      <div key={c.campaign_id} className="border-t border-slate-800/60 pt-1.5 text-sm">
+                        <div className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="break-words">
+                            {c.name}
+                            {c.months_spanned > 1 && (
+                              <span className="text-xs text-indigo-300 mr-1.5"
+                                title={`הקמפיין נפרס על ${c.months_spanned} חודשים · סה״כ ${nis(c.total_spend)}`}>
+                                {c.month_index}/{c.months_spanned}
+                              </span>
+                            )}
+                          </span>
+                          <span className="text-rose-400 whitespace-nowrap">{nis(c.spend)}</span>
+                        </div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {c.events.length === 0
+                            ? <span className="text-amber-400">ללא שיוך להופעה</span>
+                            : c.events.map((e: any) => `${e.label} (${nis(e.attributed)})`).join(' · ')}
+                          {c.months_spanned > 1 && ` · סה״כ הקמפיין ${nis(c.total_spend)}`}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {isOwner && (
         <Card>

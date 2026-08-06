@@ -18,7 +18,7 @@ import {
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
   adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, listCampaigns, metaStatus,
-  pullCampaignsFromMeta, setMapping,
+  monthlyBreakdown, pullCampaignsFromMeta, setMapping,
 } from './metaSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -1158,6 +1158,15 @@ router.delete('/integrations/meta/campaigns/:id/mappings/:eventId', requireOwner
  */
 router.get('/moonlight/ad-analysis', requireAuth, handle((req, res) => {
   res.json(adAnalysis(dateRange(req.query)));
+}));
+
+/**
+ * Ad spend by calendar month — one row per Meta invoice, since the ads are produced monthly.
+ * A campaign runs across months, so this is the view that reconciles an invoice against the
+ * campaigns and shows behind it; `ad-analysis` partitions the same money by show instead.
+ */
+router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
+  res.json(monthlyBreakdown(dateRange(req.query)));
 }));
 
 // ---- calendar rules: which events to draw, for band and for personal ----
