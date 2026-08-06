@@ -507,6 +507,35 @@ at all rather than putting dollars in a shekel column.
 | `DELETE /api/integrations/meta/campaigns/:id/mappings/:eventId` | unmap (the show keeps its figure) |
 | `GET /api/moonlight/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
 | `GET /api/moonlight/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
+| `POST /api/integrations/meta/diagnose` | walk the permission chain and name the step that fails |
+
+#### When Meta refuses: `(#200) Ad account owner has NOT grant ads_management or ads_read`
+
+**This error usually blames the wrong thing.** The token almost always does carry `ads_read` —
+what is missing is that the **ad account was never assigned to the system user as an asset**.
+Generating the token and assigning the asset are two different screens in Business Settings, and
+the error names neither.
+
+**בדיקת חיבור Meta** in Settings → חיבורים walks the whole chain and says which link is broken:
+token validity and type, the scopes it carries, **which ad accounts those scopes actually cover**
+(`granular_scopes` — the field that answers this error), which accounts the token can list, and
+finally the read the sync performs. When the configured account is not among the reachable ones,
+it says so and lists the ones that are — so a wrong `META_AD_ACCOUNT_ID` and a missing asset
+assignment are told apart rather than guessed at.
+
+The fix, in order of likelihood:
+
+1. **Assign the ad account to the system user.** Business Settings → System Users → your system
+   user → **Assign assets** → Ad Accounts → select the account → at least **View performance**.
+   Assigning the *app* is not enough; the ad account is a separate asset.
+2. **Check the ad account is in the same Business** as the system user. An account living in a
+   personal profile or another Business Manager cannot be reached by your system user at all —
+   move it into the business, or have the owning business share it via partner access.
+3. **Check `META_AD_ACCOUNT_ID`.** The diagnostic lists every account the token can see; if the
+   one you want is there under a different id, point the variable at it.
+4. **Re-generate the token** only if its scopes are actually missing `ads_read`. Asset access is
+   checked live, so a new token does not fix an unassigned asset — this is why re-generating is
+   the usual wasted first move.
 
 ## External API (`/api/v1`)
 

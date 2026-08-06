@@ -30,6 +30,7 @@ export function Settings() {
   const [businessSaved, setBusinessSaved] = useState('');
   const [metaRate, setMetaRate] = useState('1');
   const [metaSaved, setMetaSaved] = useState('');
+  const [diagnosis, setDiagnosis] = useState<any>(null);
 
   const load = () =>
     get('/settings')
@@ -74,6 +75,21 @@ export function Settings() {
             (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
       );
       load();
+    } catch (err: any) { setError(err.message); }
+    finally { setSyncing(''); }
+  };
+
+  /**
+   * Walks the Meta permission chain and reports which link is broken. Separate from the sync
+   * because a refusal is almost never about the sync — it is about how the token and the ad
+   * account were set up, and Meta's own error blames the wrong one.
+   */
+  const diagnoseMeta = async () => {
+    setSyncing('meta-diagnose');
+    setError('');
+    setDiagnosis(null);
+    try {
+      setDiagnosis(await post('/integrations/meta/diagnose'));
     } catch (err: any) { setError(err.message); }
     finally { setSyncing(''); }
   };
@@ -295,6 +311,44 @@ export function Settings() {
             onSync={() => runSync('meta')}
           />
         </div>
+
+        {/* The permission chain, when Meta refuses. Its #200 says the ad account has not granted
+            ads_read, which is usually not what is wrong — so this names the step that is. */}
+        {data.integrations.meta.configured && (
+          <div className="mt-4">
+            <Button variant="ghost" disabled={syncing === 'meta-diagnose'} onClick={diagnoseMeta}>
+              {syncing === 'meta-diagnose' ? 'בודק…' : 'בדיקת חיבור Meta'}
+            </Button>
+
+            {diagnosis && (
+              <div className={`mt-3 border rounded-xl p-3 text-sm ${
+                diagnosis.ok ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-amber-500/10 border-amber-500/30'
+              }`}>
+                <div className={`font-medium mb-2 ${diagnosis.ok ? 'text-emerald-300' : 'text-amber-300'}`}>
+                  {diagnosis.ok ? '✓ החיבור תקין' : 'נמצאה בעיה בהרשאות'}
+                </div>
+                <div className="space-y-2">
+                  {diagnosis.steps.map((step: any, i: number) => (
+                    <div key={i} className="border-t border-slate-700/40 pt-2 first:border-0 first:pt-0">
+                      <div className="flex items-start gap-2">
+                        <span className={step.ok ? 'text-emerald-400' : 'text-rose-400'}>
+                          {step.ok ? '✓' : '✗'}
+                        </span>
+                        <div className="min-w-0">
+                          <span className="font-medium">{step.name}</span>
+                          <div className="text-xs text-slate-400 break-words" dir="auto">{step.detail}</div>
+                          {step.fix && (
+                            <div className="text-xs text-amber-300 mt-1 break-words">← {step.fix}</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Only worth showing once there is an account to talk about, and only a problem when
             that account is billed in something other than shekels. */}

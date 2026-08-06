@@ -177,3 +177,54 @@ export async function fetchDailyCampaignInsights(since: string, until: string): 
 export async function ping(): Promise<MetaAccount> {
   return fetchAccount();
 }
+
+export interface TokenInfo {
+  valid: boolean;
+  type?: string;              // SYSTEM_USER for the token this integration wants
+  app_id?: string;
+  expires_at?: number;        // 0 means it never expires, which is what a system user token does
+  scopes: string[];
+  /**
+   * Which assets each scope actually covers. This is the field that answers error #200: a token
+   * can carry `ads_read` and still reach no ad account, because the scope is granted per asset.
+   */
+  granular: Array<{ scope: string; target_ids: string[] }>;
+}
+
+/** What Meta thinks this token is — its type, scopes, and the assets those scopes cover. */
+export async function debugToken(): Promise<TokenInfo> {
+  const token = accessToken();
+  const body = await graph<any>('debug_token', { input_token: token });
+  const data = body?.data ?? {};
+  return {
+    valid: Boolean(data.is_valid),
+    type: data.type,
+    app_id: data.app_id != null ? String(data.app_id) : undefined,
+    expires_at: data.expires_at,
+    scopes: Array.isArray(data.scopes) ? data.scopes.map(String) : [],
+    granular: Array.isArray(data.granular_scopes)
+      ? data.granular_scopes.map((g: any) => ({
+          scope: String(g.scope || ''),
+          target_ids: Array.isArray(g.target_ids) ? g.target_ids.map(String) : [],
+        }))
+      : [],
+  };
+}
+
+export interface AdAccountSummary {
+  id: string;
+  name?: string;
+  currency?: string;
+  account_status?: number;
+}
+
+/**
+ * Every ad account this token can actually reach.
+ *
+ * The decisive check for a permissions problem: if the configured account is not in this list,
+ * no amount of re-generating the token will help — the ad account has to be assigned to the
+ * system user as an asset, which is a different screen from the one that mints the token.
+ */
+export async function listAdAccounts(): Promise<AdAccountSummary[]> {
+  return graphPaged<AdAccountSummary>('me/adaccounts', { fields: 'id,name,currency,account_status' });
+}

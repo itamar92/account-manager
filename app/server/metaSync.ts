@@ -12,7 +12,8 @@
  */
 import { db, uuid, getMetaCurrencyRate, getMetaSyncDays, getSetting, setSetting } from './db.js';
 import {
-  fetchAccount, fetchCampaigns, fetchDailyCampaignInsights, isMetaConfigured,
+  adAccountId, debugToken, fetchAccount, fetchCampaigns, fetchDailyCampaignInsights,
+  isMetaConfigured, listAdAccounts,
 } from './metaClient.js';
 import { eventLabel, recomputeEvent } from './moonlight.js';
 
@@ -747,6 +748,159 @@ export function campaignDaily(campaignId: string) {
     db.prepare('SELECT date, spend, impressions, clicks FROM meta_campaign_daily WHERE campaign_id = ? ORDER BY date')
       .all(campaignId) as any[]
   ).map((row) => ({ ...row, spend: round2((Number(row.spend) || 0) * rate) }));
+}
+
+export interface DiagnosticStep {
+  name: string;
+  ok: boolean;
+  detail: string;
+  /** What to do about it, when it failed. Empty on a step that passed. */
+  fix?: string;
+}
+
+/**
+ * Works out *why* Meta is refusing, which its own errors are bad at saying.
+ *
+ * Error #200 ("Ad account owner has NOT grant ads_management or ads_read permission") is the
+ * one this exists for, because it is misleading: the token usually does carry `ads_read`, and
+ * the missing piece is that the **ad account** was never assigned to the system user as an
+ * asset. Those are two different screens in Business Settings, and the error names neither.
+ *
+ * So rather than one pass/fail, this walks the chain — token valid, token type, scopes, which
+ * accounts the scope actually covers, which accounts the token can list, and finally reading
+ * the configured account — and stops being useful only when everything passes. Each step
+ * carries the fix for itself, and the steps run independently so a failure early on still
+ * reports what the later ones found.
+ */
+export async function diagnose(): Promise<{ ok: boolean; account_id: string | null; steps: DiagnosticStep[] }> {
+  const steps: DiagnosticStep[] = [];
+
+  if (!isMetaConfigured()) {
+    return {
+      ok: false,
+      account_id: null,
+      steps: [{
+        name: 'הגדרות',
+        ok: false,
+        detail: 'חסרים META_ACCESS_TOKEN או META_AD_ACCOUNT_ID',
+        fix: 'הוסיפו את שני המשתנים לקובץ .env והפעילו מחדש את השרת',
+      }],
+    };
+  }
+
+  const wanted = adAccountId();
+  steps.push({ name: 'הגדרות', ok: true, detail: `חשבון מוגדר: ${wanted}` });
+
+  // --- the token itself ---
+  let info: Awaited<ReturnType<typeof debugToken>> | null = null;
+  try {
+    info = await debugToken();
+    steps.push({
+      name: 'תוקף הטוקן',
+      ok: info.valid,
+      detail: info.valid
+        ? `תקין · סוג: ${info.type || 'לא ידוע'} · ${info.expires_at ? `תפוגה: ${new Date(info.expires_at * 1000).toLocaleDateString('he-IL')}` : 'ללא תפוגה'}`
+        : 'Meta מדווחת שהטוקן אינו תקין',
+      fix: info.valid ? undefined : 'הנפיקו טוקן חדש ב-Business Settings → System Users → Generate token',
+    });
+
+    if (info.valid && info.type && info.type !== 'SYSTEM_USER') {
+      steps.push({
+        name: 'סוג הטוקן',
+        ok: false,
+        detail: `הטוקן הוא ${info.type} ולא SYSTEM_USER`,
+        fix: 'טוקן של משתמש רגיל פג אחרי 60 יום ותלוי בחשבון פרטי. הנפיקו טוקן של System User במקום',
+      });
+    }
+
+    const hasRead = info.scopes.includes('ads_read') || info.scopes.includes('ads_management');
+    steps.push({
+      name: 'הרשאות בטוקן',
+      ok: hasRead,
+      detail: info.scopes.length ? info.scopes.join(', ') : 'הטוקן לא נושא אף הרשאה',
+      fix: hasRead ? undefined : 'הנפיקו טוקן מחדש וסמנו את ads_read ברשימת ההרשאות',
+    });
+
+    // The heart of it: ads_read is granted per asset, so the scope can be present and cover
+    // nothing. When target_ids is populated and the wanted account is absent, that is the answer.
+    const granular = info.granular.find((g) => g.scope === 'ads_read' || g.scope === 'ads_management');
+    if (granular && granular.target_ids.length) {
+      const covered = granular.target_ids.some((id) => id === wanted || `act_${id}` === wanted || id === wanted.replace('act_', ''));
+      steps.push({
+        name: 'ההרשאה חלה על החשבון',
+        ok: covered,
+        detail: covered
+          ? `${wanted} מכוסה על ידי ההרשאה`
+          : `ההרשאה חלה על ${granular.target_ids.length} חשבונות אחרים, לא על ${wanted}`,
+        fix: covered
+          ? undefined
+          : 'זו הסיבה לשגיאה #200. ב-Business Settings → System Users → המשתמש → Assign assets → Ad Accounts, בחרו את החשבון הזה ותנו לפחות View performance',
+      });
+    }
+  } catch (err: any) {
+    steps.push({
+      name: 'תוקף הטוקן',
+      ok: false,
+      detail: err.message || 'בדיקת הטוקן נכשלה',
+      fix: 'אם השגיאה היא #190 — הטוקן פג או בוטל, יש להנפיק חדש',
+    });
+  }
+
+  // --- what the token can actually reach ---
+  let reachable: string[] = [];
+  try {
+    const accounts = await listAdAccounts();
+    reachable = accounts.map((a) => a.id);
+    const found = accounts.find((a) => a.id === wanted);
+    steps.push({
+      name: 'חשבונות פרסום נגישים',
+      ok: accounts.length > 0,
+      detail: accounts.length
+        ? accounts.map((a) => `${a.id}${a.name ? ` (${a.name})` : ''}`).join(' · ')
+        : 'הטוקן לא רואה אף חשבון פרסום',
+      fix: accounts.length
+        ? undefined
+        : 'ל-System User לא הוקצה אף חשבון פרסום. Business Settings → System Users → Assign assets → Ad Accounts',
+    });
+    steps.push({
+      name: 'החשבון המוגדר נגיש',
+      ok: Boolean(found),
+      detail: found
+        ? `${found.id} — ${found.name || 'ללא שם'} · מטבע ${found.currency || '?'}`
+        : `${wanted} אינו ברשימת החשבונות שהטוקן רואה`,
+      fix: found
+        ? undefined
+        : reachable.length
+        ? `הטוקן רואה חשבונות אחרים. או שיש להקצות לו את ${wanted}, או ש-META_AD_ACCOUNT_ID צריך להצביע על אחד מ: ${reachable.join(', ')}`
+        : 'הקצו את החשבון ל-System User, או בדקו שה-ID נכון (Ads Manager → Account Overview)',
+    });
+  } catch (err: any) {
+    steps.push({
+      name: 'חשבונות פרסום נגישים',
+      ok: false,
+      detail: err.message || 'שליפת רשימת החשבונות נכשלה',
+      fix: 'אם השגיאה היא #200 — ל-System User לא הוקצה חשבון פרסום כאסט, וזה מה שצריך לתקן',
+    });
+  }
+
+  // --- and the read the sync itself performs ---
+  try {
+    const account = await fetchAccount();
+    steps.push({
+      name: 'קריאת החשבון',
+      ok: true,
+      detail: `${account.name || account.id} · מטבע ${account.currency}`,
+    });
+  } catch (err: any) {
+    steps.push({
+      name: 'קריאת החשבון',
+      ok: false,
+      detail: err.message || 'הקריאה נכשלה',
+      fix: 'ראו את הצעדים שמעל — הסיבה כמעט תמיד הקצאת האסט',
+    });
+  }
+
+  return { ok: steps.every((s) => s.ok), account_id: wanted, steps };
 }
 
 export function metaStatus() {

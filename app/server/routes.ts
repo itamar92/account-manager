@@ -17,8 +17,8 @@ import {
 } from './morningExpenses.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
-  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, listCampaigns, metaStatus,
-  monthlyBreakdown, pullCampaignsFromMeta, setMapping,
+  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, diagnose, listCampaigns,
+  metaStatus, monthlyBreakdown, pullCampaignsFromMeta, setMapping,
 } from './metaSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -1128,6 +1128,15 @@ router.post('/integrations/meta/sync', requireOwner, handleAsync(async (req, res
  */
 router.get('/integrations/meta/campaigns', requireOwner, handle((req, res) => {
   res.json({ campaigns: listCampaigns({ unmappedOnly: req.query?.unmapped === '1' }) });
+}));
+
+/**
+ * Why Meta is refusing, when it is. Meta's own #200 blames the wrong thing — the token usually
+ * has `ads_read` and the ad account was simply never assigned to the system user — so this walks
+ * the whole chain and names the step that actually failed.
+ */
+router.post('/integrations/meta/diagnose', requireOwner, handleAsync(async (_req, res) => {
+  res.json(await diagnose());
 }));
 
 /** One campaign's daily spend — the run-up curve behind a show. */
