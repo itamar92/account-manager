@@ -8,9 +8,10 @@ import { EventExpensesTab } from './moonlight/EventExpensesTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
 import { AssignmentsTab } from './moonlight/AssignmentsTab';
+import { AdsTab } from './moonlight/AdsTab';
 import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
 
-type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses';
+type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses' | 'ads';
 
 const tabs: [Tab, string][] = [
   ['summary', 'סיכום'],
@@ -18,6 +19,7 @@ const tabs: [Tab, string][] = [
   ['assignments', 'שיבוצים'],
   ['eventExpenses', 'הוצאות הופעות'],
   ['generalExpenses', 'הוצאות כלליות'],
+  ['ads', 'פרסום'],
 ];
 
 export function Moonlight() {
@@ -99,6 +101,10 @@ export function Moonlight() {
 
       {tab === 'generalExpenses' && (
         <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} period={period} />
+      )}
+
+      {tab === 'ads' && (
+        <AdsTab {...tabProps} events={allEvents} period={period} />
       )}
 
       <Modal title={eventModal?.id ? 'עריכת הופעה' : 'הופעה חדשה'} open={!!eventModal} onClose={() => setEventModal(null)}>

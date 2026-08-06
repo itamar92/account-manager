@@ -39,6 +39,9 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled |
 | `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
+| `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
+| `META_API_VERSION` | `v25.0` | Graph API version |
+| `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
 
 ## Seeded users
 
@@ -428,6 +431,57 @@ Settings, each with an undo.
 | `DELETE /api/calendar-rules/:id` | delete a rule |
 | `POST /api/calendar-rules/:id/preview` | dry run — what it would draw, and why |
 | `POST /api/integrations/calendar/sync` | run all enabled rules, or one via `rule_id` |
+
+### Meta Ads → what a show's promotion cost
+
+Ad spend per show, pulled from the Meta Marketing API. It fills a column the band's books
+already had: **קמפיין** on each show's expense row, typed by hand until now. **Moonlight →
+פרסום** is where the result is read and where the mapping is done.
+
+Setup is a system-user token, described in [`.env.example`](../.env.example) — reading your own
+ad account with `ads_read` needs no App Review, so it is about fifteen minutes of Business
+Settings and nothing else.
+
+**Which campaign paid for which show is decided by hand.** A campaign name is written for
+people ("זאפה חיפה 7.1 - הופעה"), and a campaign that promoted a whole run of shows cannot be
+divided by any rule the data supports — so the sync proposes and a person confirms. Each
+unmapped campaign is offered up to three suggestions, scored on the venue's name appearing in
+the campaign's name, a date in the campaign name matching the show's, and the spend having
+happened in the three weeks before it. The reason behind each score is shown next to it, so a
+suggestion can be judged rather than trusted. Nothing is written until one is accepted.
+
+A campaign mapped to several shows is **split by weight** — 1 everywhere (the default) is an
+equal split. Weights are summed per campaign when they are read rather than stored as
+fractions, so mapping a fourth show to a campaign that had three re-divides it correctly
+instead of leaving three thirds and an orphan.
+
+**A hand-typed קמפיין figure is never overwritten.** Editing the cell locks it, the same
+bargain a renamed show strikes with the calendar sync, and each sync reports how many rows it
+held back. Every figure that predates this integration is locked on migration too: those
+numbers are history, not a blank to fill, and silently rewriting them would move what the band
+is owed on shows already divided up. **לסנכרון** on the פרסום tab hands a row over
+deliberately, and asks first.
+
+The analysis reports Meta's figure and the books' figure side by side, and flags where they
+disagree — the gap is worth seeing rather than smoothing. Two more things it does not hide:
+spend on campaigns no show claims is totalled separately (**פרסום לא משויך**), so a total can
+always be read against the account's real spend; and `cost_per_ticket` is null rather than 0
+for a show with no ticket count, since dividing by nothing is not a cost of zero.
+
+**Two caveats worth knowing.** Meta's reported `spend` is management reporting, not a tax
+document — the deductible expense stays the Meta invoice that Morning syncs in, and the two
+will differ slightly. And spend arrives in the ad account's own currency: an account not billed
+in shekels needs a rate in **Settings → חיבורים**, and until it has one the sync writes nothing
+at all rather than putting dollars in a shekel column.
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/integrations/meta/sync` | pull campaigns + daily spend, then apply to mapped shows |
+| `GET /api/integrations/meta/campaigns` | campaigns with mappings, shares and suggestions (`?unmapped=1`) |
+| `GET /api/integrations/meta/campaigns/:id/daily` | one campaign's daily spend curve |
+| `POST /api/integrations/meta/campaigns/:id/mappings` | map to a show `{event_id, weight?}` |
+| `DELETE /api/integrations/meta/campaigns/:id/mappings/:eventId` | unmap (the show keeps its figure) |
+| `GET /api/moonlight/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
 
 ## External API (`/api/v1`)
 

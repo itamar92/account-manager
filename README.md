@@ -36,6 +36,7 @@ layer) lives in `docs/`:
    cp .env.example .env
    ```
    - `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` — Green Invoice (Morning) API credentials, used by `build_havila.py`
+   - `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` — Meta Ads system-user token (`ads_read`) and ad account, used by the web app's ad-spend sync
    - `IEC_ID` / `IEC_PASSWORD`, `PARTNER_PHONE` / `PARTNER_PASSWORD`, `HOTMOBILE_PHONE` / `HOTMOBILE_PASSWORD`, `WATER_ACCOUNT` / `WATER_ID`, `ARNONA_ID` / `ARNONA_PROPERTY` — utility provider logins, used by `collect_bills.py`
 
    `.env` is git-ignored — never commit real credentials.

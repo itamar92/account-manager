@@ -302,6 +302,11 @@ export const deleteEventCascade = db.transaction(
       excluded = 1;
     }
     db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(id);
+    // Its Meta campaign mappings go with it. Deleted here as plain rows rather than through
+    // metaSync, which imports this module — and the campaigns themselves are untouched: the
+    // spend was real, it just no longer has a show to belong to, and the next sync will list
+    // them as unmapped for re-attribution.
+    db.prepare('DELETE FROM meta_campaign_events WHERE event_id = ?').run(id);
     db.prepare('DELETE FROM band_events WHERE id = ?').run(id);
     return { deleted: 1, excluded };
   }
@@ -318,6 +323,17 @@ export const deleteEventCascade = db.transaction(
 export function backfillMoonlight() {
   const firstRun = getSetting('moonlight_backfill_v1', '') !== 'done';
   const commissionDone = getSetting('moonlight_commission_percent_v1', '') === 'done';
+  const campaignLocksDone = getSetting('moonlight_campaign_lock_v1', '') === 'done';
+
+  // Every קמפיין figure that predates the Meta integration was typed by a person, so it is
+  // marked as such once: the sync claims a row only where nobody has said what the ad spend
+  // was, and would otherwise rewrite settled shows the first time one is mapped to a campaign.
+  // The same reasoning as the division_mode backfill below — existing numbers are history, not
+  // a blank to be filled. Unticking the lock in the UI is how a row is handed to the sync.
+  if (!campaignLocksDone) {
+    db.prepare('UPDATE band_event_expenses SET campaign_locked = 1 WHERE campaign > 0').run();
+    setSetting('moonlight_campaign_lock_v1', 'done');
+  }
 
   db.transaction(() => {
     // Adopt the free-text labels as real links, where they are unambiguous.

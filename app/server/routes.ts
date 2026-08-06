@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { randomBytes } from 'crypto';
 import {
   db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
+  getMetaCurrencyRate, getMetaSyncDays,
 } from './db.js';
 import {
   createSession, currentSessionToken, destroySession, login, requireAuth, requireOwner,
@@ -15,6 +16,10 @@ import {
   expenseCategories, expensesStatus, expensesSummary, listExpenses, pullExpensesFromMorning,
 } from './morningExpenses.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
+import {
+  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, listCampaigns, metaStatus,
+  pullCampaignsFromMeta, setMapping,
+} from './metaSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
   updateRule, type CalendarRule,
@@ -49,6 +54,7 @@ function removeRowsForEvent(eventId: string): number {
     // bookkeeping — but anything typed into it does.
     if (moneyFields.every((f) => !Number(event[f])) && !expenseTotal(expenseRowForEvent(event.id))) {
       db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(event.id);
+      db.prepare('DELETE FROM meta_campaign_events WHERE event_id = ?').run(event.id);
       db.prepare('DELETE FROM band_events WHERE id = ?').run(event.id);
       removed++;
     }
@@ -856,9 +862,25 @@ router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
     sets.push(`${field} = ?`);
     params.push(body[field] || null);
   }
+
+  // Typing a קמפיין figure by hand takes it over from the Meta sync, which from then on reports
+  // the row as held back instead of overwriting it — the same bargain a renamed show strikes
+  // with the calendar. Sending campaign_locked explicitly is how it is handed back, so the
+  // explicit value wins over the implicit lock a co-sent amount would set.
+  if (body.campaign_locked !== undefined) {
+    sets.push('campaign_locked = ?');
+    params.push(body.campaign_locked ? 1 : 0);
+  } else if (body.campaign !== undefined) {
+    sets.push('campaign_locked = ?');
+    params.push(1);
+  }
+
   if (sets.length) {
     db.prepare(`UPDATE band_event_expenses SET ${sets.join(', ')} WHERE id = ?`).run(...params, req.params.id);
   }
+  // Handing the lock back means asking for Meta's figure again, so it is restored right away
+  // rather than at whatever point somebody next runs a sync.
+  if (body.campaign_locked !== undefined && !body.campaign_locked) applyCampaignSpend();
   if (existing.event_id) recomputeEvent(existing.event_id);
   res.json({
     expense: db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id),
@@ -1028,9 +1050,9 @@ router.post('/moonlight/assignments/auto-match', requireOwner, handle((_req, res
   res.json({ assigned: autoAssignAll() });
 }));
 
-// ============ integrations: Morning (Green Invoice) + Google Calendar (owner) ============
+// ====== integrations: Morning (Green Invoice) + Google Calendar + Meta ads (owner) ======
 router.get('/integrations', requireOwner, handle((_req, res) => {
-  res.json({ morning: morningStatus(), calendar: calendarStatus() });
+  res.json({ morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus() });
 }));
 
 /**
@@ -1085,6 +1107,57 @@ router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req,
 /** The calendars this account can read, for the rule's calendar picker. */
 router.get('/integrations/calendar/calendars', requireOwner, handleAsync(async (_req, res) => {
   res.json({ calendars: await listCalendars() });
+}));
+
+// ---- Meta ads: pull the campaigns, then attribute them to shows ----
+
+/**
+ * Pulls campaigns and daily spend from Meta and writes what the mappings attribute into each
+ * show's קמפיין line. Both halves in one button, since a pull nobody applies changes nothing
+ * a user can see.
+ */
+router.post('/integrations/meta/sync', requireOwner, handleAsync(async (req, res) => {
+  const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
+  const result = await pullCampaignsFromMeta({ days });
+  res.json({ result: { ...result, applied: applyCampaignSpend() } });
+}));
+
+/**
+ * The campaigns with their mappings, their attributed shares, and — for the ones mapped to
+ * nothing — what shows they were probably for. `?unmapped=1` narrows it to the work outstanding.
+ */
+router.get('/integrations/meta/campaigns', requireOwner, handle((req, res) => {
+  res.json({ campaigns: listCampaigns({ unmappedOnly: req.query?.unmapped === '1' }) });
+}));
+
+/** One campaign's daily spend — the run-up curve behind a show. */
+router.get('/integrations/meta/campaigns/:id/daily', requireOwner, handle((req, res) => {
+  res.json({ daily: campaignDaily(req.params.id) });
+}));
+
+/**
+ * Maps a campaign to a show, or re-weights it. `weight` divides a campaign shared by several
+ * shows: equal by default, so a tour campaign splits evenly without anyone setting anything.
+ */
+router.post('/integrations/meta/campaigns/:id/mappings', requireOwner, handle((req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const weight = req.body?.weight != null ? Number(req.body.weight) : 1;
+  res.json({ mapping: setMapping(req.params.id, eventId, weight) });
+}));
+
+/** Unmaps a campaign from a show. The show keeps the figure already in its books. */
+router.delete('/integrations/meta/campaigns/:id/mappings/:eventId', requireOwner, handle((req, res) => {
+  res.json(deleteMapping(req.params.id, req.params.eventId));
+}));
+
+/**
+ * What each show's promotion cost: ad spend beside tickets sold and the fee, with cost per
+ * ticket and spend as a share of revenue. The band area's own read, so the period filter is
+ * the same one every other list uses.
+ */
+router.get('/moonlight/ad-analysis', requireAuth, handle((req, res) => {
+  res.json(adAnalysis(dateRange(req.query)));
 }));
 
 // ---- calendar rules: which events to draw, for band and for personal ----
@@ -1153,10 +1226,12 @@ router.get('/settings', requireOwner, handle((_req, res) => {
       morning_sync_days: getMorningSyncDays(),
       vat_report_frequency: getVatFrequency(),
       tax_credit_points: getCreditPoints(),
+      meta_sync_days: getMetaSyncDays(),
+      meta_currency_rate: getMetaCurrencyRate(),
     },
     business: getBusinessDetails(),
     business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
-    integrations: { morning: morningStatus(), calendar: calendarStatus() },
+    integrations: { morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus() },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
     api_keys: db.prepare('SELECT id, name, key_prefix, created_at, last_used_at FROM api_keys ORDER BY created_at').all(),
@@ -1164,7 +1239,10 @@ router.get('/settings', requireOwner, handle((_req, res) => {
 }));
 
 router.post('/settings', requireOwner, handle((req, res) => {
-  const { vat_percent, app_name, morning_sync_days, vat_report_frequency, tax_credit_points } = req.body || {};
+  const {
+    vat_percent, app_name, morning_sync_days, vat_report_frequency, tax_credit_points,
+    meta_sync_days, meta_currency_rate,
+  } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
   if (app_name) setSetting('app_name', app_name);
   if (morning_sync_days != null) {
@@ -1185,6 +1263,22 @@ router.post('/settings', requireOwner, handle((req, res) => {
     if (!Number.isFinite(points) || points < 0)
       return res.status(400).json({ error: 'מספר נקודות הזיכוי לא תקין' });
     setSetting('tax_credit_points', String(points));
+  }
+  if (meta_sync_days != null) {
+    const days = parseInt(meta_sync_days, 10);
+    if (!Number.isFinite(days) || days < 1 || days > 1825)
+      return res.status(400).json({ error: 'טווח סנכרון Meta חייב להיות בין 1 ל-1825 ימים' });
+    setSetting('meta_sync_days', String(days));
+  }
+  if (meta_currency_rate != null) {
+    // A rate of zero would zero every campaign, and a negative one would credit the band for
+    // advertising — neither is a currency.
+    const rate = parseFloat(meta_currency_rate);
+    if (!Number.isFinite(rate) || rate <= 0)
+      return res.status(400).json({ error: 'שער ההמרה חייב להיות מספר חיובי' });
+    setSetting('meta_currency_rate', String(rate));
+    // The rate multiplies every attributed figure, so the shows have to be rewritten with it.
+    applyCampaignSpend();
   }
   res.json({ ok: true });
 }));
