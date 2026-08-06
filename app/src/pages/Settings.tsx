@@ -3,6 +3,12 @@ import { get, post, put, del } from '../api';
 import { Button, Card, Input, Modal, Empty } from '../ui';
 import { CalendarRules } from './CalendarRules';
 
+/**
+ * A plain rounded number for the sync summary. Not `nis`: the Meta line reports the ad account's
+ * own currency, which is not always shekels, so the symbol comes from the data beside it.
+ */
+const amount = (value: unknown) => Math.round(Number(value) || 0).toLocaleString('he-IL');
+
 export function Settings() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
@@ -22,6 +28,8 @@ export function Settings() {
   const [syncResult, setSyncResult] = useState('');
   const [business, setBusiness] = useState<any>(null);
   const [businessSaved, setBusinessSaved] = useState('');
+  const [metaRate, setMetaRate] = useState('1');
+  const [metaSaved, setMetaSaved] = useState('');
 
   const load = () =>
     get('/settings')
@@ -31,12 +39,13 @@ export function Settings() {
         setSyncDays(String(d.settings.morning_sync_days));
         setVatFrequency(d.settings.vat_report_frequency);
         setCreditPoints(String(d.settings.tax_credit_points));
+        setMetaRate(String(d.settings.meta_currency_rate));
         setBusiness(d.business);
       })
       .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
-  const runSync = async (which: 'morning' | 'calendar') => {
+  const runSync = async (which: 'morning' | 'calendar' | 'meta') => {
     setSyncing(which);
     setError('');
     setSyncResult('');
@@ -50,6 +59,17 @@ export function Settings() {
               ? `\n· הוצאות: ${r.expenses.error}`
               : `\n· הוצאות: ${r.expenses.fetched} · ${r.expenses.created} חדשות · ${r.expenses.updated} עודכנו` +
                 ` · ${r.expenses.reported} מסומנות כדווחו`)
+          : which === 'meta'
+          ? `Meta: ${r.campaigns} קמפיינים (${r.from} – ${r.to}) · ${amount(r.spend)} ${r.currency}` +
+            `\n· ${r.applied.written} הופעות עודכנו · ${r.applied.unchanged} ללא שינוי` +
+            (r.applied.locked ? ` · ${r.applied.locked} עם סכום ידני (לא נדרסו)` : '') +
+            (r.applied.settled
+              ? ` · ${r.applied.settled} שולמו לנגנים (מוקפאות${r.applied.settled_stale ? `, מתוכן ${r.applied.settled_stale} עם הוצאה שגדלה מאז` : ''})`
+              : '') +
+            (r.applied.unmapped_campaigns
+              ? `\n· ${r.applied.unmapped_campaigns} קמפיינים ללא שיוך להופעה — ${amount(r.applied.unmapped_spend)} ₪ ממתינים לשיוך ב-Moonlight → פרסום`
+              : '') +
+            (r.warning ? `\n⚠ ${r.warning}` : '')
           : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
             (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
       );
@@ -115,6 +135,20 @@ export function Settings() {
     try {
       await post('/settings', { vat_report_frequency: vatFrequency, tax_credit_points: parseFloat(creditPoints) });
       setReportsSaved('הגדרות הדוחות נשמרו');
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
+  /**
+   * The rate every attributed campaign figure is multiplied by. Saving it rewrites the shows on
+   * the server, so the קמפיין column and the ads analysis move together with it.
+   */
+  const saveMetaSettings = async () => {
+    setError('');
+    setMetaSaved('');
+    try {
+      await post('/settings', { meta_currency_rate: parseFloat(metaRate) });
+      setMetaSaved('שער ההמרה נשמר — סכומי הקמפיינים חושבו מחדש');
       load();
     } catch (err: any) { setError(err.message); }
   };
@@ -245,8 +279,48 @@ export function Settings() {
             busy={syncing === 'calendar'}
             onSync={() => runSync('calendar')}
           />
+          <IntegrationRow
+            title="Meta Ads — קמפיינים"
+            configured={data.integrations.meta.configured}
+            missingHint="חסרים META_ACCESS_TOKEN / META_AD_ACCOUNT_ID"
+            lastSync={data.integrations.meta.last_sync}
+            detail={
+              `${data.integrations.meta.campaigns} קמפיינים · ${data.integrations.meta.mapped_campaigns} משויכים` +
+              ` · טווח ${data.integrations.meta.sync_days} ימים` +
+              (data.integrations.meta.unmapped_campaigns
+                ? ` · ${data.integrations.meta.unmapped_campaigns} ללא שיוך (${amount(data.integrations.meta.unmapped_spend)} ₪)`
+                : '')
+            }
+            busy={syncing === 'meta'}
+            onSync={() => runSync('meta')}
+          />
         </div>
 
+        {/* Only worth showing once there is an account to talk about, and only a problem when
+            that account is billed in something other than shekels. */}
+        {data.integrations.meta.configured && data.integrations.meta.currency !== 'ILS' && (
+          <div className="mt-4 max-w-xl">
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-sm text-amber-300 mb-3">
+              חשבון הפרסום מחויב ב-{data.integrations.meta.currency}. עמודת «קמפיין» בהוצאות ההופעות
+              היא בשקלים, ולכן נדרש שער המרה — בלעדיו הסנכרון לא כותב סכומים בכלל.
+            </div>
+            <div className="grid gap-3 md:grid-cols-3 items-end">
+              <Input
+                label={`שקלים ל-1 ${data.integrations.meta.currency}`}
+                type="number" step="0.01" min="0.01" dir="ltr"
+                value={metaRate} onChange={(e) => setMetaRate(e.target.value)}
+              />
+              <Button variant="ghost" onClick={saveMetaSettings}>שמירה</Button>
+            </div>
+            {metaSaved && <div className="text-sm text-emerald-400 mt-2">{metaSaved}</div>}
+          </div>
+        )}
+
+        <p className="text-xs text-slate-500 mt-4">
+          סנכרון Meta מושך את הקמפיינים וההוצאה היומית שלהם, ומזין את עמודת «קמפיין» של כל הופעה
+          שקמפיין שויך אליה. השיוך עצמו נעשה ב-Moonlight → פרסום, ידנית: שם של קמפיין נכתב לבני
+          אדם, וקמפיין שקידם כמה הופעות לא ניתן לפצל לפי שום כלל אוטומטי.
+        </p>
       </Card>
 
       <CalendarRules onChange={load} onError={setError} />

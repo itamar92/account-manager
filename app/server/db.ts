@@ -275,6 +275,57 @@ CREATE TABLE IF NOT EXISTS calendar_event_overrides (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ---------- Meta (Facebook/Instagram) ad campaigns ----------
+-- The campaigns as Meta reports them, refreshed by each sync. Cached locally so the
+-- cost-per-show analysis reads the database rather than the Graph API, and so a campaign
+-- keeps its history after Meta's own reporting window has moved on.
+CREATE TABLE IF NOT EXISTS meta_campaigns (
+  id TEXT PRIMARY KEY,                    -- Meta's campaign id
+  account_id TEXT NOT NULL,               -- the act_… it was read from
+  name TEXT NOT NULL,
+  status TEXT,                            -- ACTIVE / PAUSED / …
+  objective TEXT,
+  first_spend_date TEXT,                  -- first and last day with spend in the synced window,
+  last_spend_date TEXT,                   -- which is what the show suggester matches on
+  spend REAL NOT NULL DEFAULT 0,          -- total over the synced window, in the currency below
+  impressions INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  reach INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'ILS',
+  synced_at TEXT
+);
+
+-- Spend day by day. Attribution does not need it — an explicit mapping decides which show a
+-- campaign paid for — but the run-up curve is what says whether the money went out in time
+-- to sell a ticket, and a campaign's own window is derived from it.
+CREATE TABLE IF NOT EXISTS meta_campaign_daily (
+  campaign_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  spend REAL NOT NULL DEFAULT 0,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (campaign_id, date)
+);
+
+-- Which campaigns paid for which show, decided by hand. Many-to-many in both directions: a
+-- show is often promoted by two campaigns (early-bird and last push), and one campaign is
+-- often run across a whole tour.
+--
+-- The weight column is how a shared campaign is divided. Shares are computed as weight over sum of
+-- the campaign's weights, so the default of 1 everywhere splits it equally and stays correct
+-- when a fourth show is added to a campaign that had three — nothing needs recomputing.
+CREATE TABLE IF NOT EXISTS meta_campaign_events (
+  id TEXT PRIMARY KEY,
+  campaign_id TEXT NOT NULL,
+  event_id TEXT NOT NULL,
+  weight REAL NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(campaign_id, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_campaign_events_event ON meta_campaign_events(event_id);
+CREATE INDEX IF NOT EXISTS idx_meta_campaign_daily_date ON meta_campaign_daily(date);
+
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
@@ -318,6 +369,10 @@ addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
 // classification object as a scalar once wrote "[object Object]" into every category, and
 // there was nothing stored to diagnose it from.
 addColumnIfMissing('expenses', 'raw', 'TEXT');
+// A קמפיין figure typed by hand outranks the Meta sync, the same way a renamed show outranks
+// the calendar. Set the moment someone edits the cell; from then on the sync reports the row
+// as held back rather than overwriting it, until the lock is handed back.
+addColumnIfMissing('band_event_expenses', 'campaign_locked', 'INTEGER NOT NULL DEFAULT 0');
 
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a
@@ -379,6 +434,28 @@ export function getVatPercent(): number {
 /** How far back each Morning pull looks, in days. */
 export function getMorningSyncDays(): number {
   return parseInt(getSetting('morning_sync_days', '90'), 10) || 90;
+}
+
+/**
+ * How far back each Meta pull looks, in days. Longer than Morning's by default: a campaign for
+ * a show is bought weeks ahead, and a year's worth of them is what the cost-per-show comparison
+ * is actually made of.
+ */
+export function getMetaSyncDays(): number {
+  return parseInt(getSetting('meta_sync_days', '365'), 10) || 365;
+}
+
+/**
+ * Shekels per unit of the ad account's currency.
+ *
+ * 1 is right for an account billed in ILS, which is the assumption until told otherwise. An
+ * account billed in USD or EUR needs a real rate here, because the קמפיין column it feeds is
+ * in shekels — the sync refuses to write a foreign figure into it rather than quietly
+ * understating a show's costs by a third.
+ */
+export function getMetaCurrencyRate(): number {
+  const rate = parseFloat(getSetting('meta_currency_rate', '1'));
+  return Number.isFinite(rate) && rate > 0 ? rate : 1;
 }
 
 /**
