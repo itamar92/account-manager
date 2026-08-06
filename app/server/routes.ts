@@ -17,9 +17,10 @@ import {
 } from './morningExpenses.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
-  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, diagnose, listCampaigns,
+  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, listCampaigns,
   metaStatus, monthlyBreakdown, pullCampaignsFromMeta, setMapping,
 } from './metaSync.js';
+import { diagnose } from './metaClient.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
   updateRule, type CalendarRule,

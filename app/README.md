@@ -523,7 +523,10 @@ what is missing is that the **ad account was never assigned to the system user a
 Generating the token and assigning the asset are two different screens in Business Settings, and
 the error names neither.
 
-**בדיקת חיבור Meta** in Settings → חיבורים walks the whole chain and says which link is broken:
+Run **`npm run meta:check`** from `app/` — the same diagnosis with no server, login or browser
+needed, and the first thing to run after putting a token in `.env`. It exits non-zero on failure,
+so it also works as a healthcheck. **בדיקת חיבור Meta** in Settings → חיבורים is the same check in
+the UI. Both walk the whole chain and say which link is broken:
 token validity and type, the scopes it carries, **which ad accounts those scopes actually cover**
 (`granular_scopes` — the field that answers this error), which accounts the token can list, and
 finally the read the sync performs. When the configured account is not among the reachable ones,
