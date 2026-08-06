@@ -97,10 +97,12 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
           <StatCard label="הוצאות פרסום" value={nis(totals.ad_spend)}
             sub={`${totals.shows} הופעות עם פרסום`} accent="text-rose-400" />
+          {/* Both denominators count only the shows that were advertised — said out loud, because
+              a ratio is only readable if you know what it was divided by. */}
           <StatCard label="עלות לכרטיס" value={totals.cost_per_ticket == null ? '—' : nis(totals.cost_per_ticket)}
-            sub={`${totals.tickets.toLocaleString('he-IL')} כרטיסים`} />
+            sub={`${totals.tickets.toLocaleString('he-IL')} כרטיסים בהופעות עם פרסום`} />
           <StatCard label="פרסום מתוך ההכנסה" value={pct(totals.spend_share_of_revenue)}
-            sub={`מתוך ${nis(totals.revenue)}`} />
+            sub={`מתוך ${nis(totals.revenue)} בהופעות עם פרסום`} />
           <StatCard label="פרסום לא משויך" value={nis(totals.unmapped_spend)}
             sub={totals.unmapped_spend > 0 ? 'קמפיינים שטרם שויכו להופעה' : 'הכל משויך'}
             accent={totals.unmapped_spend > 0 ? 'text-amber-400' : 'text-emerald-400'} />

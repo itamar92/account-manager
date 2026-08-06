@@ -506,6 +506,11 @@ export interface AdAnalysisRow {
  *
  * `cost_per_ticket` is null rather than 0 for a show with no ticket count: dividing by nothing
  * is not a cost of zero, and a zero would sort to the top of the cheapest-shows list.
+ *
+ * It is spend over **everyone who came**, not over the people the ads brought — the books record
+ * attendance, and nothing here knows who would have turned up anyway. So it compares one show's
+ * promotion against another's honestly, but it is not a cost of acquisition and should not be
+ * read as one.
  */
 export function adAnalysis(range: { from?: string; to?: string } = {}): {
   rows: AdAnalysisRow[];
@@ -583,8 +588,13 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
   });
 
   const spend = round2(rows.reduce((sum, r) => sum + r.ad_spend, 0));
-  const tickets = rows.reduce((sum, r) => sum + r.tickets, 0);
-  const revenue = round2(rows.reduce((sum, r) => sum + r.revenue, 0));
+  // Both ratios below are about the shows that were **advertised**, so the denominators cover
+  // only those. Summing every show's tickets would credit the attendance of a show nobody
+  // promoted against the money spent promoting the others, and report a cost per ticket several
+  // times cheaper than any real one — which is exactly the figure someone would act on.
+  const advertised = rows.filter((r) => r.ad_spend > 0);
+  const tickets = advertised.reduce((sum, r) => sum + r.tickets, 0);
+  const revenue = round2(advertised.reduce((sum, r) => sum + r.revenue, 0));
   // Spend no show claims, so the totals can be read against the account's real spend rather
   // than looking complete when a third of the money is unattributed.
   const unmapped = db
@@ -600,7 +610,7 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
       ad_spend: spend,
       tickets,
       revenue,
-      shows: rows.filter((r) => r.ad_spend > 0).length,
+      shows: advertised.length,
       cost_per_ticket: tickets > 0 && spend > 0 ? round2(spend / tickets) : null,
       spend_share_of_revenue: revenue > 0 && spend > 0 ? round2((spend / revenue) * 100) : null,
       unmapped_spend: round2((Number(unmapped.spend) || 0) * getMetaCurrencyRate()),

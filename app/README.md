@@ -469,6 +469,15 @@ numbers are history, not a blank to fill, and silently rewriting them would move
 is owed on shows already divided up. **לסנכרון** on the פרסום tab hands a row over
 deliberately, and asks first.
 
+**עלות לכרטיס** is a show's attributed ad spend divided by the ticket count on the show
+(`band_events.tickets`), and it is null — not 0 — when either side is missing. It is spend over
+*everyone who came*, not over the people the ads brought: the books record attendance and nothing
+here knows who would have turned up anyway. So it compares one show's promotion against another's
+honestly, but it is **not** a cost of acquisition. The aggregate on the stat card divides by the
+tickets and revenue of the **advertised shows only** — including an unpromoted show's attendance
+would credit it against money spent on the others and report a cost several times cheaper than any
+real one.
+
 The analysis reports Meta's figure and the books' figure side by side, and flags where they
 disagree — the gap is worth seeing rather than smoothing. Two more things it does not hide:
 spend on campaigns no show claims is totalled separately (**פרסום לא משויך**), so a total can
