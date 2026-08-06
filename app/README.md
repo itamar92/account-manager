@@ -523,7 +523,23 @@ finally the read the sync performs. When the configured account is not among the
 it says so and lists the ones that are — so a wrong `META_AD_ACCOUNT_ID` and a missing asset
 assignment are told apart rather than guessed at.
 
-The fix, in order of likelihood:
+**If the ad account belongs to no Business portfolio**, none of the fixes below will work, because
+a system user is a business entity and can only be assigned assets the business owns. There are
+exactly two ways out, and the choice is a real trade-off:
+
+- **Bring the ad account into the business** (Business Settings → Accounts → Ad accounts → Add →
+  Add an ad account), then assign it to the system user. This is the only option that gives an
+  unattended sync — a system user token never expires. But **claiming is irreversible**: ownership
+  moves to the business permanently, so check the payment method afterwards and be sure it is the
+  right account before claiming.
+- **Use a plain user token instead.** A personal ad account can be read with a `ads_read` user
+  token from the Graph API Explorer, exchanged for a long-lived one, with no ownership change at
+  all. The cost is that it lapses after about 60 days and has to be re-pasted. The diagnostic
+  treats this as a legitimate setup rather than an error: it reports the token type, shows the
+  expiry date, and fails the check once fewer than 14 days remain, so the lapse is seen coming
+  instead of discovered when the numbers stop moving.
+
+When the account *is* business-owned, the fix is in order of likelihood:
 
 1. **Assign the ad account to the system user.** Business Settings → System Users → your system
    user → **Assign assets** → Ad Accounts → select the account → at least **View performance**.

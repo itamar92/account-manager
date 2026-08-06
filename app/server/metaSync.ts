@@ -804,12 +804,30 @@ export async function diagnose(): Promise<{ ok: boolean; account_id: string | nu
       fix: info.valid ? undefined : 'הנפיקו טוקן חדש ב-Business Settings → System Users → Generate token',
     });
 
+    // A USER token is not a mistake: a personal ad account — one that belongs to no business
+    // portfolio — cannot be assigned to a system user at all, so a user token is the only way to
+    // read it without transferring the account's ownership. Reported as a trade-off with its
+    // expiry date rather than as an error, since prescribing SYSTEM_USER here would be wrong.
     if (info.valid && info.type && info.type !== 'SYSTEM_USER') {
       steps.push({
         name: 'סוג הטוקן',
-        ok: false,
-        detail: `הטוקן הוא ${info.type} ולא SYSTEM_USER`,
-        fix: 'טוקן של משתמש רגיל פג אחרי 60 יום ותלוי בחשבון פרטי. הנפיקו טוקן של System User במקום',
+        ok: true,
+        detail: `${info.type} — לא System User. תקף לחשבון פרסום פרטי, אבל דורש חידוש כל ~60 יום`,
+        fix: 'לסנכרון שלא דורש תחזוקה: העבירו את חשבון הפרסום ל-Business portfolio והנפיקו טוקן System User',
+      });
+    }
+
+    // The practical failure mode of a user token: it lapses and the sync starts refusing. Two
+    // weeks is enough notice to renew it without the numbers going stale in between.
+    if (info.valid && info.expires_at) {
+      const daysLeft = Math.floor((info.expires_at * 1000 - Date.now()) / 86400_000);
+      steps.push({
+        name: 'תפוגת הטוקן',
+        ok: daysLeft > 14,
+        detail: daysLeft > 0
+          ? `פג בעוד ${daysLeft} ימים (${new Date(info.expires_at * 1000).toLocaleDateString('he-IL')})`
+          : 'הטוקן פג',
+        fix: daysLeft > 14 ? undefined : 'הנפיקו טוקן חדש והחליפו את META_ACCESS_TOKEN ב-.env',
       });
     }
 
