@@ -29,6 +29,13 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 
 ### Environment (optional, `.env`)
 
+Two locations are read, in this order: **`app/.env`** first, then the **repository root
+`.env`** — which is where [`.env.example`](../.env.example) lives and where the credentials
+shared with the Python scripts (Green Invoice, Google, Meta) belong. The more specific file
+wins, and a real environment variable beats both. Loading both matters because
+`dotenv/config` resolves against the working directory: run from `app/`, it would otherwise
+never see the root file that documents the app's own credentials.
+
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `PORT` | 3000 | server port |

@@ -1,4 +1,5 @@
-import 'dotenv/config';
+// First: loads app/.env and the repository root's .env, before any module reads process.env.
+import './server/env.js';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
