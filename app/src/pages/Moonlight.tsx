@@ -9,9 +9,10 @@ import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
 import { AssignmentsTab } from './moonlight/AssignmentsTab';
 import { AdsTab } from './moonlight/AdsTab';
+import { CampaignAnalysisTab } from './moonlight/CampaignAnalysisTab';
 import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
 
-type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses' | 'ads';
+type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses' | 'ads' | 'campaignAi';
 
 const tabs: [Tab, string][] = [
   ['summary', 'סיכום'],
@@ -20,6 +21,9 @@ const tabs: [Tab, string][] = [
   ['eventExpenses', 'הוצאות הופעות'],
   ['generalExpenses', 'הוצאות כלליות'],
   ['ads', 'פרסום'],
+  // Next to פרסום, because it is the same money read a different way: that tab says what the
+  // campaigns cost, this one says whether it was worth it.
+  ['campaignAi', 'יועץ קמפיינים'],
 ];
 
 export function Moonlight() {
@@ -105,6 +109,10 @@ export function Moonlight() {
 
       {tab === 'ads' && (
         <AdsTab {...tabProps} events={allEvents} period={period} />
+      )}
+
+      {tab === 'campaignAi' && (
+        <CampaignAnalysisTab {...tabProps} events={allEvents} period={period} />
       )}
 
       <Modal title={eventModal?.id ? 'עריכת הופעה' : 'הופעה חדשה'} open={!!eventModal} onClose={() => setEventModal(null)}>

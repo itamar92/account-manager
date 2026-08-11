@@ -116,6 +116,74 @@ are unset, rather than seeding the defaults that are written down in the repo.
 To change a password afterwards, do it in the app — editing `.env` later has no
 effect.
 
+## 4a. The AI agent (optional)
+
+**Moonlight → יועץ קמפיינים** asks an AI agent whether the band's ad spend was worth it. It
+reaches that agent **over SSH**, not over an HTTP API: the agent is a command-line tool on a
+machine where it is already logged in, and the app opens a session, writes the prompt to its
+stdin and reads the answer back.
+
+The point is the credential. An API key would have to live in `deploy/.env` and be sent on every
+call; instead the app holds an SSH key that opens **one fixed command** on an account that can do
+nothing else, and the AI login stays on the agent host where a person put it. Skip this whole
+section and the tab reports itself as unconfigured — nothing else changes.
+
+The agent can be any machine reachable from the VM. Running it on the VM itself is the simplest
+and the only one that is always up, so that is what follows.
+
+```bash
+# On the VM. A dedicated account — the app's key must not open your own shell.
+sudo adduser --disabled-password --gecos '' aiagent
+sudo -u aiagent -i          # install and log the CLI in as that user, interactively, once
+```
+
+```bash
+# On your own machine — a key of its own, so it can be revoked without touching anything else.
+ssh-keygen -t ed25519 -f ~/.ssh/am-agent -C 'account-manager-agent' -N ''
+ssh-keygen -lf ~/.ssh/am-agent.pub          # note the fingerprint
+```
+
+Install the **public** half on the VM, restricted to the one command. The `command=` prefix is
+what makes this safe: whatever the app asks for, sshd runs that and only that.
+
+```bash
+sudo -u aiagent mkdir -p /home/aiagent/.ssh
+# as one line, with your key's body in place of AAAA…
+echo 'command="claude -p --output-format json",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA… account-manager-agent' \
+  | sudo -u aiagent tee -a /home/aiagent/.ssh/authorized_keys
+sudo -u aiagent chmod 700 /home/aiagent/.ssh
+sudo -u aiagent chmod 600 /home/aiagent/.ssh/authorized_keys
+```
+
+Then pin the host key and fill in `deploy/.env`:
+
+```bash
+ssh-keyscan -t ed25519 <the-agent-host>     # → AGENT_SSH_HOST_KEY
+```
+
+`AGENT_SSH_HOST=host.docker.internal` reaches the VM from inside the container — the compose file
+already maps that name to the host gateway. `AGENT_SSH_KEY` takes the whole private key with its
+newlines written as `\n`:
+
+```bash
+awk 'BEGIN{ORS="\\n"} {print}' ~/.ssh/am-agent      # paste the output as AGENT_SSH_KEY=…
+```
+
+Restart (`docker compose up -d`) and press **בדיקת חיבור** in Settings → חיבורים. It opens the
+session and asks the agent its version, which tells you which half is broken far faster than a
+failed analysis does. A green result and the tab is live.
+
+Two things worth checking once, because they are the difference between this being safe and being
+a shell on your VM handed to a web app:
+
+```bash
+ssh -i ~/.ssh/am-agent aiagent@<host> 'whoami'   # must NOT print a username — the forced
+                                                 # command runs instead, whatever you ask for
+```
+
+and that `AGENT_SSH_HOST_KEY` is actually set — with it empty the app refuses to connect in
+production rather than trusting whoever answers the address.
+
 ## 5. Backups
 
 The whole application state is one file in the `am-data` volume. Losing the VM
@@ -174,9 +242,15 @@ This app holds your invoicing data behind one password. Zero Trust → Access �
 Applications, self-hosted, `im-tools.org`, policy `emails: itamar92@gmail.com` +
 the band addresses. Free up to 50 users.
 
-One catch: **exclude `/api/v1`**, or the Morning integration's `X-API-Key` calls
-will be intercepted by Access and fail. Add a Bypass policy for that path, or a
-service-token policy if you want it authenticated at the edge too.
+One catch: **exclude `/api/v1` and `/mcp`**, or the `X-API-Key` calls behind them —
+the Morning integration and the MCP server that Claude Desktop connects to — will
+be intercepted by Access and fail. Add a Bypass policy for those paths, or a
+service-token policy if you want them authenticated at the edge too.
+
+The symptom is specific and worth recognising: Access answers an unauthenticated
+request with a **302 to its login page**, so the caller sees HTML where it expected
+JSON rather than a clean 401. In Claude Desktop that surfaces as the connector
+failing to start with a parse error, not as an auth error.
 
 ## Updating
 

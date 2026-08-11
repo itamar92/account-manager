@@ -326,6 +326,37 @@ CREATE TABLE IF NOT EXISTS meta_campaign_events (
 CREATE INDEX IF NOT EXISTS idx_meta_campaign_events_event ON meta_campaign_events(event_id);
 CREATE INDEX IF NOT EXISTS idx_meta_campaign_daily_date ON meta_campaign_daily(date);
 
+-- ---------- AI campaign advisor ----------
+-- What the agent answered, kept rather than recomputed. A run goes over SSH to another machine
+-- and takes a minute or two, so the tab paints the last report and asks for a new one only when
+-- somebody presses the button. The request is stored beside the response because a report is
+-- only readable against the question it answered — a verdict on "2026" means nothing once the
+-- period selector has moved on.
+CREATE TABLE IF NOT EXISTS ai_campaign_reports (
+  id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,                     -- 'analysis' (a period) | 'draft' (one show)
+  range_from TEXT,
+  range_to TEXT,
+  event_id TEXT,                          -- the show a draft is for; null for an analysis
+  request TEXT NOT NULL,                  -- JSON: what was asked
+  response TEXT NOT NULL,                 -- JSON: what came back, already parsed and validated
+  duration_ms INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Follow-up questions. Separate from the reports because a conversation is appended to and a
+-- report is replaced, and mixing the two makes "the latest one" ambiguous.
+CREATE TABLE IF NOT EXISTS ai_chat_messages (
+  id TEXT PRIMARY KEY,
+  thread_id TEXT NOT NULL,
+  role TEXT NOT NULL,                     -- 'user' | 'assistant'
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_reports_kind ON ai_campaign_reports(kind, created_at);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_thread ON ai_chat_messages(thread_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);

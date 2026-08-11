@@ -38,6 +38,18 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
+import { listClients, listInvoices, listWorks } from './queries.js';
+import { agentStatus, ping as agentPing } from './agentClient.js';
+import {
+  analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
+} from './campaignAdvisor.js';
+
+/**
+ * The follow-up conversation is a single shared thread rather than one per user: the owner is
+ * the only person who can ask, and a band member reading along should see the same exchange
+ * rather than an empty box.
+ */
+const CAMPAIGN_CHAT_THREAD = 'moonlight-campaigns';
 
 /**
  * Drops the rows a calendar event produced, so excluding it takes effect at once.
@@ -240,15 +252,7 @@ router.put('/reports/filings/:kind/:periodKey', requireOwner, handle((req, res) 
 
 // ============ clients (owner) ============
 router.get('/clients', requireOwner, handle((_req, res) => {
-  const clients = db.prepare(
-    `SELECT c.*,
-       (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_total,
-       (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_count,
-       (SELECT COALESCE(SUM(total),0) FROM invoices i WHERE i.client_id = c.id AND i.status = 'issued'
-          AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS open_invoices_total
-     FROM clients c ORDER BY c.name`
-  ).all();
-  res.json({ clients });
+  res.json({ clients: listClients() });
 }));
 
 router.post('/clients', requireOwner, handle((req, res) => {
@@ -318,18 +322,13 @@ function renamed(incoming: unknown, current: unknown): boolean {
 
 // ============ works (owner) ============
 router.get('/works', requireOwner, handle((req, res) => {
-  const { status, client_id } = req.query;
-  let sql = `SELECT w.*, c.name AS client_name, i.number AS invoice_number
-             FROM works w JOIN clients c ON c.id = w.client_id
-             LEFT JOIN invoices i ON i.id = w.invoice_id WHERE 1=1`;
-  const params: any[] = [];
-  if (status) { sql += ' AND w.status = ?'; params.push(status); }
-  if (client_id) { sql += ' AND w.client_id = ?'; params.push(client_id); }
-  const range = dateRange(req.query);
-  if (range.from) { sql += ' AND w.date >= ?'; params.push(range.from); }
-  if (range.to) { sql += ' AND w.date <= ?'; params.push(range.to); }
-  sql += ' ORDER BY w.date DESC';
-  res.json({ works: db.prepare(sql).all(...params) });
+  res.json({
+    works: listWorks({
+      ...dateRange(req.query),
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+      client_id: typeof req.query.client_id === 'string' ? req.query.client_id : undefined,
+    }),
+  });
 }));
 
 router.post('/works', requireOwner, handle((req, res) => {
@@ -443,24 +442,12 @@ router.post('/works/bulk-client', requireOwner, handle((req, res) => {
 
 // ============ invoices (owner) ============
 router.get('/invoices', requireOwner, handle((req, res) => {
-  const { status } = req.query;
-  let sql = `SELECT i.*, c.name AS client_name,
-               (SELECT COUNT(*) FROM works w WHERE w.invoice_id = i.id) AS works_count
-             FROM invoices i JOIN clients c ON c.id = i.client_id`;
-  const params: any[] = [];
-  const filters: string[] = [];
-  if (status) { filters.push('i.status = ?'); params.push(status); }
-  const range = dateRange(req.query);
-  if (range.from) { filters.push('i.date >= ?'); params.push(range.from); }
-  if (range.to) { filters.push('i.date <= ?'); params.push(range.to); }
-  if (filters.length) sql += ` WHERE ${filters.join(' AND ')}`;
-  sql += ' ORDER BY i.date DESC, i.created_at DESC';
-  const invoices = (db.prepare(sql).all(...params) as any[]).map((inv) => ({
-    ...inv,
-    doc_type_label: DOC_TYPE_LABELS[inv.doc_type] ?? null,
-    is_revenue: isRevenueDoc(inv.doc_type),
-  }));
-  res.json({ invoices });
+  res.json({
+    invoices: listInvoices({
+      ...dateRange(req.query),
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    }),
+  });
 }));
 
 router.get('/invoices/:id', requireOwner, handle((req, res) => {
@@ -509,7 +496,7 @@ router.get('/expenses', requireOwner, handle((req, res) => {
  * suppliers have not been paid. Both are about shows that already happened — a gig next month
  * owing nobody anything yet is not a loose end.
  */
-function bandFollowUps() {
+export function bandFollowUps() {
   const today = new Date().toISOString().slice(0, 10);
   const past = db
     .prepare('SELECT * FROM band_events WHERE date <= ? ORDER BY date DESC')
@@ -546,7 +533,7 @@ function bandFollowUps() {
   };
 }
 
-function bandSummary(range: { from?: string; to?: string } = {}) {
+export function bandSummary(range: { from?: string; to?: string } = {}) {
   const eventsWhere = rangeClause('date', range);
   const events = db.prepare(`SELECT * FROM band_events${eventsWhere.sql}`).all(...eventsWhere.params) as any[];
   const general = db
@@ -606,7 +593,7 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
  * sheet's «הוחזר» columns, so a row already squared takes no further part in the division.
  * Both halves follow the selected range, as the rest of the summary does.
  */
-function bandDivision(range: { from?: string; to?: string } = {}) {
+export function bandDivision(range: { from?: string; to?: string } = {}) {
   const where = rangeClause('date', range);
   const events = db
     .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
@@ -1169,6 +1156,67 @@ router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
   res.json(monthlyBreakdown(dateRange(req.query)));
 }));
 
+// ====== יועץ קמפיינים: the AI advisor over the ad data (agent reached over SSH) ======
+
+/**
+ * The last analysis for this period, straight from the database.
+ *
+ * A read, not a run: producing a report means an SSH session and a minute or two of the agent's
+ * time, so a page load must never start one. Everybody in the band can read the report; only the
+ * owner can spend a run on a new one.
+ */
+router.get('/moonlight/campaign-analysis', requireAuth, handle((req, res) => {
+  const range = dateRange(req.query);
+  res.json({ report: lastReport('analysis', range), agent: agentStatus() });
+}));
+
+/** Spends a run: rebuilds the context from the current data and asks the agent for a verdict. */
+router.post('/moonlight/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
+  res.json({ report: await analyzeCampaigns(dateRange(req.query)) });
+}));
+
+/** The last campaign plan drafted for a show, if there is one. */
+router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) => {
+  res.json({ report: lastReport('draft', {}, req.params.eventId) });
+}));
+
+/**
+ * Drafts a campaign for an upcoming show — audience, budget, schedule and ad copy.
+ *
+ * Text, not an action: nothing here reaches Meta. The plan is written to be read, corrected and
+ * typed into Ads Manager by a person, which is also why the whole history feeds it rather than
+ * whatever period the tab happens to be showing.
+ */
+router.post('/moonlight/campaign-draft', requireOwner, handleAsync(async (req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  res.json({ report: await draftCampaign(eventId, String(req.body?.brief || '').slice(0, 2000)) });
+}));
+
+/** The follow-up conversation. One thread per owner, which is all this app ever has. */
+router.get('/moonlight/campaign-chat', requireAuth, handle((req, res) => {
+  res.json({ messages: chatHistory(CAMPAIGN_CHAT_THREAD) });
+}));
+
+router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message) return res.status(400).json({ error: 'message is required' });
+  res.json({ messages: await chat(CAMPAIGN_CHAT_THREAD, message.slice(0, 2000), dateRange(req.query)) });
+}));
+
+router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {
+  res.json(clearChat(CAMPAIGN_CHAT_THREAD));
+}));
+
+/**
+ * Connectivity test for the Settings card: opens the SSH session and asks the agent its version.
+ * Proves the host answers, the key opens it, the host key matches the pin and the command exists
+ * — without spending a real analysis to find out which of those is broken.
+ */
+router.post('/integrations/agent/ping', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ result: await agentPing() });
+}));
+
 // ---- calendar rules: which events to draw, for band and for personal ----
 router.get('/calendar-rules', requireOwner, handle((_req, res) => {
   res.json({ rules: listRules(), overrides: listOverrides() });
@@ -1240,7 +1288,9 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     },
     business: getBusinessDetails(),
     business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
-    integrations: { morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus() },
+    integrations: {
+      morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus(), agent: agentStatus(),
+    },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
     api_keys: db.prepare('SELECT id, name, key_prefix, created_at, last_used_at FROM api_keys ORDER BY created_at').all(),

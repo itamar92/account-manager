@@ -42,6 +42,11 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
 | `META_API_VERSION` | `v25.0` | Graph API version |
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
+| `AGENT_SSH_HOST` / `AGENT_SSH_PORT` / `AGENT_SSH_USER` | — / `22` / — | the machine the AI agent runs on; without them the יועץ קמפיינים tab is disabled |
+| `AGENT_SSH_KEY` or `AGENT_SSH_KEY_PATH` | — | the private key, inline (`\n` for newlines) or as a file |
+| `AGENT_SSH_HOST_KEY` | — | the agent host's public key, from `ssh-keyscan`. **Required in production** |
+| `AGENT_COMMAND` | `claude -p --output-format json` | the fixed command run on that machine; the prompt goes to its stdin |
+| `AGENT_TIMEOUT_MS` | `120000` | how long a single run may take before the connection is dropped |
 
 ## Seeded users
 
@@ -507,6 +512,125 @@ at all rather than putting dollars in a shekel column.
 | `DELETE /api/integrations/meta/campaigns/:id/mappings/:eventId` | unmap (the show keeps its figure) |
 | `GET /api/moonlight/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
 | `GET /api/moonlight/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
+
+## יועץ קמפיינים — the AI advisor (Moonlight → יועץ קמפיינים)
+
+The פרסום tab says what a show's promotion **cost**. This one asks whether it was worth it:
+a verdict on the period, findings tied to specific shows and campaigns, ranked suggestions, a
+drafted plan for a show that has not happened yet, and a box for follow-up questions.
+
+**It reaches the AI over SSH, not over an API.** The agent runs as a command-line tool on another
+machine where it is already logged in; the app opens an SSH session, writes the prompt to that
+command's **stdin** and reads the answer back. What this buys is the credential: the app holds a
+key to one fixed command on somebody else's box, and no AI API key exists in this container, in
+the database, or in any error that reaches a browser.
+
+Three properties are deliberate and worth keeping:
+
+- **The prompt never touches a command line.** The command comes from `AGENT_COMMAND` in the
+  server's environment and is never assembled from a request, so no text — typed, or arriving
+  from Meta — can extend it.
+- **The host key is pinned** (`AGENT_SSH_HOST_KEY`). Without a pin, whoever answers the address
+  gets the key; unset, the app refuses to connect in production.
+- **Nothing the agent says takes effect.** It reads a JSON extract — shows, tickets, revenue,
+  campaigns, spend curves — and returns text. It gets no database handle, no Meta token and no
+  write path, and the member division is deliberately not in the extract it is sent.
+
+Reports are stored, so opening the tab paints the last one instead of spending a minute on a page
+load; a run happens only when the owner presses the button. Band members read along.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/moonlight/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
+| `POST /api/moonlight/campaign-analysis?year=&month=` | spend a run: analyse the period afresh (owner) |
+| `GET /api/moonlight/campaign-draft/:eventId` | the last campaign plan drafted for a show |
+| `POST /api/moonlight/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
+| `GET /api/moonlight/campaign-chat` | the follow-up thread |
+| `POST /api/moonlight/campaign-chat` | ask a follow-up `{message}` (owner) |
+| `DELETE /api/moonlight/campaign-chat` | clear the thread (owner) |
+| `POST /api/integrations/agent/ping` | connectivity test: opens the session, asks the agent its version |
+
+Setting the agent host up is in [`../deploy/README.md`](../deploy/README.md).
+
+## MCP server (`/mcp`) — read-only access for AI agents
+
+Lets an outside AI agent — Claude Desktop, claude.ai, anything that speaks
+[MCP](https://modelcontextprotocol.io) — read this app's data and answer questions against it,
+the way the in-app advisor does for campaigns but across the whole dataset.
+
+**Everything it exposes is a read.** There is no write path: not a guarded one, not a "safe"
+subset. An assistant that can tell you a client is overdue is useful; an assistant that can issue
+an invoice because a web page it read told it to is a liability, and the app's own UI is three
+clicks away. The tool list in `server/mcpTools.ts` is the entire authorization surface — a tool
+that is not in that file does not exist.
+
+Every tool calls the same reader the browser's own screens call (`queries.ts`, `reports.ts`,
+`metaSync.ts`, …), so the agent and the screen can never disagree about what a number is.
+
+| Tool | Returns |
+|------|---------|
+| `get_overview` | Orientation: what the app holds, P&L by month, money owed, band totals |
+| `list_clients` | Clients with uninvoiced work and unpaid invoices |
+| `list_works` | Billable jobs, filterable by status, client and date |
+| `list_invoices` | Issued documents, with document type and whether each counts as revenue |
+| `list_expenses` | Expenses with categories and the input-VAT summary |
+| `get_tax_report` | מע"מ and income tax for a year |
+| `moonlight_shows` | The band's shows: tickets, fee, expenses, profit, division |
+| `moonlight_summary` | Band totals, what each member is owed, and the follow-up lists |
+| `moonlight_assignments` | Staffing per show, suppliers, and what each is owed |
+| `moonlight_ad_analysis` | Ad spend per show against tickets and revenue |
+| `moonlight_campaigns` | Meta campaigns, their mappings, and daily spend curves |
+| `moonlight_campaign_advice` | The last stored verdict from the in-app advisor |
+
+Results are capped at 500 rows per call (`truncated: true` says when the cap bit), so one broad
+question cannot pull the whole database into a context window.
+
+### Authentication
+
+The endpoint uses the same `X-API-Key` mechanism as `/api/v1` — create a key in
+**Settings → מפתחות API**, where it is shown exactly once. Revoking the key cuts the agent off
+like any other client.
+
+### Connecting Claude Desktop
+
+Claude Desktop launches local MCP servers as a child process and passes secrets through `env`;
+its remote-connector flow takes a URL and expects OAuth. `bin/mcp-bridge.mjs` is the short path
+between the two — a dependency-free relay that pipes JSON-RPC frames to `/mcp` with the key
+attached. Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "account-manager": {
+      "command": "node",
+      "args": ["/absolute/path/to/account-manager/app/bin/mcp-bridge.mjs"],
+      "env": {
+        "AM_URL": "https://im-tools.org/mcp",
+        "AM_API_KEY": "am_…"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop; the tools appear in the connector list. Point `AM_URL` at
+`http://127.0.0.1:3000/mcp` to develop against a local server. The bridge understands no MCP
+whatsoever — every protocol decision lives in `server/mcpServer.ts`, so adding a tool changes the
+server and the bridge keeps working untouched.
+
+Any client that can send a header can skip the bridge and POST straight to `https://im-tools.org/mcp`.
+
+### Protocol notes
+
+Streamable HTTP, **stateless**: every POST is a complete exchange answered with plain JSON, so
+there is no session table, no stream to reconnect, and nothing to clean up when a client
+disappears. `GET /mcp` returns 405 — this server never initiates messages. Protocol revisions
+`2024-11-05` through `2025-11-25` are accepted.
+
+The protocol is implemented directly rather than via the official SDK: that SDK would pull Hono,
+Express 5, jose, ajv, cors and an OAuth client into an app that runs Express 4 with fifteen
+hand-picked dependencies, and a stateless tools-only server is a couple hundred lines of
+well-specified JSON-RPC. That trade would look different the day this needs sessions or OAuth.
 
 ## External API (`/api/v1`)
 
