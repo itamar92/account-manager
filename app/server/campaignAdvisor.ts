@@ -1,0 +1,424 @@
+/**
+ * יועץ קמפיינים — the judgement layer over the ad data.
+ *
+ * The פרסום tab already answers *what* a show's promotion cost: spend per show, cost per ticket,
+ * spend as a share of the fee. What it cannot answer is whether any of that was good, why one
+ * show's campaign sold tickets and another's did not, and what to buy differently next time.
+ * That is a reading-comprehension problem, so it goes to the agent over SSH (`agentClient.ts`).
+ *
+ * The context is assembled from the readers that already exist in `metaSync.ts` rather than from
+ * fresh SQL. Two tabs disagreeing about what a show's ads cost would be worse than either of them
+ * being wrong, and the only way to guarantee they agree is to compute it once.
+ *
+ * The agent gets a JSON document and returns a JSON document. It has no database handle, no Meta
+ * token and no write path: nothing it says takes effect until a person acts on it.
+ */
+
+import { db, uuid, setSetting } from './db.js';
+import { runAgent, AgentError } from './agentClient.js';
+import { adAnalysis, campaignDaily, listCampaigns, monthlyBreakdown } from './metaSync.js';
+import { eventLabel } from './moonlight.js';
+
+// ---------------------------------------------------------------- context
+
+/** How many campaigns' daily curves are worth sending. The long tail is noise in a prompt. */
+const DAILY_CURVE_CAMPAIGNS = 12;
+
+export interface AdviserContext {
+  generated_at: string;
+  range: { from?: string; to?: string };
+  totals: ReturnType<typeof adAnalysis>['totals'];
+  shows: Array<Record<string, unknown>>;
+  campaigns: Array<Record<string, unknown>>;
+  monthly: ReturnType<typeof monthlyBreakdown>['months'];
+  upcoming_shows: Array<{ id: string; label: string; date: string; venue: string; tickets: number }>;
+}
+
+/**
+ * Everything the agent is allowed to reason from, and nothing else.
+ *
+ * Deliberately narrower than the database: no member names, no division, no bank detail, no
+ * supplier debt. A campaign question needs shows, tickets, money in, money out and the campaigns
+ * themselves — sending the rest would be handing an outside process the band's payroll for no
+ * gain in the answer.
+ */
+export function buildContext(range: { from?: string; to?: string } = {}): AdviserContext {
+  const analysis = adAnalysis(range);
+  const campaigns = listCampaigns();
+
+  // The daily curve is what says whether the money went out in time to sell a ticket — a campaign
+  // that spent everything in the last two days reads very differently from one that ramped. Only
+  // for the campaigns that actually spent, biggest first, so the prompt stays readable.
+  const curved = [...campaigns]
+    .filter((c) => c.spend > 0)
+    .sort((a, b) => b.spend - a.spend)
+    .slice(0, DAILY_CURVE_CAMPAIGNS);
+  const curves = new Map(curved.map((c) => [c.id, campaignDaily(c.id)]));
+
+  const upcoming = (
+    db
+      .prepare(
+        `SELECT id, venue, date, tickets FROM band_events
+         WHERE date >= date('now') ORDER BY date LIMIT 20`
+      )
+      .all() as Array<{ id: string; venue: string; date: string; tickets: number }>
+  ).map((e) => ({ ...e, label: eventLabel(e.venue, e.date) }));
+
+  return {
+    generated_at: new Date().toISOString(),
+    range,
+    totals: analysis.totals,
+    shows: analysis.rows.map((row) => ({
+      event_id: row.event_id,
+      label: row.label,
+      date: row.date,
+      venue: row.venue,
+      tickets: row.tickets,
+      revenue: row.revenue,
+      ad_spend: row.ad_spend,
+      cost_per_ticket: row.cost_per_ticket,
+      spend_share_of_revenue: row.spend_share_of_revenue,
+      impressions: row.impressions,
+      clicks: row.clicks,
+      campaigns: row.campaigns,
+      profit: row.profit,
+    })),
+    campaigns: campaigns.map((c) => ({
+      campaign_id: c.id,
+      name: c.name,
+      status: c.status,
+      objective: c.objective,
+      first_spend_date: c.first_spend_date,
+      last_spend_date: c.last_spend_date,
+      spend: c.spend,
+      impressions: c.impressions,
+      clicks: c.clicks,
+      reach: c.reach,
+      mapped_shows: c.events.map((e: any) => ({ event_id: e.event_id, label: e.label, attributed: e.attributed })),
+      daily: curves.get(c.id) ?? undefined,
+    })),
+    monthly: monthlyBreakdown(range).months,
+    upcoming_shows: upcoming,
+  };
+}
+
+// ---------------------------------------------------------------- prompts
+
+/**
+ * What the agent needs to know about this band to judge a campaign at all.
+ *
+ * The economics are the whole point: a Moonlight campaign is not selling a product with a margin,
+ * it is filling a room on one night for a fee that is fixed before the ads start. So reach and
+ * impressions are means, tickets are the end, and a campaign that spent well after the show is
+ * money that could not possibly have worked.
+ */
+const BAND_BRIEF = `
+אתה יועץ פרסום דיגיטלי של להקת "Moonlight" — להקת הופעות חיה בישראל.
+הלהקה מפרסמת הופעות בפייסבוק ובאינסטגרם דרך Meta Ads. הכלכלה של קמפיין כאן:
+
+- לכל הופעה יש תאריך אחד. אחרי התאריך, כל שקל שהקמפיין ממשיך להוציא הוא בזבוז מוחלט.
+- ההכנסה מהופעה היא לרוב סכום קבוע שסוכם מראש מול המקום, ולפעמים תלויה בכרטיסים.
+- המדד שקובע הוא «עלות לכרטיס» (ad_spend חלקי tickets) ו«אחוז הפרסום מההכנסה».
+  חשיפות וקליקים הם אמצעי בלבד — הם לא מצדיקים קמפיין שלא מכר כרטיסים.
+- קהל היעד הוא ישראלי, דובר עברית, ומיקום גאוגרפי סביב מקום ההופעה הוא קריטי.
+- תקציבים קטנים: קמפיין טיפוסי הוא מאות עד אלפי שקלים בודדים.
+
+כל הסכומים בשקלים חדשים. כל התאריכים בפורמט YYYY-MM-DD.
+`.trim();
+
+/** Wraps a task and its schema around the context, and demands JSON and nothing else. */
+function buildPrompt(task: string, schema: string, context: unknown): string {
+  return [
+    BAND_BRIEF,
+    '',
+    task,
+    '',
+    'החזר אך ורק אובייקט JSON יחיד בפורמט הבא, ללא טקסט לפניו או אחריו, ללא הסברים וללא קוד:',
+    schema,
+    '',
+    'הנתונים:',
+    JSON.stringify(context),
+  ].join('\n');
+}
+
+// ---------------------------------------------------------------- parsing
+
+/**
+ * Digs the model's answer out of what came back on stdout.
+ *
+ * Two layers to peel. `--output-format json` wraps the answer in the CLI's own envelope, whose
+ * `result` field holds the text; and the text itself may be a bare object, a fenced block, or an
+ * object with a sentence in front of it however firmly the prompt asked otherwise. Everything
+ * failing is reported as a failure with the raw tail attached — a half-parsed report that renders
+ * as an empty verdict is worse than an error, because it looks like an answer.
+ */
+export function parseAgentJson(stdout: string): any {
+  const attempt = (text: string): any | null => {
+    const trimmed = text.trim();
+    if (!trimmed) return null;
+    try {
+      return JSON.parse(trimmed);
+    } catch { /* not bare JSON — try the shapes below */ }
+
+    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (fenced) {
+      try {
+        return JSON.parse(fenced[1]);
+      } catch { /* fall through */ }
+    }
+    const braced = trimmed.match(/\{[\s\S]*\}/);
+    if (braced) {
+      try {
+        return JSON.parse(braced[0]);
+      } catch { /* fall through */ }
+    }
+    return null;
+  };
+
+  const outer = attempt(stdout);
+  // The CLI envelope: `{ type: 'result', result: '…the answer…' }`. An answer that already parsed
+  // into the shape we wanted is left alone.
+  if (outer && typeof outer === 'object' && typeof outer.result === 'string') {
+    const inner = attempt(outer.result);
+    if (inner) return inner;
+    throw new AgentError(`תשובת הסוכן אינה JSON תקין: ${outer.result.slice(0, 300)}`);
+  }
+  if (outer) return outer;
+
+  throw new AgentError(`תשובת הסוכן אינה JSON תקין: ${stdout.trim().slice(-300) || '(ריק)'}`);
+}
+
+/** Runs the agent, records how it went, and hands back the parsed object. */
+async function ask(prompt: string): Promise<{ data: any; duration_ms: number }> {
+  const run = await runAgent(prompt);
+  if (run.code !== 0) {
+    setSetting('agent_last_error', `exit ${run.code}: ${run.stderr.trim().slice(0, 300)}`);
+    throw new AgentError(`הסוכן החזיר שגיאה: ${run.stderr.trim().slice(0, 300) || `קוד ${run.code}`}`);
+  }
+  const data = parseAgentJson(run.stdout);
+  setSetting('agent_last_run', new Date().toISOString());
+  setSetting('agent_last_error', '');
+  return { data, duration_ms: run.duration_ms };
+}
+
+// ---------------------------------------------------------------- stored reports
+
+export interface StoredReport {
+  id: string;
+  kind: string;
+  range_from: string | null;
+  range_to: string | null;
+  event_id: string | null;
+  response: any;
+  duration_ms: number | null;
+  created_at: string;
+}
+
+function saveReport(row: {
+  kind: string;
+  range: { from?: string; to?: string };
+  eventId?: string | null;
+  request: unknown;
+  response: unknown;
+  durationMs: number;
+}): StoredReport {
+  const id = uuid();
+  db.prepare(
+    `INSERT INTO ai_campaign_reports (id, kind, range_from, range_to, event_id, request, response, duration_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id, row.kind, row.range.from ?? null, row.range.to ?? null, row.eventId ?? null,
+    JSON.stringify(row.request), JSON.stringify(row.response), row.durationMs
+  );
+  return {
+    id,
+    kind: row.kind,
+    range_from: row.range.from ?? null,
+    range_to: row.range.to ?? null,
+    event_id: row.eventId ?? null,
+    response: row.response,
+    duration_ms: row.durationMs,
+    created_at: new Date().toISOString(),
+  };
+}
+
+/**
+ * The most recent report of a kind for a range, or null.
+ *
+ * This is what the tab paints on load. A run takes a minute over SSH, so a page that started one
+ * on every mount would be unusable — and an analysis of last month's shows does not go stale
+ * between two page loads anyway.
+ */
+export function lastReport(kind: string, range: { from?: string; to?: string } = {}, eventId?: string): StoredReport | null {
+  const row = db
+    .prepare(
+      `SELECT * FROM ai_campaign_reports
+       WHERE kind = ?
+         AND range_from IS ? AND range_to IS ?
+         AND (? IS NULL OR event_id = ?)
+       ORDER BY created_at DESC LIMIT 1`
+    )
+    .get(kind, range.from ?? null, range.to ?? null, eventId ?? null, eventId ?? null) as any;
+  if (!row) return null;
+  return {
+    id: row.id,
+    kind: row.kind,
+    range_from: row.range_from,
+    range_to: row.range_to,
+    event_id: row.event_id,
+    response: JSON.parse(row.response),
+    duration_ms: row.duration_ms,
+    created_at: row.created_at,
+  };
+}
+
+// ---------------------------------------------------------------- the three asks
+
+const ANALYSIS_SCHEMA = `{
+  "verdict": "good" | "ok" | "poor",
+  "headline": "משפט אחד בעברית שמסכם את מצב הפרסום בתקופה",
+  "benchmarks": {
+    "cost_per_ticket": number | null,
+    "spend_share_of_revenue": number | null,
+    "best_event_id": string | null,
+    "worst_event_id": string | null
+  },
+  "findings": [
+    { "severity": "high" | "medium" | "low", "title": "כותרת קצרה",
+      "detail": "מה נמצא ולמה זה משנה", "event_id": string | null, "campaign_id": string | null }
+  ],
+  "suggestions": [
+    { "title": "המלצה קצרה", "detail": "מה בדיוק לעשות",
+      "expected_impact": "מה זה צפוי לשנות", "effort": "low" | "medium" | "high" }
+  ]
+}`;
+
+export async function analyzeCampaigns(range: { from?: string; to?: string } = {}): Promise<StoredReport> {
+  const context = buildContext(range);
+  if (context.shows.length === 0) {
+    throw new AgentError('אין הופעות בטווח הזה לנתח', 400);
+  }
+
+  const prompt = buildPrompt(
+    [
+      'נתח את ביצועי הפרסום של ההופעות בנתונים המצורפים.',
+      'קבע verdict כולל, ציין ממצאים קונקרטיים (findings) שמסתמכים על מספרים מהנתונים,',
+      'ותן המלצות מעשיות (suggestions) מדורגות מהחשובה לפחות חשובה.',
+      'התייחס במפורש להופעות עם עלות לכרטיס חריגה, לקמפיינים שהמשיכו להוציא אחרי ההופעה,',
+      'ולהוצאה שלא שויכה לאף הופעה (unmapped_spend) אם יש כזו.',
+      'כל event_id ו-campaign_id חייבים להילקח מהנתונים — אל תמציא מזהים.',
+      'כתוב הכל בעברית.',
+    ].join('\n'),
+    ANALYSIS_SCHEMA,
+    context
+  );
+
+  const { data, duration_ms } = await ask(prompt);
+  return saveReport({ kind: 'analysis', range, request: { range }, response: data, durationMs: duration_ms });
+}
+
+const DRAFT_SCHEMA = `{
+  "objective": "מטרת הקמפיין ב-Meta",
+  "audience": "תיאור קהל היעד: גיל, מיקום, תחומי עניין",
+  "budget_total": number,
+  "daily_budget": number,
+  "schedule": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
+  "placements": ["מיקום פרסום"],
+  "creative": { "primary_text": "טקסט המודעה", "headline": "כותרת", "description": "תיאור" },
+  "notes": ["הערה על מה לבדוק או לשנות תוך כדי"]
+}`;
+
+export async function draftCampaign(eventId: string, brief: string): Promise<StoredReport> {
+  const event = db
+    .prepare('SELECT id, venue, date, tickets, amount_pre_vat FROM band_events WHERE id = ?')
+    .get(eventId) as { id: string; venue: string; date: string; tickets: number; amount_pre_vat: number } | undefined;
+  if (!event) throw new AgentError('ההופעה לא נמצאה', 404);
+
+  // The whole history, not just the range on screen: a plan for a new show is worth building on
+  // every campaign the band has ever run, and the tab's period filter is about reading, not this.
+  const context = {
+    ...buildContext({}),
+    target_show: { ...event, label: eventLabel(event.venue, event.date) },
+    brief: brief || null,
+  };
+
+  const prompt = buildPrompt(
+    [
+      `בנה תוכנית קמפיין להופעה: ${eventLabel(event.venue, event.date)} בתאריך ${event.date}.`,
+      'הסתמך על מה שעבד ומה שלא עבד בקמפיינים הקודמים שבנתונים.',
+      'התקציב חייב להיות ריאלי ביחס לתקציבים ההיסטוריים ולהכנסה הצפויה מההופעה.',
+      'תאריך הסיום של הקמפיין לא יכול להיות אחרי תאריך ההופעה.',
+      brief ? `בקשה מיוחדת מהמשתמש: ${brief}` : '',
+      'כתוב את טקסט המודעה בעברית, בטון של להקת הופעות — לא שיווקי מדי.',
+    ].filter(Boolean).join('\n'),
+    DRAFT_SCHEMA,
+    context
+  );
+
+  const { data, duration_ms } = await ask(prompt);
+  return saveReport({
+    kind: 'draft', range: {}, eventId, request: { event_id: eventId, brief }, response: data, durationMs: duration_ms,
+  });
+}
+
+// ---------------------------------------------------------------- follow-up chat
+
+export interface ChatMessage {
+  id: string;
+  thread_id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+/** How much of a thread is replayed to the agent. Long enough to follow up, short enough to send. */
+const CHAT_HISTORY_TURNS = 12;
+
+export function chatHistory(threadId: string): ChatMessage[] {
+  return db
+    .prepare('SELECT * FROM ai_chat_messages WHERE thread_id = ? ORDER BY created_at, rowid')
+    .all(threadId) as ChatMessage[];
+}
+
+export function clearChat(threadId: string): { deleted: number } {
+  const info = db.prepare('DELETE FROM ai_chat_messages WHERE thread_id = ?').run(threadId);
+  return { deleted: info.changes };
+}
+
+function appendChat(threadId: string, role: 'user' | 'assistant', content: string) {
+  db.prepare('INSERT INTO ai_chat_messages (id, thread_id, role, content) VALUES (?, ?, ?, ?)')
+    .run(uuid(), threadId, role, content);
+}
+
+/**
+ * One follow-up turn.
+ *
+ * Answers in prose rather than JSON — this is the "why was that show so expensive?" box, and
+ * forcing a schema onto a conversation gets a worse answer than asking for a sentence. The reply
+ * is still wrapped in JSON so a truncated stream cannot be mistaken for a short answer.
+ */
+export async function chat(threadId: string, message: string, range: { from?: string; to?: string } = {}): Promise<ChatMessage[]> {
+  const history = chatHistory(threadId).slice(-CHAT_HISTORY_TURNS);
+  const context = buildContext(range);
+
+  const prompt = buildPrompt(
+    [
+      'ענה על שאלת ההמשך של המשתמש על סמך נתוני הפרסום המצורפים.',
+      'ענה בעברית, קצר ולעניין, והסתמך על מספרים מהנתונים כשאפשר.',
+      'אם הנתונים לא מספיקים כדי לענות — אמור זאת במפורש במקום לנחש.',
+      '',
+      'השיחה עד כה:',
+      ...history.map((m) => `${m.role === 'user' ? 'משתמש' : 'יועץ'}: ${m.content}`),
+      `משתמש: ${message}`,
+    ].join('\n'),
+    '{ "answer": "התשובה בעברית" }',
+    context
+  );
+
+  const { data } = await ask(prompt);
+  const answer = typeof data?.answer === 'string' ? data.answer : JSON.stringify(data);
+
+  appendChat(threadId, 'user', message);
+  appendChat(threadId, 'assistant', answer);
+  return chatHistory(threadId);
+}

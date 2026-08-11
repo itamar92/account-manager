@@ -20,6 +20,12 @@ services:
       DATA_DIR: /data
     volumes:
       - am-data:/data
+    # The AI agent for יועץ קמפיינים runs on the VM itself, and the app reaches it over SSH.
+    # On Linux there is no host.docker.internal unless you ask for one — without this the
+    # container has no name for the machine it is running on. Harmless when the agent is
+    # unconfigured or lives somewhere else.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # "expose", not "ports" — reachable from cloudflared, not from the host's
     # network interface. Publishing 3000 would bypass the tunnel entirely.
     expose:

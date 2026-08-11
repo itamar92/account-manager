@@ -78,6 +78,22 @@ export function Settings() {
     finally { setSyncing(''); }
   };
 
+  /**
+   * Opens the SSH session and asks the agent its version. Reported in the same box the syncs use,
+   * because "did it work" is the same question whichever connection was tested.
+   */
+  const pingAgent = async () => {
+    setSyncing('agent');
+    setError('');
+    setSyncResult('');
+    try {
+      const d = await post('/integrations/agent/ping');
+      setSyncResult(`הסוכן ענה תוך ${Math.round(d.result.duration_ms / 1000)} שניות · ${d.result.version}`);
+      load();
+    } catch (err: any) { setError(err.message); }
+    finally { setSyncing(''); }
+  };
+
   const createKey = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -294,6 +310,26 @@ export function Settings() {
             busy={syncing === 'meta'}
             onSync={() => runSync('meta')}
           />
+          {/* Not a sync: nothing is pulled from the agent on a schedule. The button opens the SSH
+              session and asks the agent its version, which is the cheapest way to find out which
+              half of the connection is broken. */}
+          <IntegrationRow
+            title="סוכן AI — יועץ קמפיינים (SSH)"
+            configured={data.integrations.agent.configured}
+            missingHint="חסרים AGENT_SSH_HOST / AGENT_SSH_USER / AGENT_SSH_KEY"
+            lastSync={data.integrations.agent.last_run}
+            detail={
+              `${data.integrations.agent.host} · ${data.integrations.agent.command}` +
+              (data.integrations.agent.host_key_pinned ? ' · מפתח מארח מוצמד' : ' · ⚠ מפתח המארח לא מוצמד') +
+              (data.integrations.agent.last_error ? `\n⚠ ${data.integrations.agent.last_error}` : '')
+            }
+            busy={syncing === 'agent'}
+            onSync={pingAgent}
+            actionLabel="בדיקת חיבור"
+            busyLabel="בודק…"
+            lastLabel="ריצה אחרונה"
+            neverLabel="טרם רץ"
+          />
         </div>
 
         {/* Only worth showing once there is an account to talk about, and only a problem when
@@ -422,8 +458,14 @@ export function Settings() {
   );
 }
 
+/**
+ * The labels are overridable because not every connection is a sync: the AI agent is *tested*,
+ * not pulled from, and a button reading «סנכרון» on it would promise data movement that never
+ * happens.
+ */
 function IntegrationRow({
   title, configured, missingHint, lastSync, detail, busy, onSync,
+  actionLabel = 'סנכרון', busyLabel = 'מסנכרן…', lastLabel = 'סנכרון אחרון', neverLabel = 'טרם סונכרן',
 }: {
   title: string;
   configured: boolean;
@@ -432,6 +474,10 @@ function IntegrationRow({
   detail: string;
   busy: boolean;
   onSync: () => void;
+  actionLabel?: string;
+  busyLabel?: string;
+  lastLabel?: string;
+  neverLabel?: string;
 }) {
   return (
     <div className="bg-slate-800/40 border border-slate-800 rounded-xl p-3">
@@ -445,11 +491,11 @@ function IntegrationRow({
             {configured ? detail : missingHint}
           </div>
           <div className="text-xs text-slate-600 mt-0.5">
-            {lastSync ? `סנכרון אחרון: ${new Date(lastSync).toLocaleString('he-IL')}` : 'טרם סונכרן'}
+            {lastSync ? `${lastLabel}: ${new Date(lastSync).toLocaleString('he-IL')}` : neverLabel}
           </div>
         </div>
         <Button variant="ghost" onClick={onSync} disabled={!configured || busy}>
-          {busy ? 'מסנכרן…' : 'סנכרון'}
+          {busy ? busyLabel : actionLabel}
         </Button>
       </div>
     </div>

@@ -38,6 +38,17 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
+import { agentStatus, ping as agentPing } from './agentClient.js';
+import {
+  analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
+} from './campaignAdvisor.js';
+
+/**
+ * The follow-up conversation is a single shared thread rather than one per user: the owner is
+ * the only person who can ask, and a band member reading along should see the same exchange
+ * rather than an empty box.
+ */
+const CAMPAIGN_CHAT_THREAD = 'moonlight-campaigns';
 
 /**
  * Drops the rows a calendar event produced, so excluding it takes effect at once.
@@ -1169,6 +1180,67 @@ router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
   res.json(monthlyBreakdown(dateRange(req.query)));
 }));
 
+// ====== יועץ קמפיינים: the AI advisor over the ad data (agent reached over SSH) ======
+
+/**
+ * The last analysis for this period, straight from the database.
+ *
+ * A read, not a run: producing a report means an SSH session and a minute or two of the agent's
+ * time, so a page load must never start one. Everybody in the band can read the report; only the
+ * owner can spend a run on a new one.
+ */
+router.get('/moonlight/campaign-analysis', requireAuth, handle((req, res) => {
+  const range = dateRange(req.query);
+  res.json({ report: lastReport('analysis', range), agent: agentStatus() });
+}));
+
+/** Spends a run: rebuilds the context from the current data and asks the agent for a verdict. */
+router.post('/moonlight/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
+  res.json({ report: await analyzeCampaigns(dateRange(req.query)) });
+}));
+
+/** The last campaign plan drafted for a show, if there is one. */
+router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) => {
+  res.json({ report: lastReport('draft', {}, req.params.eventId) });
+}));
+
+/**
+ * Drafts a campaign for an upcoming show — audience, budget, schedule and ad copy.
+ *
+ * Text, not an action: nothing here reaches Meta. The plan is written to be read, corrected and
+ * typed into Ads Manager by a person, which is also why the whole history feeds it rather than
+ * whatever period the tab happens to be showing.
+ */
+router.post('/moonlight/campaign-draft', requireOwner, handleAsync(async (req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  res.json({ report: await draftCampaign(eventId, String(req.body?.brief || '').slice(0, 2000)) });
+}));
+
+/** The follow-up conversation. One thread per owner, which is all this app ever has. */
+router.get('/moonlight/campaign-chat', requireAuth, handle((req, res) => {
+  res.json({ messages: chatHistory(CAMPAIGN_CHAT_THREAD) });
+}));
+
+router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, res) => {
+  const message = String(req.body?.message || '').trim();
+  if (!message) return res.status(400).json({ error: 'message is required' });
+  res.json({ messages: await chat(CAMPAIGN_CHAT_THREAD, message.slice(0, 2000), dateRange(req.query)) });
+}));
+
+router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {
+  res.json(clearChat(CAMPAIGN_CHAT_THREAD));
+}));
+
+/**
+ * Connectivity test for the Settings card: opens the SSH session and asks the agent its version.
+ * Proves the host answers, the key opens it, the host key matches the pin and the command exists
+ * — without spending a real analysis to find out which of those is broken.
+ */
+router.post('/integrations/agent/ping', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ result: await agentPing() });
+}));
+
 // ---- calendar rules: which events to draw, for band and for personal ----
 router.get('/calendar-rules', requireOwner, handle((_req, res) => {
   res.json({ rules: listRules(), overrides: listOverrides() });
@@ -1240,7 +1312,9 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     },
     business: getBusinessDetails(),
     business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
-    integrations: { morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus() },
+    integrations: {
+      morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus(), agent: agentStatus(),
+    },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
     api_keys: db.prepare('SELECT id, name, key_prefix, created_at, last_used_at FROM api_keys ORDER BY created_at').all(),
