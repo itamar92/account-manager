@@ -38,6 +38,7 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
+import { listClients, listInvoices, listWorks } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import {
   analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
@@ -251,15 +252,7 @@ router.put('/reports/filings/:kind/:periodKey', requireOwner, handle((req, res) 
 
 // ============ clients (owner) ============
 router.get('/clients', requireOwner, handle((_req, res) => {
-  const clients = db.prepare(
-    `SELECT c.*,
-       (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_total,
-       (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_count,
-       (SELECT COALESCE(SUM(total),0) FROM invoices i WHERE i.client_id = c.id AND i.status = 'issued'
-          AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS open_invoices_total
-     FROM clients c ORDER BY c.name`
-  ).all();
-  res.json({ clients });
+  res.json({ clients: listClients() });
 }));
 
 router.post('/clients', requireOwner, handle((req, res) => {
@@ -329,18 +322,13 @@ function renamed(incoming: unknown, current: unknown): boolean {
 
 // ============ works (owner) ============
 router.get('/works', requireOwner, handle((req, res) => {
-  const { status, client_id } = req.query;
-  let sql = `SELECT w.*, c.name AS client_name, i.number AS invoice_number
-             FROM works w JOIN clients c ON c.id = w.client_id
-             LEFT JOIN invoices i ON i.id = w.invoice_id WHERE 1=1`;
-  const params: any[] = [];
-  if (status) { sql += ' AND w.status = ?'; params.push(status); }
-  if (client_id) { sql += ' AND w.client_id = ?'; params.push(client_id); }
-  const range = dateRange(req.query);
-  if (range.from) { sql += ' AND w.date >= ?'; params.push(range.from); }
-  if (range.to) { sql += ' AND w.date <= ?'; params.push(range.to); }
-  sql += ' ORDER BY w.date DESC';
-  res.json({ works: db.prepare(sql).all(...params) });
+  res.json({
+    works: listWorks({
+      ...dateRange(req.query),
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+      client_id: typeof req.query.client_id === 'string' ? req.query.client_id : undefined,
+    }),
+  });
 }));
 
 router.post('/works', requireOwner, handle((req, res) => {
@@ -454,24 +442,12 @@ router.post('/works/bulk-client', requireOwner, handle((req, res) => {
 
 // ============ invoices (owner) ============
 router.get('/invoices', requireOwner, handle((req, res) => {
-  const { status } = req.query;
-  let sql = `SELECT i.*, c.name AS client_name,
-               (SELECT COUNT(*) FROM works w WHERE w.invoice_id = i.id) AS works_count
-             FROM invoices i JOIN clients c ON c.id = i.client_id`;
-  const params: any[] = [];
-  const filters: string[] = [];
-  if (status) { filters.push('i.status = ?'); params.push(status); }
-  const range = dateRange(req.query);
-  if (range.from) { filters.push('i.date >= ?'); params.push(range.from); }
-  if (range.to) { filters.push('i.date <= ?'); params.push(range.to); }
-  if (filters.length) sql += ` WHERE ${filters.join(' AND ')}`;
-  sql += ' ORDER BY i.date DESC, i.created_at DESC';
-  const invoices = (db.prepare(sql).all(...params) as any[]).map((inv) => ({
-    ...inv,
-    doc_type_label: DOC_TYPE_LABELS[inv.doc_type] ?? null,
-    is_revenue: isRevenueDoc(inv.doc_type),
-  }));
-  res.json({ invoices });
+  res.json({
+    invoices: listInvoices({
+      ...dateRange(req.query),
+      status: typeof req.query.status === 'string' ? req.query.status : undefined,
+    }),
+  });
 }));
 
 router.get('/invoices/:id', requireOwner, handle((req, res) => {
@@ -520,7 +496,7 @@ router.get('/expenses', requireOwner, handle((req, res) => {
  * suppliers have not been paid. Both are about shows that already happened — a gig next month
  * owing nobody anything yet is not a loose end.
  */
-function bandFollowUps() {
+export function bandFollowUps() {
   const today = new Date().toISOString().slice(0, 10);
   const past = db
     .prepare('SELECT * FROM band_events WHERE date <= ? ORDER BY date DESC')
@@ -557,7 +533,7 @@ function bandFollowUps() {
   };
 }
 
-function bandSummary(range: { from?: string; to?: string } = {}) {
+export function bandSummary(range: { from?: string; to?: string } = {}) {
   const eventsWhere = rangeClause('date', range);
   const events = db.prepare(`SELECT * FROM band_events${eventsWhere.sql}`).all(...eventsWhere.params) as any[];
   const general = db
@@ -617,7 +593,7 @@ function bandSummary(range: { from?: string; to?: string } = {}) {
  * sheet's «הוחזר» columns, so a row already squared takes no further part in the division.
  * Both halves follow the selected range, as the rest of the summary does.
  */
-function bandDivision(range: { from?: string; to?: string } = {}) {
+export function bandDivision(range: { from?: string; to?: string } = {}) {
   const where = rangeClause('date', range);
   const events = db
     .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)

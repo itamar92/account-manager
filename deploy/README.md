@@ -242,9 +242,15 @@ This app holds your invoicing data behind one password. Zero Trust → Access �
 Applications, self-hosted, `im-tools.org`, policy `emails: itamar92@gmail.com` +
 the band addresses. Free up to 50 users.
 
-One catch: **exclude `/api/v1`**, or the Morning integration's `X-API-Key` calls
-will be intercepted by Access and fail. Add a Bypass policy for that path, or a
-service-token policy if you want it authenticated at the edge too.
+One catch: **exclude `/api/v1` and `/mcp`**, or the `X-API-Key` calls behind them —
+the Morning integration and the MCP server that Claude Desktop connects to — will
+be intercepted by Access and fail. Add a Bypass policy for those paths, or a
+service-token policy if you want them authenticated at the edge too.
+
+The symptom is specific and worth recognising: Access answers an unauthenticated
+request with a **302 to its login page**, so the caller sees HTML where it expected
+JSON rather than a clean 401. In Claude Desktop that surfaces as the connector
+failing to start with a parse error, not as an auth error.
 
 ## Updating
 

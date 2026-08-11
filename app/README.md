@@ -552,6 +552,86 @@ load; a run happens only when the owner presses the button. Band members read al
 
 Setting the agent host up is in [`../deploy/README.md`](../deploy/README.md).
 
+## MCP server (`/mcp`) — read-only access for AI agents
+
+Lets an outside AI agent — Claude Desktop, claude.ai, anything that speaks
+[MCP](https://modelcontextprotocol.io) — read this app's data and answer questions against it,
+the way the in-app advisor does for campaigns but across the whole dataset.
+
+**Everything it exposes is a read.** There is no write path: not a guarded one, not a "safe"
+subset. An assistant that can tell you a client is overdue is useful; an assistant that can issue
+an invoice because a web page it read told it to is a liability, and the app's own UI is three
+clicks away. The tool list in `server/mcpTools.ts` is the entire authorization surface — a tool
+that is not in that file does not exist.
+
+Every tool calls the same reader the browser's own screens call (`queries.ts`, `reports.ts`,
+`metaSync.ts`, …), so the agent and the screen can never disagree about what a number is.
+
+| Tool | Returns |
+|------|---------|
+| `get_overview` | Orientation: what the app holds, P&L by month, money owed, band totals |
+| `list_clients` | Clients with uninvoiced work and unpaid invoices |
+| `list_works` | Billable jobs, filterable by status, client and date |
+| `list_invoices` | Issued documents, with document type and whether each counts as revenue |
+| `list_expenses` | Expenses with categories and the input-VAT summary |
+| `get_tax_report` | מע"מ and income tax for a year |
+| `moonlight_shows` | The band's shows: tickets, fee, expenses, profit, division |
+| `moonlight_summary` | Band totals, what each member is owed, and the follow-up lists |
+| `moonlight_assignments` | Staffing per show, suppliers, and what each is owed |
+| `moonlight_ad_analysis` | Ad spend per show against tickets and revenue |
+| `moonlight_campaigns` | Meta campaigns, their mappings, and daily spend curves |
+| `moonlight_campaign_advice` | The last stored verdict from the in-app advisor |
+
+Results are capped at 500 rows per call (`truncated: true` says when the cap bit), so one broad
+question cannot pull the whole database into a context window.
+
+### Authentication
+
+The endpoint uses the same `X-API-Key` mechanism as `/api/v1` — create a key in
+**Settings → מפתחות API**, where it is shown exactly once. Revoking the key cuts the agent off
+like any other client.
+
+### Connecting Claude Desktop
+
+Claude Desktop launches local MCP servers as a child process and passes secrets through `env`;
+its remote-connector flow takes a URL and expects OAuth. `bin/mcp-bridge.mjs` is the short path
+between the two — a dependency-free relay that pipes JSON-RPC frames to `/mcp` with the key
+attached. Add to `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "account-manager": {
+      "command": "node",
+      "args": ["/absolute/path/to/account-manager/app/bin/mcp-bridge.mjs"],
+      "env": {
+        "AM_URL": "https://im-tools.org/mcp",
+        "AM_API_KEY": "am_…"
+      }
+    }
+  }
+}
+```
+
+Restart Claude Desktop; the tools appear in the connector list. Point `AM_URL` at
+`http://127.0.0.1:3000/mcp` to develop against a local server. The bridge understands no MCP
+whatsoever — every protocol decision lives in `server/mcpServer.ts`, so adding a tool changes the
+server and the bridge keeps working untouched.
+
+Any client that can send a header can skip the bridge and POST straight to `https://im-tools.org/mcp`.
+
+### Protocol notes
+
+Streamable HTTP, **stateless**: every POST is a complete exchange answered with plain JSON, so
+there is no session table, no stream to reconnect, and nothing to clean up when a client
+disappears. `GET /mcp` returns 405 — this server never initiates messages. Protocol revisions
+`2024-11-05` through `2025-11-25` are accepted.
+
+The protocol is implemented directly rather than via the official SDK: that SDK would pull Hono,
+Express 5, jose, ajv, cors and an OAuth client into an app that runs Express 4 with fifteen
+hand-picked dependencies, and a stateless tools-only server is a couple hundred lines of
+well-specified JSON-RPC. That trade would look different the day this needs sessions or OAuth.
+
 ## External API (`/api/v1`)
 
 Create an API key in **Settings → מפתחות API**, then send it as the `X-API-Key` header.
