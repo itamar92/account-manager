@@ -3,25 +3,33 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { get, post, put, nis } from '../api';
 import { useAuth } from '../AuthContext';
 import { Button, Input, Modal, usePeriodFilter } from '../ui';
-import { IncomeTab } from './moonlight/IncomeTab';
-import { EventExpensesTab } from './moonlight/EventExpensesTab';
+import { ShowsTab } from './moonlight/ShowsTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
-import { AssignmentsTab } from './moonlight/AssignmentsTab';
+import { SuppliersTab } from './moonlight/SuppliersTab';
 import { AdsTab } from './moonlight/AdsTab';
 import { CampaignAnalysisTab } from './moonlight/CampaignAnalysisTab';
 import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
 
 /**
- * The band's areas. Each one is its own route so the sidebar can link straight to it — the
- * tab strip that used to sit above them moved into the navigation when the shell was rebuilt.
+ * The band's areas, each its own route so the sidebar can link straight to it.
+ *
+ * There is no longer a tab per table. A show's income, its costs and who worked it were three
+ * lists you had to hold side by side to answer one question about one gig; they are now one
+ * page per show, reached from `shows`. What is left here is the work that genuinely spans
+ * shows: the summary, the supplier ledger, costs belonging to no show, and the ad spend.
  *
  * `campaignAi` sits next to `ads` because it is the same money read a different way: that one
  * says what the campaigns cost, this one says whether it was worth it.
  */
-type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses' | 'ads' | 'campaignAi';
+type Tab = 'summary' | 'shows' | 'suppliers' | 'generalExpenses' | 'ads' | 'campaignAi';
 
-const TABS: Tab[] = ['summary', 'income', 'assignments', 'eventExpenses', 'generalExpenses', 'ads', 'campaignAi'];
+const TABS: Tab[] = ['summary', 'shows', 'suppliers', 'generalExpenses', 'ads', 'campaignAi'];
+
+/** Where the retired tabs now live, so an old bookmark still lands somewhere sensible. */
+const MOVED: Record<string, Tab> = {
+  income: 'shows', eventExpenses: 'shows', assignments: 'suppliers',
+};
 
 const isTab = (value: string | undefined): value is Tab => !!value && (TABS as string[]).includes(value);
 
@@ -35,7 +43,6 @@ export function Moonlight() {
   // The tables show the period you are working in; the summary keeps its own, wider range.
   const period = usePeriodFilter();
   const [events, setEvents] = useState<any[]>([]);
-  const [eventExpenses, setEventExpenses] = useState<any[]>([]);
   const [generalExpenses, setGeneralExpenses] = useState<any[]>([]);
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [error, setError] = useState('');
@@ -45,7 +52,6 @@ export function Moonlight() {
     const query = period.params().toString();
     const qs = query ? `?${query}` : '';
     get(`/moonlight/events${qs}`).then((d) => setEvents(d.events)).catch((e) => setError(e.message));
-    get(`/moonlight/event-expenses${qs}`).then((d) => setEventExpenses(d.expenses)).catch((e) => setError(e.message));
     get(`/moonlight/general-expenses${qs}`).then((d) => setGeneralExpenses(d.expenses)).catch((e) => setError(e.message));
     // Unfiltered, so an expense can still be assigned to a show from another year.
     get('/moonlight/events').then((d) => setAllEvents(d.events)).catch(() => {});
@@ -80,7 +86,8 @@ export function Moonlight() {
 
   // An unknown tab in the URL is a typo or a stale bookmark, not a blank page.
   useEffect(() => {
-    if (params.tab !== undefined && !isTab(params.tab)) navigate('/moonlight/summary', { replace: true });
+    if (params.tab === undefined || isTab(params.tab)) return;
+    navigate(`/moonlight/${MOVED[params.tab] ?? 'summary'}`, { replace: true });
   }, [params.tab]);
 
   const tabProps = { isOwner, onError: setError, reload: load };
@@ -92,25 +99,13 @@ export function Moonlight() {
       )}
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
 
-      {tab === 'summary' && <SummaryTab onError={setError} />}
+      {tab === 'summary' && <SummaryTab onError={setError} isOwner={isOwner} />}
 
-      {tab === 'income' && (
-        <IncomeTab
-          {...tabProps}
-          events={events}
-          period={period}
-          onNewEvent={newEvent}
-          onEditEvent={setEventModal}
-        />
+      {tab === 'shows' && (
+        <ShowsTab {...tabProps} events={events} period={period} onNewEvent={newEvent} />
       )}
 
-      {tab === 'assignments' && (
-        <AssignmentsTab {...tabProps} period={period} />
-      )}
-
-      {tab === 'eventExpenses' && (
-        <EventExpensesTab {...tabProps} expenses={eventExpenses} events={allEvents} period={period} />
-      )}
+      {tab === 'suppliers' && <SuppliersTab {...tabProps} />}
 
       {tab === 'generalExpenses' && (
         <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} period={period} />

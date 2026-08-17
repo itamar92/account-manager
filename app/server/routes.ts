@@ -29,6 +29,7 @@ import {
   BAND_MEMBERS, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, deleteEventCascade, deleteExpenseRow,
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
   memberByName, normalizeCommissionPercent, normalizePaymentStatus, reassignExpenseRow,
+  PAID_EXPENSE_FIELDS,
   recomputeEvent, syncExpenseLabel, type MemberKey,
 } from './moonlight.js';
 import {
@@ -777,7 +778,42 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
 }
 
 router.get('/moonlight/summary', requireAuth, handle((req, res) => {
-  res.json({ summary: bandSummary(dateRange(req.query)) });
+  res.json({ summary: bandSummary(dateRange(req.query)), fund: bandFund() });
+}));
+
+/**
+ * The band's float (קופה), from both ends.
+ *
+ * `computed` is what the books say should be in it: money that actually came in, less what has
+ * been paid out to suppliers and handed to members, less the costs the float itself covered.
+ * `actual` is what the bank says, typed in by whoever last looked. The gap between them is the
+ * only interesting number of the three — it is a receipt nobody entered, or a payment nobody
+ * recorded, and it is worth seeing before it is a year old.
+ */
+export function bandFund() {
+  const events = db.prepare('SELECT * FROM band_events').all() as any[];
+  const general = db.prepare('SELECT * FROM band_general_expenses').all() as any[];
+  const sum = (rows: any[], fn: (row: any) => number) => round2(rows.reduce((s, r) => s + (fn(r) || 0), 0));
+
+  const received = sum(events.filter((e) => e.payment_status === 'received'), (e) => Number(e.amount_pre_vat));
+  const toSuppliers = sum(events, (e) => Number(e.expenses_paid));
+  const toMembers = sum(events.filter((e) => e.paid_to_musicians), (e) => Number(e.profit));
+  const fromFund = sum(general.filter((g) => String(g.paid_by ?? '').trim() === FUND_PAYER), (g) => Number(g.amount));
+
+  const computed = round2(received - toSuppliers - toMembers - fromFund);
+  const raw = getSetting('band_fund_actual', '');
+  const actual = raw === '' ? null : round2(Number(raw) || 0);
+  return {
+    received, toSuppliers, toMembers, fromFund, computed, actual,
+    gap: actual === null ? null : round2(actual - computed),
+  };
+}
+
+/** Records what the account actually holds. Empty clears it back to "nobody has said". */
+router.post('/moonlight/fund', requireOwner, handle((req, res) => {
+  const value = req.body?.actual;
+  setSetting('band_fund_actual', value === null || value === '' ? '' : String(Number(value) || 0));
+  res.json({ fund: bandFund() });
 }));
 
 /** The worked-out version of the summary's division figures — every step and its rows. */
@@ -787,7 +823,12 @@ router.get('/moonlight/division', requireAuth, handle((req, res) => {
 
 router.get('/moonlight/events', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
-  res.json({ events: db.prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`).all(...where.params) });
+  const events = db
+    .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
+    .all(...where.params) as any[];
+  // Which roles are unstaffed travels with the show, because that is what the list is scanned
+  // for — a gig three weeks out with nobody on sound is the row you are looking for.
+  res.json({ events: events.map((e) => ({ ...e, missing: missingRoles(e.id) })) });
 }));
 
 /**
@@ -817,6 +858,62 @@ router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
   });
 }));
 
+/**
+ * Everything about one show, in one request: the show, its costs, who is staffed on it and
+ * the suppliers that could be.
+ *
+ * It exists because the show page is now where all of that is read and written. Fetching the
+ * four lists separately and matching them up in the browser is how the old tabs worked, and
+ * it is exactly what made a show's numbers something you had to assemble in your head.
+ */
+router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
+  const event = getEvent(req.params.id);
+  if (!event) return res.status(404).json({ error: 'event not found' });
+  const expense = ensureExpenseRow(event);
+  const suppliers = listSuppliers();
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+
+  const assignments: Record<string, any> = {};
+  for (const a of assignmentsForEvent(event.id)) {
+    assignments[a.role] = {
+      supplier_id: a.supplier_id,
+      supplier_name: a.supplier_id ? byId.get(a.supplier_id)?.name ?? '?' : null,
+      not_needed: !!a.not_needed,
+      source: a.source,
+    };
+  }
+
+  res.json({
+    event: { ...event, label: eventLabel(event.venue, event.date) },
+    expenses: expense,
+    outstanding: expenseOutstanding(expense),
+    assignments,
+    missing: missingRoles(event.id),
+    suppliers,
+  });
+}));
+
+/**
+ * Ticks every cost line of one show as paid. It is the "תשלום לספקים" button: the page can
+ * already tick each line on its own, and this is the same decision taken for all of them at
+ * once, which is what actually happens on the evening a show is settled.
+ *
+ * Only lines carrying an amount are touched — marking an empty line paid would say a supplier
+ * who was never engaged has been settled with.
+ */
+router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, res) => {
+  const event = getEvent(req.params.id);
+  if (!event) return res.status(404).json({ error: 'event not found' });
+  const row = ensureExpenseRow(event);
+  const paid = PAID_EXPENSE_FIELDS.filter((f) => Number(row[f]) > 0);
+  if (paid.length) {
+    db.prepare(
+      `UPDATE band_event_expenses SET ${paid.map((f) => `${f}_paid = 1`).join(', ')} WHERE id = ?`
+    ).run(row.id);
+  }
+  res.json({ event: recomputeEvent(event.id), settled: paid.length });
+}));
+
 // Writes to moonlight data are owner-only; band members are view-only.
 // `expenses`, `expenses_paid` and `profit` are never taken from the client: they are derived
 // from the show's expense row by recomputeEvent.
@@ -825,11 +922,11 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   if (!b.venue || !b.date) return res.status(400).json({ error: 'venue and date are required' });
   const id = uuid();
   db.prepare(
-    `INSERT INTO band_events (id, venue, date, tickets, amount_pre_vat, amount_with_vat,
+    `INSERT INTO band_events (id, venue, date, tickets, capacity, amount_pre_vat, amount_with_vat,
       receiver, invoice, has_commission, commission_percent, paid_to_musicians, payment_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, b.venue, b.date, b.tickets || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
+    id, b.venue, b.date, b.tickets || 0, b.capacity || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
     b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0,
     b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT,
     b.paid_to_musicians ? 1 : 0,
@@ -861,12 +958,13 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     : existing.venue_locked ? 1 : 0;
 
   db.prepare(
-    `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?,
+    `UPDATE band_events SET venue=?, date=?, tickets=?, capacity=?, amount_pre_vat=?, amount_with_vat=?,
       receiver=?, invoice=?, has_commission=?, commission_percent=?, paid_to_musicians=?,
       division_mode=?, payment_status=?, amir=?, itamar=?, yuval=?, guy=?, venue_locked=?
      WHERE id=?`
   ).run(
-    b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat,
+    b.venue, b.date, b.tickets, Math.max(0, Math.round(Number(b.capacity) || 0)),
+    b.amount_pre_vat, b.amount_with_vat,
     b.receiver, b.invoice, b.has_commission ? 1 : 0, normalizeCommissionPercent(b.commission_percent),
     b.paid_to_musicians ? 1 : 0, divisionMode,
     normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',

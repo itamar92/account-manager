@@ -1,7 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
-import { Button, Input, Modal, DataTable, PageHeader, SearchInput, textMatch } from '../ui';
+import { Button, Empty, Input, Modal, PageHeader, SearchInput, textMatch } from '../ui';
+
+/** Two letters is what fits an avatar and still says which client it is. */
+const initials = (name: string) =>
+  String(name).trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?';
 
 const emptyForm = { name: '', email: '', phone: '', tax_id: '', payment_terms_days: 30, notes: '' };
 
@@ -57,13 +61,18 @@ export function Clients() {
   };
 
   const visible = clients.filter((c) => textMatch(search, c.name, c.email));
-  const withBalance = clients.filter((c) => Number(c.unpaid_total) > 0).length;
+  // "Open balance" is everything this client owes: work not yet billed plus invoices not yet
+  // paid. Splitting the two across columns made you add them up yourself to answer the only
+  // question anybody asks of a client list.
+  const balance = (c: any) => (Number(c.unpaid_total) || 0) + (Number(c.open_invoices_total) || 0);
+  const withBalance = clients.filter((c) => balance(c) > 0).length;
+  const year = new Date().getFullYear();
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="לקוחות"
-        sub={<><span className="num">{clients.length}</span> לקוחות · <span className="num">{withBalance}</span> עם יתרה פתוחה</>}
+        sub={<><span className="num">{clients.length}</span> פעילים · <span className="num">{withBalance}</span> עם יתרה פתוחה</>}
         actions={
           <>
             <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי שם או אימייל…" className="w-52" />
@@ -73,40 +82,50 @@ export function Clients() {
       />
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
 
-      <DataTable
-        empty="אין לקוחות עדיין"
-        rows={visible}
-        rowKey={(c) => c.id}
-        rowClassName={() => 'hover:bg-soft'}
-        columns={[
-          { key: 'name', header: 'שם', mobile: 'title', sortValue: (c) => c.name, className: 'font-medium', render: (c) => c.name },
-          {
-            key: 'email', header: 'אימייל', sortValue: (c) => c.email, className: 'text-muted',
-            render: (c) => <span dir="ltr">{c.email || '—'}</span>,
-          },
-          {
-            key: 'unpaid', header: 'עבודות שטרם חויבו', sortValue: (c) => c.unpaid_total || 0,
-            render: (c) => c.unpaid_count > 0 ? (
-              <Link to={`/works?client=${c.id}`} className="text-accent hover:underline">
-                {nis(c.unpaid_total)} ({c.unpaid_count})
-              </Link>
-            ) : '—',
-          },
-          {
-            key: 'open', header: 'חשבוניות פתוחות', sortValue: (c) => c.open_invoices_total || 0,
-            render: (c) => c.open_invoices_total > 0 ? <span className="text-warn">{nis(c.open_invoices_total)}</span> : '—',
-          },
-          {
-            key: 'actions', mobile: 'actions', className: 'text-left whitespace-nowrap',
-            render: (c) => (
-              <div className="flex gap-3 justify-end">
-                <button onClick={() => openEdit(c)} className="text-sm text-accent hover:underline">עריכה</button>
-                <button onClick={() => remove(c)} className="text-sm text-neg hover:underline">מחיקה</button>
+      {visible.length === 0 ? (
+        <Empty text="אין לקוחות עדיין" />
+      ) : (
+        <div className="grid gap-3.5 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+          {visible.map((c) => (
+            <div key={c.id} className="bg-surface border border-line rounded-2xl p-4 md:p-5 flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-soft text-accent flex items-center justify-center text-[15px] font-bold shrink-0">
+                  {initials(c.name)}
+                </div>
+                <div className="min-w-0">
+                  <div className="text-base font-semibold truncate" title={c.name}>{c.name}</div>
+                  <div className="num text-[12.5px] text-faint">
+                    {c.last_work_date ? `עבודה אחרונה ${c.last_work_date}` : 'עדיין ללא עבודות'}
+                  </div>
+                </div>
               </div>
-            ),
-          },
-        ]}
-      />
+
+              <div className="flex justify-between text-sm">
+                <span className="text-muted">הכנסות {year}</span>
+                <span className="num font-semibold">{nis(c.revenue_ytd)}</span>
+              </div>
+              <div className="flex justify-between text-sm">
+                <span className="text-muted">יתרה פתוחה</span>
+                {balance(c) > 0 ? (
+                  <Link to={`/works?client=${c.id}`} className="num font-semibold text-warn hover:underline">
+                    {nis(balance(c))}
+                  </Link>
+                ) : (
+                  <span className="num text-muted">—</span>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between gap-3 pt-3 mt-auto border-t border-soft">
+                <span className="text-[12.5px] text-faint truncate" dir="ltr">{c.email || '—'}</span>
+                <div className="flex gap-3 shrink-0">
+                  <button onClick={() => openEdit(c)} className="text-[13px] font-semibold text-accent hover:underline">עריכה</button>
+                  <button onClick={() => remove(c)} className="text-[13px] font-semibold text-neg hover:underline">מחיקה</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <Modal title={editing ? 'עריכת לקוח' : 'לקוח חדש'} open={open} onClose={() => setOpen(false)}>
         <form onSubmit={save} className="space-y-3">

@@ -45,15 +45,16 @@ const moonNav: NavGroup[] = [
   {
     items: [
       { to: '/moonlight/summary', label: 'סקירה כספית', icon: Wallet },
-      { to: '/moonlight/income', label: 'הופעות', icon: Music },
-      { to: '/moonlight/assignments', label: 'שיבוצים', icon: CalendarCheck },
+      // A show's income, costs and staffing live on the show itself, so this one entry is
+      // the way into all three.
+      { to: '/moonlight/shows', label: 'הופעות', icon: Music },
     ],
   },
   {
     head: 'כסף',
     items: [
-      { to: '/moonlight/eventExpenses', label: 'הוצאות הופעות', icon: Receipt },
-      { to: '/moonlight/generalExpenses', label: 'הוצאות כלליות', icon: Wallet },
+      { to: '/moonlight/suppliers', label: 'ספקים וחברים', icon: Users },
+      { to: '/moonlight/generalExpenses', label: 'הוצאות כלליות', icon: Receipt },
     ],
   },
   {
@@ -70,7 +71,7 @@ const quickActions = [
   { to: '/works?new=1', label: 'עבודה חדשה' },
   { to: '/invoices', label: 'חשבונית מעבודות' },
   { to: '/clients?new=1', label: 'לקוח חדש' },
-  { to: '/moonlight/income?new=1', label: 'הופעה חדשה' },
+  { to: '/moonlight/shows?new=1', label: 'הופעה חדשה' },
 ];
 
 /** The phone's bottom bar: the destinations worth a thumb, not the whole sidebar. */
@@ -84,8 +85,8 @@ const bizMobile: NavItem[] = [
 
 const moonMobile: NavItem[] = [
   { to: '/moonlight/summary', label: 'סקירה', icon: Wallet },
-  { to: '/moonlight/income', label: 'הופעות', icon: Music },
-  { to: '/moonlight/eventExpenses', label: 'הוצאות', icon: Receipt },
+  { to: '/moonlight/shows', label: 'הופעות', icon: Music },
+  { to: '/moonlight/suppliers', label: 'ספקים', icon: Users },
   { to: '/moonlight/ads', label: 'פרסום', icon: Megaphone },
 ];
 

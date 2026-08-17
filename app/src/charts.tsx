@@ -123,16 +123,17 @@ export function PerShowChart({ rows, height = 'h-72 md:h-80' }: { rows: any[]; h
   return (
     <div className={height} dir="ltr">
       <ResponsiveContainer>
-        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 32 }}>
+        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
-          <XAxis dataKey="label" stroke={AXIS} fontSize={10} angle={-35} textAnchor="end" height={70} tickLine={false} axisLine={false} />
+          <XAxis dataKey="label" stroke={AXIS} fontSize={10} angle={-35} textAnchor="end" height={90} interval={0} tickLine={false} axisLine={false} />
           <YAxis stroke={AXIS} fontSize={11} width={64} tickLine={false} axisLine={false} tickFormatter={(v: number) => nis(v)} />
           <Tooltip
             cursor={{ fill: 'rgba(20,22,26,.04)' }}
             contentStyle={TOOLTIP_STYLE}
             formatter={(v: any, name: any) => [nis(v), name]}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
+          {/* Above the plot: below it the rotated show names run straight into it. */}
+          <Legend verticalAlign="top" align="right" wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} />
           <Bar name="הכנסות" dataKey="income" fill="#6B45D6" radius={[6, 6, 0, 0]} maxBarSize={28} />
           <Bar name="הוצאות" dataKey="expenses" fill="#DDD9EF" radius={[6, 6, 0, 0]} maxBarSize={28} />
           <Bar name="רווח" dataKey="profit" fill="#12805F" radius={[6, 6, 0, 0]} maxBarSize={28} />

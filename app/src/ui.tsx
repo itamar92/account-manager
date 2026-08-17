@@ -562,6 +562,8 @@ export function EditableCell({
       value={draft}
       placeholder={placeholder}
       dir={type === 'number' ? 'ltr' : undefined}
+      // The cell opens with what is in it selected, so typing replaces rather than appends.
+      onFocus={(e) => e.target.select()}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
