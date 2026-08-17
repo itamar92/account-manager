@@ -9,15 +9,15 @@ interface Props extends PeriodTabProps {
 }
 
 const VERDICTS: Record<string, { label: string; className: string }> = {
-  good: { label: 'הפרסום עובד', className: 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300' },
-  ok: { label: 'סביר, יש מה לשפר', className: 'bg-amber-500/10 border-amber-500/40 text-amber-300' },
-  poor: { label: 'הפרסום לא משתלם', className: 'bg-rose-500/10 border-rose-500/40 text-rose-300' },
+  good: { label: 'הפרסום עובד', className: 'bg-pos-soft border-pos/25 text-pos' },
+  ok: { label: 'סביר, יש מה לשפר', className: 'bg-warn-soft border-warn/25 text-warn' },
+  poor: { label: 'הפרסום לא משתלם', className: 'bg-neg-soft border-neg/25 text-neg' },
 };
 
 const SEVERITIES: Record<string, { label: string; className: string }> = {
-  high: { label: 'קריטי', className: 'text-rose-400 border-rose-500/40' },
-  medium: { label: 'בינוני', className: 'text-amber-400 border-amber-500/40' },
-  low: { label: 'קל', className: 'text-slate-400 border-slate-700' },
+  high: { label: 'קריטי', className: 'text-neg border-neg/25' },
+  medium: { label: 'בינוני', className: 'text-warn border-warn/25' },
+  low: { label: 'קל', className: 'text-muted border-line' },
 };
 
 const EFFORTS: Record<string, string> = { low: 'מאמץ קטן', medium: 'מאמץ בינוני', high: 'מאמץ גדול' };
@@ -37,8 +37,8 @@ function Working({ text }: { text: string }) {
     return () => clearInterval(timer);
   }, []);
   return (
-    <div className="flex items-center gap-2 text-sm text-slate-400">
-      <span className="inline-block w-3 h-3 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" />
+    <div className="flex items-center gap-2 text-sm text-muted">
+      <span className="inline-block w-3 h-3 rounded-full border-2 border-accent border-t-transparent animate-spin" />
       {text} · {seconds} שניות
     </div>
   );
@@ -159,11 +159,11 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
   if (agent && !agent.configured) {
     return (
       <Card>
-        <h2 className="font-bold mb-2">יועץ קמפיינים</h2>
-        <p className="text-sm text-slate-400 leading-relaxed">
+        <h2 className="ser text-lg mb-2">יועץ קמפיינים</h2>
+        <p className="text-sm text-muted leading-relaxed">
           הסוכן לא מוגדר. הניתוח רץ על מכונה אחרת דרך חיבור SSH — יש להגדיר את משתני הסביבה
-          <span dir="ltr" className="mx-1 text-slate-300">AGENT_SSH_HOST / AGENT_SSH_USER / AGENT_SSH_KEY</span>
-          ואת מפתח המארח <span dir="ltr" className="text-slate-300">AGENT_SSH_HOST_KEY</span>.
+          <span dir="ltr" className="mx-1 text-ink-2">AGENT_SSH_HOST / AGENT_SSH_USER / AGENT_SSH_KEY</span>
+          ואת מפתח המארח <span dir="ltr" className="text-ink-2">AGENT_SSH_HOST_KEY</span>.
           מצב החיבור ובדיקה שלו נמצאים בהגדרות → חיבורים.
         </p>
       </Card>
@@ -176,7 +176,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-bold">יועץ קמפיינים</h2>
+              <h2 className="ser text-lg">יועץ קמפיינים</h2>
               <PeriodSelect year={period.year} month={period.month}
                 onYearChange={period.setYear} onMonthChange={period.setMonth} />
               {verdict && (
@@ -185,9 +185,9 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
                 </span>
               )}
             </div>
-            {answer?.headline && <p className="text-sm text-slate-300 mt-2">{answer.headline}</p>}
+            {answer?.headline && <p className="text-sm text-ink-2 mt-2">{answer.headline}</p>}
             {report && (
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-faint mt-1">
                 נותח ב-{when(report.created_at)}
                 {report.duration_ms ? ` · ${Math.round(report.duration_ms / 1000)} שניות` : ''}
                 {' · '}הנתונים עצמם נמצאים בלשונית «פרסום»
@@ -216,10 +216,10 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
             value={answer.benchmarks.cost_per_ticket == null ? '—' : nis(answer.benchmarks.cost_per_ticket)} />
           <StatCard label="פרסום מתוך ההכנסה" sub="ממוצע בתקופה"
             value={answer.benchmarks.spend_share_of_revenue == null ? '—' : `${answer.benchmarks.spend_share_of_revenue}%`} />
-          <StatCard label="ההופעה המשתלמת" accent="text-emerald-400"
+          <StatCard label="ההופעה המשתלמת" accent="text-pos"
             value={eventById(answer.benchmarks.best_event_id)?.venue ?? '—'}
             sub={eventById(answer.benchmarks.best_event_id)?.date ?? ''} />
-          <StatCard label="ההופעה היקרה" accent="text-rose-400"
+          <StatCard label="ההופעה היקרה" accent="text-neg"
             value={eventById(answer.benchmarks.worst_event_id)?.venue ?? '—'}
             sub={eventById(answer.benchmarks.worst_event_id)?.date ?? ''} />
         </div>
@@ -227,25 +227,25 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
 
       {answer?.findings?.length > 0 && (
         <Card>
-          <h2 className="font-bold mb-3">ממצאים</h2>
+          <h2 className="ser text-lg mb-3">ממצאים</h2>
           <div className="space-y-2">
             {answer.findings.map((finding: any, i: number) => {
               const severity = SEVERITIES[finding.severity] ?? SEVERITIES.low;
               const event = finding.event_id ? eventById(finding.event_id) : null;
               return (
-                <div key={i} className="bg-slate-800/40 border border-slate-800 rounded-xl p-3">
+                <div key={i} className="bg-soft border border-line rounded-xl p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={clsx('text-xs rounded-lg border px-2 py-0.5', severity.className)}>
                       {severity.label}
                     </span>
                     <span className="font-medium">{finding.title}</span>
                     {event && (
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-faint">
                         {eventLabel(event)}
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-slate-400 mt-1.5 leading-relaxed">{finding.detail}</p>
+                  <p className="text-sm text-muted mt-1.5 leading-relaxed">{finding.detail}</p>
                 </div>
               );
             })}
@@ -255,22 +255,22 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
 
       {answer?.suggestions?.length > 0 && (
         <Card>
-          <h2 className="font-bold mb-1">המלצות</h2>
-          <p className="text-xs text-slate-500 mb-3">
+          <h2 className="ser text-lg mb-1">המלצות</h2>
+          <p className="text-xs text-faint mb-3">
             מדורגות מהחשובה לפחות חשובה. הסוכן לא משנה דבר ב-Meta — כל שינוי נעשה ידנית.
           </p>
           <div className="space-y-2">
             {answer.suggestions.map((suggestion: any, i: number) => (
-              <div key={i} className="bg-slate-800/40 border border-slate-800 rounded-xl p-3">
+              <div key={i} className="bg-soft border border-line rounded-xl p-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-medium">{i + 1}. {suggestion.title}</span>
                   {suggestion.effort && (
-                    <span className="text-xs text-slate-500">{EFFORTS[suggestion.effort] ?? suggestion.effort}</span>
+                    <span className="text-xs text-faint">{EFFORTS[suggestion.effort] ?? suggestion.effort}</span>
                   )}
                 </div>
-                <p className="text-sm text-slate-400 mt-1.5 leading-relaxed">{suggestion.detail}</p>
+                <p className="text-sm text-muted mt-1.5 leading-relaxed">{suggestion.detail}</p>
                 {suggestion.expected_impact && (
-                  <p className="text-xs text-indigo-300 mt-1.5">צפוי: {suggestion.expected_impact}</p>
+                  <p className="text-xs text-accent mt-1.5">צפוי: {suggestion.expected_impact}</p>
                 )}
               </div>
             ))}
@@ -280,8 +280,8 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
 
       {isOwner && (
         <Card>
-          <h2 className="font-bold mb-1">קמפיין חדש</h2>
-          <p className="text-xs text-slate-500 mb-3">
+          <h2 className="ser text-lg mb-1">קמפיין חדש</h2>
+          <p className="text-xs text-faint mb-3">
             תוכנית לקמפיין להופעה שעוד לא הייתה, בנויה על מה שעבד בקמפיינים הקודמים. התוצאה היא
             טקסט להעתקה ל-Ads Manager — שום דבר לא נוצר ב-Meta.
           </p>
@@ -312,40 +312,40 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
           </div>
 
           {upcoming.length === 0 && (
-            <p className="text-xs text-amber-400 mt-2">אין הופעות עתידיות בטבלת ההכנסות</p>
+            <p className="text-xs text-warn mt-2">אין הופעות עתידיות בטבלת ההכנסות</p>
           )}
 
           {draft && (
-            <div className="mt-4 bg-slate-800/40 border border-slate-800 rounded-xl p-3 space-y-2 text-sm">
+            <div className="mt-4 bg-soft border border-line rounded-xl p-3 space-y-2 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-bold">התוכנית</span>
-                <button onClick={copyDraft} className="text-xs text-indigo-400 hover:underline">
+                <button onClick={copyDraft} className="text-xs text-accent hover:underline">
                   {copied ? 'הועתק ✓' : 'העתקה'}
                 </button>
               </div>
               <div className="grid gap-2 sm:grid-cols-2">
-                <div><span className="text-slate-500">מטרה: </span>{draft.objective}</div>
+                <div><span className="text-faint">מטרה: </span>{draft.objective}</div>
                 <div>
-                  <span className="text-slate-500">תאריכים: </span>
+                  <span className="text-faint">תאריכים: </span>
                   {draft.schedule?.start} – {draft.schedule?.end}
                 </div>
                 <div>
-                  <span className="text-slate-500">תקציב: </span>
+                  <span className="text-faint">תקציב: </span>
                   {nis(draft.budget_total)} · {nis(draft.daily_budget)} ליום
                 </div>
-                <div><span className="text-slate-500">מיקומים: </span>{(draft.placements || []).join(', ')}</div>
+                <div><span className="text-faint">מיקומים: </span>{(draft.placements || []).join(', ')}</div>
               </div>
-              <div><span className="text-slate-500">קהל: </span>{draft.audience}</div>
+              <div><span className="text-faint">קהל: </span>{draft.audience}</div>
               {draft.creative && (
-                <div className="border-t border-slate-800 pt-2 space-y-1">
-                  <div className="text-slate-500 text-xs">נוסח המודעה</div>
+                <div className="border-t border-line pt-2 space-y-1">
+                  <div className="text-faint text-xs">נוסח המודעה</div>
                   <p className="whitespace-pre-wrap leading-relaxed">{draft.creative.primary_text}</p>
-                  <div><span className="text-slate-500">כותרת: </span>{draft.creative.headline}</div>
-                  <div><span className="text-slate-500">תיאור: </span>{draft.creative.description}</div>
+                  <div><span className="text-faint">כותרת: </span>{draft.creative.headline}</div>
+                  <div><span className="text-faint">תיאור: </span>{draft.creative.description}</div>
                 </div>
               )}
               {draft.notes?.length > 0 && (
-                <ul className="border-t border-slate-800 pt-2 space-y-1 text-xs text-slate-400">
+                <ul className="border-t border-line pt-2 space-y-1 text-xs text-muted">
                   {draft.notes.map((note: string, i: number) => <li key={i}>• {note}</li>)}
                 </ul>
               )}
@@ -356,12 +356,12 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
 
       <Card>
         <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-          <h2 className="font-bold">שאלות המשך</h2>
+          <h2 className="ser text-lg">שאלות המשך</h2>
           {isOwner && messages.length > 0 && (
-            <button onClick={clearThread} className="text-xs text-rose-400 hover:underline">ניקוי השיחה</button>
+            <button onClick={clearThread} className="text-xs text-neg hover:underline">ניקוי השיחה</button>
           )}
         </div>
-        <p className="text-xs text-slate-500 mb-3">
+        <p className="text-xs text-faint mb-3">
           לסוכן יש את אותם נתונים שבלשונית «פרסום» לתקופה שנבחרה למעלה.
         </p>
 
@@ -373,9 +373,9 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
               <div key={message.id}
                 className={clsx('rounded-xl p-3 text-sm leading-relaxed',
                   message.role === 'user'
-                    ? 'bg-indigo-600/15 border border-indigo-500/30'
-                    : 'bg-slate-800/40 border border-slate-800')}>
-                <div className="text-xs text-slate-500 mb-1">
+                    ? 'bg-accent/15 border border-accent/25'
+                    : 'bg-soft border border-line')}>
+                <div className="text-xs text-faint mb-1">
                   {message.role === 'user' ? 'אתם' : 'הסוכן'} · {when(message.created_at)}
                 </div>
                 <p className="whitespace-pre-wrap">{message.content}</p>

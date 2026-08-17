@@ -86,13 +86,19 @@ cannot demote yourself.
   how many.
 - **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
+- **A show is one page** (`/moonlight/shows/:id`). Its income, its twelve cost lines, who is
+  staffed on it, and how its profit divides all live there and are edited in place —
+  `GET /api/moonlight/events/:id` returns the lot in one request. The three tables this
+  replaced (הכנסות / הוצאות הופעות / שיבוצים) meant one gig's numbers had to be assembled by
+  reading across three tabs. What stayed at list level is what genuinely spans shows: the
+  summary, the supplier ledger, costs belonging to no show, and ad spend.
 - **Deleting an expense row** (`DELETE /api/moonlight/event-expenses/:id`) means two
   different things, because every show owns exactly one row. A row assigned to a show is
   **emptied** — its amounts go, the empty row stays behind to type into, and the show's
   totals are recomputed (`{deleted: 0, cleared: 1}`). A row assigned to nothing — a leftover
   from before the two tables were linked — is **deleted** (`{deleted: 1, cleared: 0}`). The
-  expenses tab labels the button accordingly (ניקוי / מחיקה) and says which it is doing
-  before it does it. General expenses are plain rows and delete outright.
+  unattached rows are listed on the shows page, where each can be pointed at the show it
+  belongs to. General expenses are plain rows and delete outright.
 - **הוצאות** (`/expenses`) is the business's spending as Morning holds it: the year's
   expense documents with their supplier, classification and status, the totals for whatever
   the filters select — before VAT, input VAT (מע"מ תשומות) and what was actually paid — and
@@ -104,7 +110,32 @@ cannot demote yourself.
 - **דוחות** (`/reports`) turns the same books into the two filings they have to produce —
   see [Reports](#reports-דוחות) below.
 
-### Dashboard
+### The shell — two workspaces, one app
+
+The app is split into a **business** side and a **Moonlight** side, switched from the pill in
+the header. They are separate books, so they get separate navigation and separate accent
+colours: the switch sets `data-ws` on `<html>`, and every accent, canvas and border in
+`src/index.css` hangs off that one attribute — no component knows which workspace it is being
+shown in. Band members only ever see the Moonlight side, enforced server-side as before.
+
+Colours are named for what they are for rather than what they are (`bg-surface`, `text-muted`,
+`border-line`, `text-pos` / `text-warn` / `text-neg`), so a page never hard-codes a palette.
+The one dark slab per screen (`InkPanel`) is reserved for the single figure that page exists
+to report.
+
+### מה דורש טיפול (`/`)
+
+The landing page is not a summary of the year but a list of what is unfinished: invoices past
+their due date, works not yet billed, expenses with no classification (input VAT that will not
+make it into a return), shows whose money has not arrived, and shows with a role unstaffed.
+Every item is **derived** — `GET /api/inbox` recomputes them from the books on each load — so
+an item disappears by being dealt with, never by being dismissed, and the count on the sidebar
+badge is the same number the page shows because the server counts it once.
+
+The one VAT period with a deadline in front of it gets the dark slab; the year's figures moved
+one click over, to **סקירה** (`/overview`).
+
+### Dashboard (סקירה)
 
 The overview chart is income **and** expenses month by month, with profit drawn over them as
 a line — it is the difference between the two, not a third quantity competing for the same
@@ -202,8 +233,8 @@ on the card appear in the working as lines of it.
 `computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, going to
 איתמר and אמיר in equal halves, and the rest is shared equally by all four. The percentage is the
 **whole** fee, so 20% nets 30/30/20/20 and 40% nets 35/35/15/15. It is stored per show, because
-what the fee is worth is a decision about that show, and it is editable both in the show dialog
-and inline in the income table beside the דמי הפקה tick. With the fee off (or at 0%) it is a plain
+what the fee is worth is a decision about that show, and it is set with the stepper on the show
+page beside the tick that turns it on. With the fee off (or at 0%) it is a plain
 quarter each; a row set to manual keeps whatever was typed on it.
 
 The default is **20% (30/30/20/20)**. It was a fixed 40% before, so a one-time migration stamps
@@ -233,7 +264,7 @@ numbers Morning is going to issue itself.
 ## Integrations
 
 Both are owner-only, run on demand from **Settings → חיבורים** (the calendar sync also has
-a button on the Moonlight income tab), and report their configuration status in the UI so
+a button on the Moonlight shows page), and report their configuration status in the UI so
 a missing credential is visible rather than silent.
 
 ### Morning (Green Invoice)
@@ -383,9 +414,8 @@ and the preview shows the name each row would actually be stored under.
 description) sets `venue_locked` / `description_locked`, and the next sync updates that
 row's date and location while leaving the name alone — so a correction is not undone by
 re-syncing. A show adopted by date whose hand-typed name differs from the calendar title is
-locked on adoption for the same reason. The lock is shown as a ✎ next to the name in the
-income tab; clicking it hands the name back to the calendar, and the next sync renames the
-row to the cleaned title again.
+locked on adoption for the same reason. A locked show carries a «מהיומן» badge on its page,
+and renaming it there is what sets the lock.
 
 **Nothing is drawn twice.** The event id is the primary link, and a row that predates it is
 matched on date + name (compared ignoring case and spacing), so connecting the calendar to

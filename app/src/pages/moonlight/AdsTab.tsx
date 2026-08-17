@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
 import {
-  Card, Combobox, DataTable, EditableCell, Empty, PeriodSelect, SearchInput, StatCard, textMatch,
+  Card, Combobox, DataTable, EditableCell, Empty, PageHeader, PeriodSelect, SearchInput, StatCard, textMatch,
 } from '../../ui';
 import { eventLabel, type PeriodTabProps } from './shared';
 
@@ -96,38 +96,35 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
       {totals && (
         <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
           <StatCard label="הוצאות פרסום" value={nis(totals.ad_spend)}
-            sub={`${totals.shows} הופעות עם פרסום`} accent="text-rose-400" />
+            sub={`${totals.shows} הופעות עם פרסום`} accent="text-neg" />
           <StatCard label="עלות לכרטיס" value={totals.cost_per_ticket == null ? '—' : nis(totals.cost_per_ticket)}
             sub={`${totals.tickets.toLocaleString('he-IL')} כרטיסים`} />
           <StatCard label="פרסום מתוך ההכנסה" value={pct(totals.spend_share_of_revenue)}
             sub={`מתוך ${nis(totals.revenue)}`} />
           <StatCard label="פרסום לא משויך" value={nis(totals.unmapped_spend)}
             sub={totals.unmapped_spend > 0 ? 'קמפיינים שטרם שויכו להופעה' : 'הכל משויך'}
-            accent={totals.unmapped_spend > 0 ? 'text-amber-400' : 'text-emerald-400'} />
+            accent={totals.unmapped_spend > 0 ? 'text-warn' : 'text-pos'} />
         </div>
       )}
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <h2 className="font-bold">עלות פרסום לפי הופעה</h2>
+      <PageHeader
+        title="עלות פרסום לפי הופעה"
+        sub="הסכומים מגיעים מהשיוך לקמפיינים · «עלות לכרטיס» מחייבת מספר כרטיסים בטבלת ההכנסות"
+        actions={
+          <>
             <PeriodSelect year={period.year} month={period.month}
               onYearChange={period.setYear} onMonthChange={period.setMonth} />
-          </div>
-          <p className="text-xs text-slate-500">
-            הסכומים מגיעים מהשיוך לקמפיינים · «עלות לכרטיס» מחייבת מספר כרטיסים בטבלת ההכנסות
-          </p>
-        </div>
+            <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי הופעה…" className="w-44" />
+          </>
+        }
+      />
 
-        <div className="mb-4">
-          <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי הופעה…" className="w-full sm:max-w-xs" />
-        </div>
-
-        {rows.length === 0 ? <Empty text="אין הופעות בטווח הזה" /> : (
+      <div>
           <DataTable
+            empty="אין הופעות בטווח הזה"
             rows={rows}
             rowKey={(r: any) => r.event_id}
-            rowClassName={() => 'hover:bg-slate-800/40'}
+            rowClassName={() => 'hover:bg-soft'}
             defaultSort={{ key: 'ad_spend', dir: -1 }}
             columns={[
               {
@@ -136,7 +133,7 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                 render: (r: any) => (
                   <div>
                     <div>{r.venue}</div>
-                    <div className="text-xs text-slate-500">{r.date}</div>
+                    <div className="text-xs text-faint">{r.date}</div>
                   </div>
                 ),
               },
@@ -154,11 +151,11 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                 className: 'whitespace-nowrap',
                 render: (r: any) => (
                   <div>
-                    <span className={r.ad_spend ? 'text-rose-400 font-medium' : 'text-slate-500'}>
+                    <span className={r.ad_spend ? 'text-neg font-medium' : 'text-faint'}>
                       {r.ad_spend ? nis(r.ad_spend) : '—'}
                     </span>
                     {r.campaigns > 0 && (
-                      <div className="text-xs text-slate-500">
+                      <div className="text-xs text-faint">
                         {r.campaigns} קמפיינים
                         {/* A show's ads routinely land on more than one monthly invoice, so the
                             count is worth stating rather than leaving to be discovered. */}
@@ -170,7 +167,7 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                       </div>
                     )}
                     {r.spending_after_show > 0 && (
-                      <div className={clsx('text-xs', r.settled ? 'text-amber-400' : 'text-slate-500')}
+                      <div className={clsx('text-xs', r.settled ? 'text-warn' : 'text-faint')}
                         title={r.settled
                           ? 'הקמפיין המשיך לרוץ אחרי ההופעה, אבל ההופעה סומנה «שולם לנגנים» — העלות בספרים קפואה ולא עודכנה'
                           : 'הקמפיין ממשיך לרוץ אחרי ההופעה — הסכום עוד יגדל'}>
@@ -185,7 +182,7 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                 className: 'whitespace-nowrap',
                 render: (r: any) => (
                   r.cost_per_ticket == null
-                    ? <span className="text-slate-500" title="אין מספר כרטיסים או אין הוצאת פרסום">—</span>
+                    ? <span className="text-faint" title="אין מספר כרטיסים או אין הוצאת פרסום">—</span>
                     : <span className="font-medium">{nis(r.cost_per_ticket)}</span>
                 ),
               },
@@ -193,7 +190,7 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                 key: 'share', header: 'מתוך ההכנסה', sortValue: (r: any) => r.spend_share_of_revenue,
                 render: (r: any) => (
                   <span className={clsx(
-                    r.spend_share_of_revenue != null && r.spend_share_of_revenue > 40 && 'text-amber-400'
+                    r.spend_share_of_revenue != null && r.spend_share_of_revenue > 40 && 'text-warn'
                   )}>
                     {pct(r.spend_share_of_revenue)}
                   </span>
@@ -210,23 +207,23 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                 key: 'on_row', header: 'בספרים', sortValue: (r: any) => r.campaign_on_row,
                 render: (r: any) => {
                   const differs = Math.abs(r.campaign_on_row - r.ad_spend) >= 1;
-                  if (!differs && !r.campaign_locked && !r.settled) return <span className="text-slate-600">—</span>;
+                  if (!differs && !r.campaign_locked && !r.settled) return <span className="text-ghost">—</span>;
                   return (
                     <div className="whitespace-nowrap">
-                      <span className={differs ? 'text-amber-400' : ''}>{nis(r.campaign_on_row)}</span>
+                      <span className={differs ? 'text-warn' : ''}>{nis(r.campaign_on_row)}</span>
                       {r.settled && !r.campaign_locked && (
-                        <div className="text-xs text-slate-500"
+                        <div className="text-xs text-faint"
                           title="שולם לנגנים — עלות הפרסום קפואה כדי לא לשנות חלוקה שכבר בוצעה">
                           🔒 שולם לנגנים
                         </div>
                       )}
                       {r.campaign_locked && (
-                        <div className="text-xs text-slate-500 flex items-center gap-1">
+                        <div className="text-xs text-faint flex items-center gap-1">
                           <span title="הסכום הוזן ידנית — הסנכרון לא דורס אותו">🔒 ידני</span>
                           {isOwner && r.expense_id && (
                             <button onClick={() => unlock(r.expense_id)}
                               title="להעביר את השורה לסנכרון — הסכום יוחלף במה ש-Meta מדווחת"
-                              className="text-indigo-400 hover:underline">
+                              className="text-accent hover:underline">
                               לסנכרון
                             </button>
                           )}
@@ -238,66 +235,65 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
               },
             ]}
           />
-        )}
-        <p className="text-xs text-slate-500 mt-3">
+        <p className="text-xs text-faint mt-3">
           העלות של הופעה היא מה שהקמפיינים שלה עלו, גם אם התפרסו על כמה חשבוניות חודשיות — הפירוט
           לפי חשבונית נמצא ב«חיוב חודשי מ-Meta» למטה. «בספרים» מופיע רק כשהסכום בעמודת «קמפיין»
           שונה ממה ש-Meta מדווחת. סכום מסומן 🔒 אינו נדרס על ידי הסנכרון: או שהוזן ידנית, או
           שההופעה סומנה «שולם לנגנים» — קמפיין שממשיך לרוץ אחרי הופעה שכבר חולקה לא ישנה בדיעבד את
           מה שכל אחד קיבל.
         </p>
-      </Card>
+      </div>
 
       {/* The invoice axis. Ads are billed monthly but a campaign runs across months, so a
           month's charge is a slice of several campaigns — this is what a Meta invoice can be
           checked against, and it is a different partition of the money from the table above. */}
       {monthly.length > 0 && (
         <Card>
-          <h2 className="font-bold mb-1">חיוב חודשי מ-Meta</h2>
-          <p className="text-xs text-slate-500 mb-4">
+          <h2 className="ser text-lg mb-1">חיוב חודשי מ-Meta</h2>
+          <p className="text-xs text-faint mb-4">
             כל שורה היא חודש אחד — כלומר חשבונית אחת מ-Meta. קמפיין שהתחיל בסוף חודש ממשיך לתוך
             החודשים הבאים, ולכן «2/3» ליד קמפיין אומר שזו החשבונית השנייה מתוך שלוש שהוא ייצור, ומה
             שמופיע כאן הוא רק החלק שחויב בחודש הזה.
           </p>
           <div className="space-y-1">
             {monthly.map((month) => (
-              <div key={month.month} className="bg-slate-800/40 border border-slate-800 rounded-xl">
+              <div key={month.month} className="bg-soft border border-line rounded-xl">
                 <button
                   onClick={() => setOpenMonth(openMonth === month.month ? '' : month.month)}
-                  className="w-full flex items-center justify-between gap-3 p-3 text-right hover:bg-slate-800/60 rounded-xl"
+                  className="w-full flex items-center justify-between gap-3 p-3 text-right hover:bg-soft rounded-xl"
                 >
                   <span className="flex items-center gap-2">
-                    <span className="text-slate-500 text-xs">{openMonth === month.month ? '▾' : '▸'}</span>
+                    <span className="text-faint text-xs">{openMonth === month.month ? '▾' : '▸'}</span>
                     <span className="font-medium">{month.month}</span>
-                    <span className="text-xs text-slate-500">{month.campaigns.length} קמפיינים</span>
+                    <span className="text-xs text-faint">{month.campaigns.length} קמפיינים</span>
                     {month.unmapped_spend > 0 && (
-                      <span className="text-xs text-amber-400" title="חלק מהחיוב לא משויך לאף הופעה">
+                      <span className="text-xs text-warn" title="חלק מהחיוב לא משויך לאף הופעה">
                         {nis(month.unmapped_spend)} ללא שיוך
                       </span>
                     )}
                   </span>
-                  <span className="text-rose-400 font-medium whitespace-nowrap">{nis(month.spend)}</span>
+                  <span className="text-neg font-medium whitespace-nowrap">{nis(month.spend)}</span>
                 </button>
 
                 {openMonth === month.month && (
                   <div className="px-3 pb-3 space-y-1.5">
                     {month.campaigns.map((c: any) => (
-                      <div key={c.campaign_id} className="border-t border-slate-800/60 pt-1.5 text-sm">
+                      <div key={c.campaign_id} className="border-t border-line pt-1.5 text-sm">
                         <div className="flex flex-wrap items-baseline justify-between gap-2">
                           <span className="break-words">
                             {c.name}
                             {c.months_spanned > 1 && (
-                              <span className="text-xs text-indigo-300 mr-1.5"
+                              <span className="text-xs text-accent mr-1.5"
                                 title={`הקמפיין נפרס על ${c.months_spanned} חודשים · סה״כ ${nis(c.total_spend)}`}>
                                 {c.month_index}/{c.months_spanned}
                               </span>
                             )}
                           </span>
-                          <span className="text-rose-400 whitespace-nowrap">{nis(c.spend)}</span>
+                          <span className="text-neg whitespace-nowrap">{nis(c.spend)}</span>
                         </div>
-                        <div className="text-xs text-slate-500 mt-0.5">
+                        <div className="text-xs text-faint mt-0.5">
                           {c.events.length === 0
-                            ? <span className="text-amber-400">ללא שיוך להופעה</span>
+                            ? <span className="text-warn">ללא שיוך להופעה</span>
                             : c.events.map((e: any) => `${e.label} (${nis(e.attributed)})`).join(' · ')}
                           {c.months_spanned > 1 && ` · סה״כ הקמפיין ${nis(c.total_spend)}`}
                         </div>
@@ -314,14 +310,14 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
       {isOwner && (
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
-            <h2 className="font-bold">קמפיינים ב-Meta</h2>
-            <label className="flex items-center gap-2 text-xs text-slate-400">
+            <h2 className="ser text-lg">קמפיינים ב-Meta</h2>
+            <label className="flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" checked={unmappedOnly} onChange={(e) => setUnmappedOnly(e.target.checked)}
-                className="accent-indigo-500" />
+                className="accent-accent" />
               רק קמפיינים ללא שיוך
             </label>
           </div>
-          <p className="text-xs text-slate-500 mb-4">
+          <p className="text-xs text-faint mb-4">
             שיוך קמפיין להופעה נעשה ידנית. קמפיין שמשויך לכמה הופעות מתחלק ביניהן לפי «משקל» —
             1 לכולן היא חלוקה שווה. הסנכרון עצמו נמצא בהגדרות → חיבורים.
           </p>
@@ -333,11 +329,11 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
           ) : (
             <div className="space-y-2">
               {visibleCampaigns.map((campaign) => (
-                <div key={campaign.id} className="bg-slate-800/40 border border-slate-800 rounded-xl p-3">
+                <div key={campaign.id} className="bg-soft border border-line rounded-xl p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-medium break-words">{campaign.name}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">
+                      <div className="text-xs text-faint mt-0.5">
                         {campaign.first_spend_date
                           ? `${campaign.first_spend_date} – ${campaign.last_spend_date}`
                           : 'ללא הוצאה בטווח שנמשך'}
@@ -345,10 +341,10 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                         {campaign.clicks > 0 && ` · ${campaign.clicks.toLocaleString('he-IL')} קליקים`}
                       </div>
                     </div>
-                    <div className="text-rose-400 font-medium whitespace-nowrap">
+                    <div className="text-neg font-medium whitespace-nowrap">
                       {nis(campaign.spend)}
                       {campaign.currency !== 'ILS' && (
-                        <div className="text-xs text-slate-500" dir="ltr">
+                        <div className="text-xs text-faint" dir="ltr">
                           {campaign.spend_original} {campaign.currency}
                         </div>
                       )}
@@ -359,17 +355,17 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
                     <div className="mt-2 space-y-1">
                       {campaign.events.map((mapping: any) => (
                         <div key={mapping.event_id}
-                          className="flex flex-wrap items-center gap-2 text-sm border-t border-slate-800/60 pt-1.5">
+                          className="flex flex-wrap items-center gap-2 text-sm border-t border-line pt-1.5">
                           <span className="font-medium">{mapping.label}</span>
-                          <span className="text-rose-400">{nis(mapping.attributed)}</span>
-                          <span className="text-xs text-slate-500">{Math.round(mapping.share * 100)}%</span>
-                          <span className="text-xs text-slate-500 flex items-center gap-1">
+                          <span className="text-neg">{nis(mapping.attributed)}</span>
+                          <span className="text-xs text-faint">{Math.round(mapping.share * 100)}%</span>
+                          <span className="text-xs text-faint flex items-center gap-1">
                             משקל
                             <EditableCell type="number" value={mapping.weight} display={String(mapping.weight)}
                               onSave={(v) => mapTo(campaign.id, mapping.event_id, Number(v) || 1)} />
                           </span>
                           <button onClick={() => unmap(campaign.id, mapping.event_id)}
-                            className="text-xs text-rose-400 hover:underline mr-auto">
+                            className="text-xs text-neg hover:underline mr-auto">
                             ביטול שיוך
                           </button>
                         </div>
@@ -379,11 +375,11 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
 
                   {campaign.suggestions?.length > 0 && (
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-slate-500">הצעות:</span>
+                      <span className="text-xs text-faint">הצעות:</span>
                       {campaign.suggestions.map((s: any) => (
                         <button key={s.event_id} onClick={() => mapTo(campaign.id, s.event_id)}
                           title={s.reason}
-                          className="text-xs bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 rounded-lg px-2 py-1 hover:bg-indigo-500/20">
+                          className="text-xs bg-accent-soft border border-accent/25 text-accent rounded-lg px-2 py-1 hover:bg-accent-soft">
                           {s.label} · {Math.round(s.score * 100)}%
                         </button>
                       ))}

@@ -29,6 +29,7 @@ import {
   BAND_MEMBERS, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, deleteEventCascade, deleteExpenseRow,
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
   memberByName, normalizeCommissionPercent, normalizePaymentStatus, reassignExpenseRow,
+  PAID_EXPENSE_FIELDS,
   recomputeEvent, syncExpenseLabel, type MemberKey,
 } from './moonlight.js';
 import {
@@ -221,6 +222,105 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
     band,
   });
 }));
+
+// ============ inbox — מה דורש טיפול ============
+/**
+ * The loose ends, computed rather than kept: every item here is something the books already
+ * say is unfinished, so nothing has to be ticked off by hand and nothing can go stale.
+ *
+ * Each entry carries its own count and sum, because the point of the screen is to be read
+ * without opening anything — the amount is the reason to act on one item before another.
+ */
+export function inboxItems() {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const overdue = db.prepare(
+    `SELECT i.id, i.number, i.date, i.due_date, i.total, c.name AS client_name,
+            CAST(julianday(?) - julianday(i.due_date) AS INTEGER) AS days_late
+     FROM invoices i JOIN clients c ON c.id = i.client_id
+     WHERE i.status = 'issued' AND i.due_date IS NOT NULL AND i.due_date < ?
+       AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})
+     ORDER BY i.due_date`
+  ).all(today, today) as any[];
+
+  // Which client has the most unbilled work is what decides whether one invoice can cover
+  // several jobs, so it travels with the count.
+  const unbilled = db.prepare(
+    `SELECT w.id, w.total, c.name AS client_name FROM works w JOIN clients c ON c.id = w.client_id
+     WHERE w.status = 'unpaid'`
+  ).all() as any[];
+  const byClient = new Map<string, { count: number; total: number }>();
+  for (const w of unbilled) {
+    const entry = byClient.get(w.client_name) ?? { count: 0, total: 0 };
+    entry.count++;
+    entry.total += Number(w.total) || 0;
+    byClient.set(w.client_name, entry);
+  }
+  const biggestClient = [...byClient.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+
+  // An expense with no category is input VAT that will not make it into a return — the sum
+  // that matters on it is the VAT, not what was paid.
+  const uncategorized = db.prepare(
+    `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total, COALESCE(SUM(vat_amount),0) AS vat
+     FROM expenses WHERE category IS NULL OR TRIM(category) = ''`
+  ).get() as any;
+
+  // The VAT period standing between "closed" and "filed": the one with a deadline ahead of it,
+  // or behind it. An open period is still collecting documents and asks nothing of anybody.
+  const report = vatReport(new Date().getFullYear());
+  const period = report.periods.find((p) => p.status === 'overdue')
+    ?? report.periods.find((p) => p.status === 'due');
+  const vat = period ? {
+    key: period.key,
+    label: period.label,
+    due_date: period.due_date,
+    days_left: Math.round(
+      (Date.parse(`${period.due_date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000
+    ),
+    vat_due: period.vat_due,
+    output_vat: period.output_vat,
+    input_vat: period.input_vat,
+    open_expenses: period.open_expenses,
+    status: period.status,
+  } : null;
+
+  const band = bandFollowUps();
+
+  const sum = (rows: any[], key: string) => round2(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0));
+  // One number for the sidebar badge, counted here so it can never disagree with the list.
+  const openCount = [
+    overdue.length, unbilled.length, Number(uncategorized.count) || 0,
+    band.awaitingPayment.length, band.missingAssignments.length,
+  ].filter(Boolean).length;
+
+  return {
+    openCount,
+    overdueInvoices: {
+      count: overdue.length,
+      total: sum(overdue, 'total'),
+      oldest: overdue[0] ?? null,
+    },
+    unbilledWorks: {
+      count: unbilled.length,
+      total: sum(unbilled, 'total'),
+      topClient: biggestClient ? { name: biggestClient[0], ...biggestClient[1] } : null,
+    },
+    uncategorizedExpenses: {
+      count: Number(uncategorized.count) || 0,
+      total: round2(Number(uncategorized.total) || 0),
+      vat: round2(Number(uncategorized.vat) || 0),
+    },
+    vat,
+    band: {
+      awaitingPaymentTotal: band.awaitingPaymentTotal,
+      awaitingPaymentCount: band.awaitingPayment.length,
+      owedToSuppliersTotal: band.owedToSuppliersTotal,
+      missingAssignments: band.missingAssignments,
+    },
+  };
+}
+
+router.get('/inbox', requireOwner, handle((_req, res) => res.json({ inbox: inboxItems() })));
 
 // ============ reports — מע"מ and מס הכנסה (owner) ============
 router.get('/reports/vat', requireOwner, handle((req, res) => {
@@ -678,7 +778,42 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
 }
 
 router.get('/moonlight/summary', requireAuth, handle((req, res) => {
-  res.json({ summary: bandSummary(dateRange(req.query)) });
+  res.json({ summary: bandSummary(dateRange(req.query)), fund: bandFund() });
+}));
+
+/**
+ * The band's float (קופה), from both ends.
+ *
+ * `computed` is what the books say should be in it: money that actually came in, less what has
+ * been paid out to suppliers and handed to members, less the costs the float itself covered.
+ * `actual` is what the bank says, typed in by whoever last looked. The gap between them is the
+ * only interesting number of the three — it is a receipt nobody entered, or a payment nobody
+ * recorded, and it is worth seeing before it is a year old.
+ */
+export function bandFund() {
+  const events = db.prepare('SELECT * FROM band_events').all() as any[];
+  const general = db.prepare('SELECT * FROM band_general_expenses').all() as any[];
+  const sum = (rows: any[], fn: (row: any) => number) => round2(rows.reduce((s, r) => s + (fn(r) || 0), 0));
+
+  const received = sum(events.filter((e) => e.payment_status === 'received'), (e) => Number(e.amount_pre_vat));
+  const toSuppliers = sum(events, (e) => Number(e.expenses_paid));
+  const toMembers = sum(events.filter((e) => e.paid_to_musicians), (e) => Number(e.profit));
+  const fromFund = sum(general.filter((g) => String(g.paid_by ?? '').trim() === FUND_PAYER), (g) => Number(g.amount));
+
+  const computed = round2(received - toSuppliers - toMembers - fromFund);
+  const raw = getSetting('band_fund_actual', '');
+  const actual = raw === '' ? null : round2(Number(raw) || 0);
+  return {
+    received, toSuppliers, toMembers, fromFund, computed, actual,
+    gap: actual === null ? null : round2(actual - computed),
+  };
+}
+
+/** Records what the account actually holds. Empty clears it back to "nobody has said". */
+router.post('/moonlight/fund', requireOwner, handle((req, res) => {
+  const value = req.body?.actual;
+  setSetting('band_fund_actual', value === null || value === '' ? '' : String(Number(value) || 0));
+  res.json({ fund: bandFund() });
 }));
 
 /** The worked-out version of the summary's division figures — every step and its rows. */
@@ -688,7 +823,12 @@ router.get('/moonlight/division', requireAuth, handle((req, res) => {
 
 router.get('/moonlight/events', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
-  res.json({ events: db.prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`).all(...where.params) });
+  const events = db
+    .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
+    .all(...where.params) as any[];
+  // Which roles are unstaffed travels with the show, because that is what the list is scanned
+  // for — a gig three weeks out with nobody on sound is the row you are looking for.
+  res.json({ events: events.map((e) => ({ ...e, missing: missingRoles(e.id) })) });
 }));
 
 /**
@@ -718,6 +858,62 @@ router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
   });
 }));
 
+/**
+ * Everything about one show, in one request: the show, its costs, who is staffed on it and
+ * the suppliers that could be.
+ *
+ * It exists because the show page is now where all of that is read and written. Fetching the
+ * four lists separately and matching them up in the browser is how the old tabs worked, and
+ * it is exactly what made a show's numbers something you had to assemble in your head.
+ */
+router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
+  const event = getEvent(req.params.id);
+  if (!event) return res.status(404).json({ error: 'event not found' });
+  const expense = ensureExpenseRow(event);
+  const suppliers = listSuppliers();
+  const byId = new Map(suppliers.map((s) => [s.id, s]));
+
+  const assignments: Record<string, any> = {};
+  for (const a of assignmentsForEvent(event.id)) {
+    assignments[a.role] = {
+      supplier_id: a.supplier_id,
+      supplier_name: a.supplier_id ? byId.get(a.supplier_id)?.name ?? '?' : null,
+      not_needed: !!a.not_needed,
+      source: a.source,
+    };
+  }
+
+  res.json({
+    event: { ...event, label: eventLabel(event.venue, event.date) },
+    expenses: expense,
+    outstanding: expenseOutstanding(expense),
+    assignments,
+    missing: missingRoles(event.id),
+    suppliers,
+  });
+}));
+
+/**
+ * Ticks every cost line of one show as paid. It is the "תשלום לספקים" button: the page can
+ * already tick each line on its own, and this is the same decision taken for all of them at
+ * once, which is what actually happens on the evening a show is settled.
+ *
+ * Only lines carrying an amount are touched — marking an empty line paid would say a supplier
+ * who was never engaged has been settled with.
+ */
+router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, res) => {
+  const event = getEvent(req.params.id);
+  if (!event) return res.status(404).json({ error: 'event not found' });
+  const row = ensureExpenseRow(event);
+  const paid = PAID_EXPENSE_FIELDS.filter((f) => Number(row[f]) > 0);
+  if (paid.length) {
+    db.prepare(
+      `UPDATE band_event_expenses SET ${paid.map((f) => `${f}_paid = 1`).join(', ')} WHERE id = ?`
+    ).run(row.id);
+  }
+  res.json({ event: recomputeEvent(event.id), settled: paid.length });
+}));
+
 // Writes to moonlight data are owner-only; band members are view-only.
 // `expenses`, `expenses_paid` and `profit` are never taken from the client: they are derived
 // from the show's expense row by recomputeEvent.
@@ -726,11 +922,11 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   if (!b.venue || !b.date) return res.status(400).json({ error: 'venue and date are required' });
   const id = uuid();
   db.prepare(
-    `INSERT INTO band_events (id, venue, date, tickets, amount_pre_vat, amount_with_vat,
+    `INSERT INTO band_events (id, venue, date, tickets, capacity, amount_pre_vat, amount_with_vat,
       receiver, invoice, has_commission, commission_percent, paid_to_musicians, payment_status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, b.venue, b.date, b.tickets || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
+    id, b.venue, b.date, b.tickets || 0, b.capacity || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
     b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0,
     b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT,
     b.paid_to_musicians ? 1 : 0,
@@ -762,12 +958,13 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     : existing.venue_locked ? 1 : 0;
 
   db.prepare(
-    `UPDATE band_events SET venue=?, date=?, tickets=?, amount_pre_vat=?, amount_with_vat=?,
+    `UPDATE band_events SET venue=?, date=?, tickets=?, capacity=?, amount_pre_vat=?, amount_with_vat=?,
       receiver=?, invoice=?, has_commission=?, commission_percent=?, paid_to_musicians=?,
       division_mode=?, payment_status=?, amir=?, itamar=?, yuval=?, guy=?, venue_locked=?
      WHERE id=?`
   ).run(
-    b.venue, b.date, b.tickets, b.amount_pre_vat, b.amount_with_vat,
+    b.venue, b.date, b.tickets, Math.max(0, Math.round(Number(b.capacity) || 0)),
+    b.amount_pre_vat, b.amount_with_vat,
     b.receiver, b.invoice, b.has_commission ? 1 : 0, normalizeCommissionPercent(b.commission_percent),
     b.paid_to_musicians ? 1 : 0, divisionMode,
     normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',

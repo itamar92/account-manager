@@ -41,9 +41,9 @@ export const PAYMENT_STATUSES = [
 ];
 
 export const PAYMENT_STATUS_STYLES: Record<string, string> = {
-  waiting_report: 'text-amber-400',
-  invoice_sent: 'text-sky-400',
-  received: 'text-emerald-400',
+  waiting_report: 'text-warn',
+  invoice_sent: 'text-accent',
+  received: 'text-pos',
 };
 
 export const paymentStatusLabel = (value: string) =>

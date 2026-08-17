@@ -3,7 +3,7 @@ import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from 'recharts';
 import { monthLabel, monthName, nis } from './api';
-import { Empty } from './ui';
+import { Empty, Segmented } from './ui';
 
 /**
  * Whether figures count VAT. Profit before VAT is the real one — neither VAT figure is the
@@ -18,24 +18,57 @@ export const SERIES: Record<Basis, { income: string; expenses: string; profit: s
   gross: { income: 'incomeTotal', expenses: 'expensesTotal', profit: 'profitTotal' },
 };
 
-export const CHART_COLORS = { income: '#34d399', expenses: '#fb7185', profit: '#818cf8' };
+export const CHART_COLORS = { income: '#12805F', expenses: '#DDE0E6', profit: '#3B5BDB' };
+
+/** Light-theme axis furniture, shared by both charts so they read as one drawing. */
+const AXIS = '#8A9099';
+const GRID = '#EDEEF1';
+const TOOLTIP_STYLE = {
+  background: '#fff',
+  border: '1px solid #E6E8EC',
+  borderRadius: 12,
+  boxShadow: '0 12px 30px rgba(20,24,32,.12)',
+  fontSize: 13,
+};
 
 export const BASIS_LABEL: Record<Basis, string> = { net: 'לפני מע"מ', gross: 'כולל מע"מ' };
 
 /** The two-way switch for the basis, shared by the pages that offer it. */
 export function BasisToggle({ value, onChange }: { value: Basis; onChange: (value: Basis) => void }) {
   return (
-    <div className="flex bg-slate-900 border border-slate-800 rounded-xl p-1 text-sm">
-      {(Object.keys(BASIS_LABEL) as Basis[]).map((key) => (
-        <button
-          key={key}
-          onClick={() => onChange(key)}
-          className={`px-3 py-1.5 rounded-lg transition-colors ${
-            value === key ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'
-          }`}
-        >
-          {BASIS_LABEL[key]}
-        </button>
+    <Segmented
+      value={value}
+      onChange={onChange}
+      options={(Object.keys(BASIS_LABEL) as Basis[]).map((key) => ({ value: key, label: BASIS_LABEL[key] }))}
+    />
+  );
+}
+
+/**
+ * The year at a glance: income against expenses, one pair of bars per month, no axes.
+ *
+ * It sits on the inbox where the chart is a backdrop to the list above it rather than the
+ * thing being read — the full one, with its scale and its profit line, is a click away.
+ */
+export function MiniBarChart({ rows, basis = 'net' }: { rows: any[]; basis?: Basis }) {
+  const keys = SERIES[basis];
+  const max = Math.max(1, ...rows.map((r) => Math.max(Number(r[keys.income]) || 0, Number(r[keys.expenses]) || 0)));
+  return (
+    <div dir="ltr" className="flex items-end gap-2 md:gap-3.5 h-[170px]">
+      {rows.map((row) => (
+        <div key={row.month} className="flex-1 flex flex-col justify-end h-full gap-1.5">
+          <div className="flex items-end gap-[3px] h-full" title={`${monthName(row.month)} · ${nis(row[keys.income])}`}>
+            <div
+              className="flex-1 rounded-t bg-accent"
+              style={{ height: `${Math.max((Number(row[keys.income]) || 0) / max * 100, 1)}%` }}
+            />
+            <div
+              className="flex-1 rounded-t bg-[#DDE0E6]"
+              style={{ height: `${Math.max((Number(row[keys.expenses]) || 0) / max * 100, 1)}%` }}
+            />
+          </div>
+          <div className="text-[11px] text-faint text-center">{monthLabel(row.month)}</div>
+        </div>
       ))}
     </div>
   );
@@ -58,11 +91,12 @@ export function IncomeExpenseChart({ rows, basis, height = 'h-72 md:h-80' }: {
     <div className={height} dir="ltr">
       <ResponsiveContainer>
         <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="month" tickFormatter={monthLabel} stroke="#64748b" fontSize={11} />
-          <YAxis stroke="#64748b" fontSize={11} width={64} tickFormatter={(v: number) => nis(v)} />
+          <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+          <XAxis dataKey="month" tickFormatter={monthLabel} stroke={AXIS} fontSize={11} tickLine={false} axisLine={false} />
+          <YAxis stroke={AXIS} fontSize={11} width={64} tickLine={false} axisLine={false} tickFormatter={(v: number) => nis(v)} />
           <Tooltip
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 12 }}
+            cursor={{ fill: 'rgba(20,22,26,.04)' }}
+            contentStyle={TOOLTIP_STYLE}
             labelFormatter={(m: any) => monthName(String(m))}
             formatter={(v: any, name: any) => [nis(v), name]}
           />
@@ -89,18 +123,20 @@ export function PerShowChart({ rows, height = 'h-72 md:h-80' }: { rows: any[]; h
   return (
     <div className={height} dir="ltr">
       <ResponsiveContainer>
-        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 32 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-          <XAxis dataKey="label" stroke="#64748b" fontSize={10} angle={-35} textAnchor="end" height={70} />
-          <YAxis stroke="#64748b" fontSize={11} width={64} tickFormatter={(v: number) => nis(v)} />
+        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+          <XAxis dataKey="label" stroke={AXIS} fontSize={10} angle={-35} textAnchor="end" height={90} interval={0} tickLine={false} axisLine={false} />
+          <YAxis stroke={AXIS} fontSize={11} width={64} tickLine={false} axisLine={false} tickFormatter={(v: number) => nis(v)} />
           <Tooltip
-            contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: 12 }}
+            cursor={{ fill: 'rgba(20,22,26,.04)' }}
+            contentStyle={TOOLTIP_STYLE}
             formatter={(v: any, name: any) => [nis(v), name]}
           />
-          <Legend wrapperStyle={{ fontSize: 12 }} />
-          <Bar name="הכנסות" dataKey="income" fill={CHART_COLORS.income} radius={[6, 6, 0, 0]} maxBarSize={28} />
-          <Bar name="הוצאות" dataKey="expenses" fill={CHART_COLORS.expenses} radius={[6, 6, 0, 0]} maxBarSize={28} />
-          <Bar name="רווח" dataKey="profit" fill={CHART_COLORS.profit} radius={[6, 6, 0, 0]} maxBarSize={28} />
+          {/* Above the plot: below it the rotated show names run straight into it. */}
+          <Legend verticalAlign="top" align="right" wrapperStyle={{ fontSize: 12, paddingBottom: 8 }} />
+          <Bar name="הכנסות" dataKey="income" fill="#6B45D6" radius={[6, 6, 0, 0]} maxBarSize={28} />
+          <Bar name="הוצאות" dataKey="expenses" fill="#DDD9EF" radius={[6, 6, 0, 0]} maxBarSize={28} />
+          <Bar name="רווח" dataKey="profit" fill="#12805F" radius={[6, 6, 0, 0]} maxBarSize={28} />
         </ComposedChart>
       </ResponsiveContainer>
     </div>

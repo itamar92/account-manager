@@ -27,15 +27,21 @@ const normalizeName = (value: string | null | undefined): string =>
  * The cost components of one show. `vat_summary` is deliberately absent: it restates the VAT
  * inside the lines above rather than adding a cost of its own.
  */
-const EXPENSE_FIELDS = [
+export const EXPENSE_FIELDS = [
   'campaign', 'refreshments', 'design', 'other', 'expense_amount',
   'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer',
 ] as const;
 
-/** The components that carry their own paid flag; the rest are settled when they are entered. */
-const PAID_FLAGGED = new Set([
+/**
+ * The components that carry their own paid flag; the rest are settled when they are entered.
+ * Exported because the show page settles them one at a time and all at once, and both have to
+ * mean the same set of lines.
+ */
+export const PAID_EXPENSE_FIELDS = [
   'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer',
-]);
+] as const;
+
+const PAID_FLAGGED = new Set<string>(PAID_EXPENSE_FIELDS);
 
 export function expenseTotal(row: any): number {
   if (!row) return 0;

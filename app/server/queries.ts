@@ -24,16 +24,24 @@ export interface ListRange {
  * recording the same money, and summing every document would double it.
  */
 export function listClients() {
+  // The two figures the client cards lead with — what this client has been worth this year,
+  // and when they were last worked for — come from the same query as the balances, so a card
+  // can be read without a second request per client.
+  const year = new Date().getFullYear();
   return db
     .prepare(
       `SELECT c.*,
          (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_total,
          (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_count,
          (SELECT COALESCE(SUM(total),0) FROM invoices i WHERE i.client_id = c.id AND i.status = 'issued'
-            AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS open_invoices_total
+            AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS open_invoices_total,
+         (SELECT COALESCE(SUM(subtotal),0) FROM invoices i WHERE i.client_id = c.id
+            AND i.status != 'cancelled' AND i.date >= @from AND i.date <= @to
+            AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS revenue_ytd,
+         (SELECT MAX(date) FROM works w WHERE w.client_id = c.id) AS last_work_date
        FROM clients c ORDER BY c.name`
     )
-    .all();
+    .all({ from: `${year}-01-01`, to: `${year}-12-31` });
 }
 
 /** Works, newest first, narrowed by any combination of status, client and date range. */

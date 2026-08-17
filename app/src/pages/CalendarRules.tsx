@@ -153,18 +153,18 @@ export function CalendarRules({ onChange, onError }: {
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-1">
-        <h2 className="font-bold">אילו אירועים למשוך מהיומן</h2>
+        <h2 className="ser text-lg">אילו אירועים למשוך מהיומן</h2>
         <div className="flex gap-2">
           <Button variant="ghost" onClick={() => addRule('band')}>+ כלל להקה</Button>
           <Button variant="ghost" onClick={() => addRule('personal')}>+ כלל פרטי</Button>
         </div>
       </div>
-      <p className="text-xs text-slate-500 mb-1">
+      <p className="text-xs text-faint mb-1">
         אירוע נמשך אם <b>מילת מפתח</b> מופיעה בכותרת <b>או</b> שהמארגן נמצא ברשימה — כך נתפסים
         גם אירועים שהוזמנת אליהם ולא יצרת. <b>מילות התעלמות</b> גוברות על שניהם, כך שאותו מארגן יכול
         לשלוח גם הופעות וגם חזרות. רוצה שחזרות כן ייכנסו? פשוט הסר את «חזר» מרשימת ההתעלמות.
       </p>
-      <p className="text-xs text-amber-400/70 mb-4">
+      <p className="text-xs text-warn mb-4">
         טיפ: ההתאמה היא לפי מחרוזת, ולכן מילה קצרה תופסת יותר הטיות — «חזר» תופס גם «חזרה» וגם «חזרת».
         הריצו <b>תצוגה מקדימה</b> כדי לראות מה נמשך ולמה, ולסמן ידנית אירוע בודד להוצאה או להכללה.
       </p>
@@ -173,28 +173,28 @@ export function CalendarRules({ onChange, onError }: {
 
       <div className="space-y-4">
         {rules.map((rule) => (
-          <div key={rule.id} className="border border-slate-800 rounded-xl p-3 bg-slate-800/30">
+          <div key={rule.id} className="border border-line rounded-xl p-3 bg-soft">
             <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
               <div className="flex items-center gap-2 flex-1 min-w-[12rem]">
                 <input
                   type="checkbox"
                   checked={!!rule.enabled}
                   onChange={(e) => save(rule, { enabled: e.target.checked ? 1 : 0 })}
-                  className="w-4 h-4 accent-indigo-500"
+                  className="w-4 h-4 accent-accent"
                   title="הפעלה/כיבוי"
                 />
                 <input
                   value={rule.name}
                   onChange={(e) => save(rule, { name: e.target.value })}
-                  className="bg-transparent border-b border-transparent hover:border-slate-700 focus:border-indigo-500 focus:outline-none font-medium flex-1"
+                  className="bg-transparent border-b border-transparent hover:border-line focus:border-accent focus:outline-none font-medium flex-1"
                 />
                 <select
                   value={rule.target}
                   onChange={(e) => save(rule, { target: e.target.value as Rule['target'] })}
-                  className={`text-xs px-2 py-1 rounded-full border bg-slate-900 ${
+                  className={`text-xs px-2 py-1 rounded-full border bg-surface ${
                     rule.target === 'band'
-                      ? 'text-indigo-300 border-indigo-500/30'
-                      : 'text-emerald-300 border-emerald-500/30'
+                      ? 'text-accent border-accent/25'
+                      : 'text-pos border-pos/25'
                   }`}
                 >
                   <option value="band">להקה → הופעות</option>
@@ -218,12 +218,12 @@ export function CalendarRules({ onChange, onError }: {
 
             <div className="grid gap-3 md:grid-cols-2">
               <label className="block">
-                <span className="block text-sm text-slate-400 mb-1">יומן</span>
+                <span className="block text-sm text-muted mb-1">יומן</span>
                 {calendars?.length ? (
                   <select
                     value={rule.calendar_id}
                     onChange={(e) => save(rule, { calendar_id: e.target.value })}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+                    className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent"
                   >
                     {!calendars.some((c) => c.id === rule.calendar_id) && (
                       <option value={rule.calendar_id}>{rule.calendar_id}</option>
@@ -240,7 +240,7 @@ export function CalendarRules({ onChange, onError }: {
                     value={rule.calendar_id}
                     onChange={(e) => save(rule, { calendar_id: e.target.value })}
                     placeholder="primary"
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500"
+                    className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent"
                   />
                 )}
               </label>
@@ -259,7 +259,7 @@ export function CalendarRules({ onChange, onError }: {
               {rule.target === 'personal' && (
                 <>
                   <label className="block">
-                    <span className="block text-sm text-slate-400 mb-1">לקוח לעבודות שייווצרו *</span>
+                    <span className="block text-sm text-muted mb-1">לקוח לעבודות שייווצרו *</span>
                     <ClientField
                       value={rule.client_name || ''} clients={clients}
                       onChange={(name) => save(rule, { client_name: name })}
@@ -272,12 +272,12 @@ export function CalendarRules({ onChange, onError }: {
                   />
                 </>
               )}
-              <div className="flex flex-col justify-end gap-1.5 pb-2 text-sm text-slate-400">
+              <div className="flex flex-col justify-end gap-1.5 pb-2 text-sm text-muted">
                 <label className="flex items-center gap-2">
                   <input
                     type="checkbox" checked={!!rule.skip_declined}
                     onChange={(e) => save(rule, { skip_declined: e.target.checked ? 1 : 0 })}
-                    className="w-4 h-4 accent-indigo-500"
+                    className="w-4 h-4 accent-accent"
                   />
                   דלג על אירועים שסירבת להם
                 </label>
@@ -285,27 +285,27 @@ export function CalendarRules({ onChange, onError }: {
                   <input
                     type="checkbox" checked={!!rule.match_description}
                     onChange={(e) => save(rule, { match_description: e.target.checked ? 1 : 0 })}
-                    className="w-4 h-4 accent-indigo-500"
+                    className="w-4 h-4 accent-accent"
                   />
-                  <span>חפש גם בתיאור האירוע <span className="text-slate-600">(ולא רק בכותרת)</span></span>
+                  <span>חפש גם בתיאור האירוע <span className="text-ghost">(ולא רק בכותרת)</span></span>
                 </label>
               </div>
             </div>
 
             {rule.target === 'personal' && !rule.client_name?.trim() && (
-              <div className="text-xs text-amber-400 mt-2">
+              <div className="text-xs text-warn mt-2">
                 בלי לקוח לא ייווצרו עבודות — האירועים התואמים ידולגו.
               </div>
             )}
 
-            <div className="text-xs text-slate-500 mt-2">
+            <div className="text-xs text-faint mt-2">
               השם שיישמר מנוקה אוטומטית ממילים כמו «הופעה», «מופע», «גיג», «show» ו«gig», וממילות
               המפתח של הכלל שבתחילת הכותרת — «הופעה קולדפליי גריי תל אביב» יישמר כ«גריי תל אביב».
               שם שתערכו ידנית לא יידרס בסנכרון הבא.
             </div>
 
             {rule.target === 'personal' && rule.fixed_amount > 0 && (
-              <div className="text-xs text-slate-500 mt-2">
+              <div className="text-xs text-faint mt-2">
                 כל אירוע תואם ייפתח כעבודה בסך ₪{rule.fixed_amount} לפני מע"מ. סכום שכבר הזנת ידנית לא יידרס.
               </div>
             )}
@@ -322,22 +322,22 @@ export function CalendarRules({ onChange, onError }: {
       </div>
 
       {overrides.length > 0 && (
-        <div className="mt-5 pt-4 border-t border-slate-800">
+        <div className="mt-5 pt-4 border-t border-line">
           <h3 className="font-medium text-sm mb-1">החלטות ידניות</h3>
-          <p className="text-xs text-slate-500 mb-3">
+          <p className="text-xs text-faint mb-3">
             אירועים שסימנת ידנית. הם גוברים על כל הכללים ונשמרים גם אחרי סנכרון מחדש.
           </p>
-          <div className="divide-y divide-slate-800/60">
+          <div className="divide-y divide-line">
             {overrides.map((o) => (
               <div key={o.event_id} className="flex items-center justify-between gap-3 py-2 text-sm">
                 <div className="min-w-0">
-                  <span className={o.action === 'exclude' ? 'text-rose-400' : 'text-emerald-400'}>
+                  <span className={o.action === 'exclude' ? 'text-neg' : 'text-pos'}>
                     {o.action === 'exclude' ? '✕ לא נמשך' : '✓ נמשך תמיד'}
                   </span>
                   <span className="mr-2">{o.summary || o.event_id}</span>
-                  {o.event_date && <span className="text-slate-500 mr-2">{o.event_date}</span>}
+                  {o.event_date && <span className="text-faint mr-2">{o.event_date}</span>}
                 </div>
-                <button onClick={() => unpin(o.event_id)} className="text-xs text-indigo-400 hover:underline whitespace-nowrap">
+                <button onClick={() => unpin(o.event_id)} className="text-xs text-accent hover:underline whitespace-nowrap">
                   ביטול
                 </button>
               </div>
@@ -365,7 +365,7 @@ function ClientField({ value, clients, onChange }: {
   const known = clients.some((c) => c.name === value);
   const [typing, setTyping] = useState(false);
   const asText = typing || clients.length === 0 || (!!value && !known);
-  const field = 'w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500';
+  const field = 'w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent';
 
   if (asText) {
     return (
@@ -376,7 +376,7 @@ function ClientField({ value, clients, onChange }: {
         />
         {clients.length > 0 && (
           <button type="button" onClick={() => setTyping(false)}
-            className="text-xs text-indigo-400 hover:underline whitespace-nowrap">
+            className="text-xs text-accent hover:underline whitespace-nowrap">
             מהרשימה
           </button>
         )}
@@ -433,41 +433,41 @@ function PreviewTable({ result, onPin, onClose }: {
   const rows = result.rows.filter((r: any) => showMisses || r.matched);
 
   return (
-    <div className="mt-3 pt-3 border-t border-slate-800">
+    <div className="mt-3 pt-3 border-t border-line">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <div className="text-xs text-slate-400">
+        <div className="text-xs text-muted">
           {result.matched} תואמים מתוך {result.fetched} אירועים בחלון
         </div>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-xs text-slate-500">
+          <label className="flex items-center gap-2 text-xs text-faint">
             <input type="checkbox" checked={showMisses} onChange={(e) => setShowMisses(e.target.checked)}
-              className="w-3.5 h-3.5 accent-indigo-500" />
+              className="w-3.5 h-3.5 accent-accent" />
             הצג גם מה שלא נמשך
           </label>
           <button onClick={onClose} title="סגירת התצוגה המקדימה"
-            className="text-xs text-slate-500 hover:text-slate-300">
+            className="text-xs text-faint hover:text-ink-2">
             ✕ סגירה
           </button>
         </div>
       </div>
-      <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-slate-800">
+      <div className="max-h-72 overflow-y-auto overflow-x-auto rounded-lg border border-line">
         {rows.length === 0 ? (
-          <div className="text-center text-slate-500 py-6 text-sm">אין אירועים תואמים</div>
+          <div className="text-center text-faint py-6 text-sm">אין אירועים תואמים</div>
         ) : (
           <table className="w-full text-xs">
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-line">
               {rows.map((r: any) => (
                 <tr key={r.eventId} className={r.matched ? '' : 'opacity-60'}>
-                  <td className="px-2 py-1.5 whitespace-nowrap text-slate-400">{r.date}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap text-muted">{r.date}</td>
                   <td className="px-2 py-1.5">
                     {r.summary}
                     {/* The name it would actually be stored under, once the show words come off. */}
                     {r.matched && r.title && r.title !== r.summary && (
-                      <span className="text-slate-500" title="השם שיישמר">{' ← '}{r.title}</span>
+                      <span className="text-faint" title="השם שיישמר">{' ← '}{r.title}</span>
                     )}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap">
-                    <span className={r.matched ? 'text-emerald-400' : 'text-slate-500'}>
+                    <span className={r.matched ? 'text-pos' : 'text-faint'}>
                       {r.matched ? '✓ ' : '✕ '}
                       {REASON_LABELS[r.reason] || r.reason}
                       {r.term ? `: ${r.term}` : ''}
@@ -475,11 +475,11 @@ function PreviewTable({ result, onPin, onClose }: {
                   </td>
                   <td className="px-2 py-1.5 text-left whitespace-nowrap">
                     {r.reason === 'cancelled' ? null : r.matched ? (
-                      <button onClick={() => onPin(r, 'exclude')} className="text-rose-400 hover:underline">
+                      <button onClick={() => onPin(r, 'exclude')} className="text-neg hover:underline">
                         אל תמשוך
                       </button>
                     ) : (
-                      <button onClick={() => onPin(r, 'include')} className="text-emerald-400 hover:underline">
+                      <button onClick={() => onPin(r, 'include')} className="text-pos hover:underline">
                         משוך בכל זאת
                       </button>
                     )}

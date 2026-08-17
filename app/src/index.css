@@ -1,12 +1,96 @@
 @import "tailwindcss";
 
+/*
+ * The palette is written as two layers on purpose.
+ *
+ * `--ws-*` are the workspace variables: the business side and the Moonlight side are the same
+ * app wearing two colours, and the shell swaps them by setting `data-ws` on <html>. Everything
+ * below reads through them, so a page never has to know which workspace it is being shown in.
+ *
+ * `@theme` then turns the resolved values into Tailwind utilities — `bg-surface`, `text-muted`,
+ * `border-line` — so the classes in the pages say what a colour is for rather than what it is.
+ */
+:root {
+  --ws-accent: #3b5bdb;
+  --ws-accent-soft: #eaeefc;
+  --ws-accent-ink: #2b45b8;
+  --ws-ink: #14161a;
+  --ws-line: #e6e8ec;
+  --ws-soft: #f7f8fa;
+  --ws-canvas: #f5f6f8;
+}
+
+:root[data-ws="moon"] {
+  --ws-accent: #6b45d6;
+  --ws-accent-soft: #f0ebfd;
+  --ws-accent-ink: #5836be;
+  --ws-ink: #241d3d;
+  --ws-line: #e4e2f2;
+  --ws-soft: #f6f5fc;
+  --ws-canvas: #f4f3f9;
+}
+
 @theme {
-  --font-sans: "Segoe UI", "Heebo", "Arial Hebrew", system-ui, sans-serif;
+  --font-sans: "Heebo", "Segoe UI", "Arial Hebrew", system-ui, sans-serif;
+
+  /* surfaces */
+  --color-canvas: var(--ws-canvas);
+  --color-surface: #ffffff;
+  --color-soft: var(--ws-soft);
+  --color-line: var(--ws-line);
+  --color-line-strong: #d7dae1;
+
+  /* text, darkest to lightest */
+  --color-ink: var(--ws-ink);
+  --color-ink-2: #333941;
+  --color-body: #565d66;
+  --color-muted: #676e77;
+  --color-faint: #8a9099;
+  --color-ghost: #9aa1aa;
+
+  /* the accent follows the workspace */
+  --color-accent: var(--ws-accent);
+  --color-accent-soft: var(--ws-accent-soft);
+  --color-accent-ink: var(--ws-accent-ink);
+
+  /* Moonlight's violet, for the places the business side points at the band */
+  --color-moon: #6b45d6;
+  --color-moon-soft: #ede9fd;
+
+  /* money and status: good, needs-attention, wrong */
+  --color-pos: #12805f;
+  --color-pos-soft: #e7f2ed;
+  --color-warn: #b8790b;
+  --color-warn-soft: #fdf3e0;
+  --color-warn-ink: #8a5c05;
+  --color-neg: #c8392a;
+  --color-neg-soft: #fcebe8;
 }
 
 body {
-  @apply bg-slate-950 text-slate-100 font-sans antialiased;
+  @apply bg-canvas text-ink font-sans antialiased;
 }
 
-::-webkit-scrollbar { height: 8px; width: 8px; }
-::-webkit-scrollbar-thumb { @apply bg-slate-700 rounded; }
+/*
+ * Figures line up in columns only if the digits are the same width, and shekel sums are read
+ * by comparing them down a column far more often than they are read as prose.
+ */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: -0.012em;
+}
+
+/* Headline weight: the tight tracking is what makes the heavy weight read as a title. */
+.ser {
+  font-weight: 800;
+  letter-spacing: -0.028em;
+}
+
+::-webkit-scrollbar { height: 10px; width: 10px; }
+::-webkit-scrollbar-thumb {
+  background: #cbd0d8;
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}

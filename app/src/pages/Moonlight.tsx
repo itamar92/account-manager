@@ -1,39 +1,48 @@
 import React, { useEffect, useState } from 'react';
-import { clsx } from 'clsx';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { get, post, put, nis } from '../api';
 import { useAuth } from '../AuthContext';
 import { Button, Input, Modal, usePeriodFilter } from '../ui';
-import { IncomeTab } from './moonlight/IncomeTab';
-import { EventExpensesTab } from './moonlight/EventExpensesTab';
+import { ShowsTab } from './moonlight/ShowsTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
-import { AssignmentsTab } from './moonlight/AssignmentsTab';
+import { SuppliersTab } from './moonlight/SuppliersTab';
 import { AdsTab } from './moonlight/AdsTab';
 import { CampaignAnalysisTab } from './moonlight/CampaignAnalysisTab';
 import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
 
-type Tab = 'summary' | 'income' | 'assignments' | 'eventExpenses' | 'generalExpenses' | 'ads' | 'campaignAi';
+/**
+ * The band's areas, each its own route so the sidebar can link straight to it.
+ *
+ * There is no longer a tab per table. A show's income, its costs and who worked it were three
+ * lists you had to hold side by side to answer one question about one gig; they are now one
+ * page per show, reached from `shows`. What is left here is the work that genuinely spans
+ * shows: the summary, the supplier ledger, costs belonging to no show, and the ad spend.
+ *
+ * `campaignAi` sits next to `ads` because it is the same money read a different way: that one
+ * says what the campaigns cost, this one says whether it was worth it.
+ */
+type Tab = 'summary' | 'shows' | 'suppliers' | 'generalExpenses' | 'ads' | 'campaignAi';
 
-const tabs: [Tab, string][] = [
-  ['summary', 'סיכום'],
-  ['income', 'הכנסות'],
-  ['assignments', 'שיבוצים'],
-  ['eventExpenses', 'הוצאות הופעות'],
-  ['generalExpenses', 'הוצאות כלליות'],
-  ['ads', 'פרסום'],
-  // Next to פרסום, because it is the same money read a different way: that tab says what the
-  // campaigns cost, this one says whether it was worth it.
-  ['campaignAi', 'יועץ קמפיינים'],
-];
+const TABS: Tab[] = ['summary', 'shows', 'suppliers', 'generalExpenses', 'ads', 'campaignAi'];
+
+/** Where the retired tabs now live, so an old bookmark still lands somewhere sensible. */
+const MOVED: Record<string, Tab> = {
+  income: 'shows', eventExpenses: 'shows', assignments: 'suppliers',
+};
+
+const isTab = (value: string | undefined): value is Tab => !!value && (TABS as string[]).includes(value);
 
 export function Moonlight() {
   const { user } = useAuth();
   const isOwner = user?.role === 'owner';
-  const [tab, setTab] = useState<Tab>('summary');
+  const params = useParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: Tab = isTab(params.tab) ? params.tab : 'summary';
   // The tables show the period you are working in; the summary keeps its own, wider range.
   const period = usePeriodFilter();
   const [events, setEvents] = useState<any[]>([]);
-  const [eventExpenses, setEventExpenses] = useState<any[]>([]);
   const [generalExpenses, setGeneralExpenses] = useState<any[]>([]);
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [error, setError] = useState('');
@@ -43,7 +52,6 @@ export function Moonlight() {
     const query = period.params().toString();
     const qs = query ? `?${query}` : '';
     get(`/moonlight/events${qs}`).then((d) => setEvents(d.events)).catch((e) => setError(e.message));
-    get(`/moonlight/event-expenses${qs}`).then((d) => setEventExpenses(d.expenses)).catch((e) => setError(e.message));
     get(`/moonlight/general-expenses${qs}`).then((d) => setGeneralExpenses(d.expenses)).catch((e) => setError(e.message));
     // Unfiltered, so an expense can still be assigned to a show from another year.
     get('/moonlight/events').then((d) => setAllEvents(d.events)).catch(() => {});
@@ -61,47 +69,43 @@ export function Moonlight() {
     } catch (err: any) { setError(err.message); }
   };
 
+  const newEvent = () => setEventModal({
+    venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0,
+    amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1,
+    commission_percent: DEFAULT_COMMISSION_PERCENT,
+  });
+
+  // `?new=1` is how the header's quick action reaches in here; the parameter is dropped again
+  // so a reload does not reopen a dialog the user already closed.
+  useEffect(() => {
+    if (!isOwner || searchParams.get('new') !== '1') return;
+    newEvent();
+    searchParams.delete('new');
+    setSearchParams(searchParams, { replace: true });
+  }, [isOwner, searchParams]);
+
+  // An unknown tab in the URL is a typo or a stale bookmark, not a blank page.
+  useEffect(() => {
+    if (params.tab === undefined || isTab(params.tab)) return;
+    navigate(`/moonlight/${MOVED[params.tab] ?? 'summary'}`, { replace: true });
+  }, [params.tab]);
+
   const tabProps = { isOwner, onError: setError, reload: load };
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">🌙 Moonlight Finance</h1>
-          {!isOwner && <p className="text-sm text-slate-500">תצוגה בלבד — עריכה זמינה למנהל בלבד</p>}
-        </div>
-      </div>
-      {error && <div className="text-sm text-rose-400">{error}</div>}
+    <div className="space-y-5">
+      {!isOwner && (
+        <p className="text-sm text-muted">תצוגה בלבד — עריכה זמינה למנהל בלבד</p>
+      )}
+      {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
 
-      <div className="flex gap-1 overflow-x-auto bg-slate-900 border border-slate-800 rounded-2xl p-1 w-fit max-w-full">
-        {tabs.map(([key, label]) => (
-          <button key={key} onClick={() => setTab(key)}
-            className={clsx('px-4 py-2 rounded-xl text-sm whitespace-nowrap transition-colors',
-              tab === key ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200')}>
-            {label}
-          </button>
-        ))}
-      </div>
+      {tab === 'summary' && <SummaryTab onError={setError} isOwner={isOwner} />}
 
-      {tab === 'summary' && <SummaryTab onError={setError} />}
-
-      {tab === 'income' && (
-        <IncomeTab
-          {...tabProps}
-          events={events}
-          period={period}
-          onNewEvent={() => setEventModal({ venue: '', date: new Date().toISOString().slice(0, 10), tickets: 0, amount_pre_vat: 0, amount_with_vat: 0, has_commission: 1, commission_percent: DEFAULT_COMMISSION_PERCENT })}
-          onEditEvent={setEventModal}
-        />
+      {tab === 'shows' && (
+        <ShowsTab {...tabProps} events={events} period={period} onNewEvent={newEvent} />
       )}
 
-      {tab === 'assignments' && (
-        <AssignmentsTab {...tabProps} period={period} />
-      )}
-
-      {tab === 'eventExpenses' && (
-        <EventExpensesTab {...tabProps} expenses={eventExpenses} events={allEvents} period={period} />
-      )}
+      {tab === 'suppliers' && <SuppliersTab {...tabProps} />}
 
       {tab === 'generalExpenses' && (
         <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} period={period} />
@@ -131,8 +135,8 @@ export function Moonlight() {
                 onChange={(e) => setEventModal({ ...eventModal, amount_with_vat: parseFloat(e.target.value) || 0 })} />
             </div>
             <div className="space-y-2">
-              <label className="flex items-center gap-2 text-sm text-slate-300">
-                <input type="checkbox" checked={!!eventModal.has_commission} className="accent-indigo-500"
+              <label className="flex items-center gap-2 text-sm text-ink-2">
+                <input type="checkbox" checked={!!eventModal.has_commission} className="accent-accent"
                   onChange={(e) => setEventModal({ ...eventModal, has_commission: e.target.checked ? 1 : 0 })} />
                 דמי הפקה — לאיתמר ולאמיר בחלקים שווים, והשאר בחלוקה שווה בין כולם
               </label>
@@ -142,14 +146,14 @@ export function Moonlight() {
                   <Input label="אחוז דמי הפקה" type="number" step="1" min="0" max="100"
                     value={eventModal.commission_percent}
                     onChange={(e) => setEventModal({ ...eventModal, commission_percent: e.target.value })} />
-                  <span className="text-xs text-slate-500 pb-2.5 whitespace-nowrap">
+                  <span className="text-xs text-faint pb-2.5 whitespace-nowrap">
                     יוצא {divisionSplitLabel(eventModal.commission_percent)}
                   </span>
                 </div>
               )}
             </div>
-            <label className="flex items-center gap-2 text-sm text-slate-300">
-              <input type="checkbox" checked={!!eventModal.paid_to_musicians} className="accent-indigo-500"
+            <label className="flex items-center gap-2 text-sm text-ink-2">
+              <input type="checkbox" checked={!!eventModal.paid_to_musicians} className="accent-accent"
                 onChange={(e) => setEventModal({ ...eventModal, paid_to_musicians: e.target.checked ? 1 : 0 })} />
               שולם לנגנים
             </label>
@@ -157,24 +161,24 @@ export function Moonlight() {
             {/* Results, not fields: expenses come from the show's expenses row and the
                 division follows the profit unless it was taken over by hand. */}
             {eventModal.id && (
-              <div className="bg-slate-800/40 rounded-xl p-3 space-y-2">
+              <div className="bg-soft rounded-xl p-3 space-y-2">
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">הוצאות (מחושב)</span>
-                  <span className="text-rose-400">{nis(eventModal.expenses)}</span>
+                  <span className="text-muted">הוצאות (מחושב)</span>
+                  <span className="text-neg">{nis(eventModal.expenses)}</span>
                 </div>
                 <div className="flex justify-between text-sm">
-                  <span className="text-slate-400">רווח (מחושב)</span>
-                  <span className="text-emerald-400">{nis(eventModal.profit)}</span>
+                  <span className="text-muted">רווח (מחושב)</span>
+                  <span className="text-pos">{nis(eventModal.profit)}</span>
                 </div>
                 <div className="grid grid-cols-4 gap-2 pt-1">
                   {MEMBERS.map((m) => (
                     <div key={m.key} className="text-center">
-                      <div className="text-xs text-slate-500">{m.name}</div>
-                      <div className="text-sm font-medium text-indigo-300">{nis(eventModal[m.key])}</div>
+                      <div className="text-xs text-faint">{m.name}</div>
+                      <div className="text-sm font-medium text-accent">{nis(eventModal[m.key])}</div>
                     </div>
                   ))}
                 </div>
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-faint">
                   לעריכת ההוצאות עברו ללשונית «הוצאות הופעות»; לעריכת החלוקה פתחו את השורה בטבלת ההכנסות.
                 </p>
               </div>

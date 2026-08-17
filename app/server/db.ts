@@ -404,6 +404,10 @@ addColumnIfMissing('expenses', 'raw', 'TEXT');
 // the calendar. Set the moment someone edits the cell; from then on the sync reports the row
 // as held back rather than overwriting it, until the lock is handed back.
 addColumnIfMissing('band_event_expenses', 'campaign_locked', 'INTEGER NOT NULL DEFAULT 0');
+// How many tickets the room holds. Nothing is derived from it — it exists so the tickets sold
+// can be read as a proportion ("318 מתוך 420") instead of a bare number, which is the only way
+// to tell a full small room from an empty large one. 0 means nobody has said.
+addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
 
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a
