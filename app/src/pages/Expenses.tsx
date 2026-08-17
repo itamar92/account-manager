@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { get, post, nis } from '../api';
 import {
-  Button, Card, DataTable, Empty, PeriodSelect, SearchInput, StatCard, StatusBadge, textMatch, usePeriodFilter,
+  Button, Card, DataTable, Empty, FilterBar, PageHeader, PeriodSelect, SearchInput, StatCard, StatusBadge,
+  filterClass, textMatch, usePeriodFilter,
 } from '../ui';
 
 /** The category filter's value for expenses Morning has not classified — matches the server. */
@@ -57,45 +58,52 @@ export function Expenses() {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">הוצאות</h1>
-        <div className="flex flex-wrap gap-2">
-          <select value={status} onChange={(e) => setStatus(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
-            <option value="">כל הסטטוסים</option>
-            <option value="open">טרם דווחו</option>
-            <option value="reported">דווחו</option>
-          </select>
-          <select value={category} onChange={(e) => setCategory(e.target.value)}
-            className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
-            <option value="">כל הסיווגים</option>
-            {data.categories.map((c: string) => <option key={c} value={c}>{c}</option>)}
-            <option value={UNCATEGORIZED}>ללא סיווג</option>
-          </select>
-          <PeriodSelect year={period.year} month={period.month}
-            onYearChange={period.setYear} onMonthChange={period.setMonth} />
-          <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי ספק, פירוט או סיווג…"
-            className="flex-1 min-w-[10rem] sm:max-w-xs" />
+    <div className="space-y-4">
+      <PageHeader
+        title="הוצאות"
+        sub={
+          <>
+            <span className="num">{summary.count}</span> מסמכים מוצגים · סה"כ <span className="num">{nis(summary.total)}</span>
+            {' · '}מע"מ תשומות <span className="num text-pos">{nis(summary.vat)}</span>
+          </>
+        }
+        actions={
           <Button variant="ghost" onClick={sync} disabled={!integration.configured || syncing}>
             {syncing ? 'מסנכרן…' : 'סנכרון מ-Morning'}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      {error && <div className="text-sm text-rose-400">{error}</div>}
-      {notice && <div className="text-sm text-emerald-400">{notice}</div>}
+      <FilterBar>
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className={filterClass}>
+          <option value="">כל הסטטוסים</option>
+          <option value="open">טרם דווחו</option>
+          <option value="reported">דווחו</option>
+        </select>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className={filterClass}>
+          <option value="">כל הסיווגים</option>
+          {data.categories.map((c: string) => <option key={c} value={c}>{c}</option>)}
+          <option value={UNCATEGORIZED}>ללא סיווג</option>
+        </select>
+        <PeriodSelect year={period.year} month={period.month}
+          onYearChange={period.setYear} onMonthChange={period.setMonth} />
+        <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי ספק, פירוט או סיווג…"
+          className="flex-1 min-w-[10rem] sm:max-w-xs" />
+      </FilterBar>
+
+      {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
       {!integration.configured && (
-        <div className="text-sm text-slate-400">
-          Morning לא מוגדר — חסרים <code dir="ltr" className="text-indigo-300">GREEN_INVOICE_ID</code> /{' '}
-          <code dir="ltr" className="text-indigo-300">GREEN_INVOICE_SECRET</code>
+        <div className="text-sm text-muted">
+          Morning לא מוגדר — חסרים <code dir="ltr" className="text-accent">GREEN_INVOICE_ID</code> /{' '}
+          <code dir="ltr" className="text-accent">GREEN_INVOICE_SECRET</code>
         </div>
       )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <StatCard label='סה"כ הוצאות (כולל מע"מ)' value={nis(summary.total)} sub={`${summary.count} מסמכים`} accent="text-rose-400" />
+        <StatCard label='סה"כ הוצאות (כולל מע"מ)' value={nis(summary.total)} sub={`${summary.count} מסמכים`} accent="text-neg" />
         <StatCard label='לפני מע"מ' value={nis(summary.subtotal)} />
-        <StatCard label='מע"מ תשומות' value={nis(summary.vat)} sub="לקיזוז בדיווח" accent="text-emerald-400" />
+        <StatCard label='מע"מ תשומות' value={nis(summary.vat)} sub="לקיזוז בדיווח" accent="text-pos" />
         <StatCard
           label="סונכרן לאחרונה"
           value={integration.last_sync ? new Date(integration.last_sync).toLocaleDateString('he-IL') : '—'}
@@ -105,24 +113,24 @@ export function Expenses() {
 
       {summary.byCategory.length > 1 && (
         <Card>
-          <h2 className="font-bold mb-3">לפי סיווג</h2>
+          <h2 className="ser text-lg mb-3">לפי סיווג</h2>
           <div className="space-y-2">
             {summary.byCategory.map((row: any) => (
               <button
                 key={row.category}
                 onClick={() => setCategory(row.category === 'ללא סיווג' ? UNCATEGORIZED : row.category)}
-                className="w-full text-right hover:bg-slate-800/40 rounded-lg px-2 py-1.5 transition-colors"
+                className="w-full text-right hover:bg-soft rounded-lg px-2 py-1.5 transition-colors"
               >
                 <div className="flex items-center justify-between text-sm gap-3">
                   <span className="truncate">{row.category}</span>
-                  <span className="text-slate-400 shrink-0">
-                    {nis(row.total)} <span className="text-xs text-slate-600">· {row.count}</span>
+                  <span className="text-muted shrink-0">
+                    {nis(row.total)} <span className="text-xs text-ghost">· {row.count}</span>
                   </span>
                 </div>
                 {/* Each category against the largest one, so the year's weight is visible at a glance. */}
-                <div className="mt-1 h-1 rounded-full bg-slate-800 overflow-hidden">
+                <div className="mt-1 h-1 rounded-full bg-soft overflow-hidden">
                   <div
-                    className="h-full bg-rose-500/60"
+                    className="h-full bg-neg-soft"
                     style={{ width: `${Math.max(2, (row.total / (summary.byCategory[0].total || 1)) * 100)}%` }}
                   />
                 </div>
@@ -132,14 +140,11 @@ export function Expenses() {
         </Card>
       )}
 
-      <Card>
-        {visible.length === 0 ? (
-          <Empty text={integration.synced ? 'אין הוצאות בטווח הזה' : 'עדיין לא סונכרנו הוצאות מ-Morning'} />
-        ) : (
-          <DataTable
+      <DataTable
+            empty={integration.synced ? 'אין הוצאות בטווח הזה' : 'עדיין לא סונכרנו הוצאות מ-Morning'}
             rows={visible}
             rowKey={(e: any) => e.id}
-            rowClassName={() => 'hover:bg-slate-800/40'}
+            rowClassName={() => 'hover:bg-soft'}
             columns={[
               { key: 'date', header: 'תאריך', sortValue: (e: any) => e.date, className: 'whitespace-nowrap', render: (e: any) => e.date },
               {
@@ -148,16 +153,16 @@ export function Expenses() {
               },
               {
                 key: 'description', header: 'פירוט', sortValue: (e: any) => e.description,
-                className: 'text-slate-400 max-w-[16rem] truncate', render: (e: any) => e.description || '—',
+                className: 'text-muted max-w-[16rem] truncate', render: (e: any) => e.description || '—',
               },
               {
                 key: 'category', header: 'סיווג', sortValue: (e: any) => e.category,
                 render: (e: any) => e.category
-                  ? <span className="text-xs text-slate-300">{e.category}</span>
-                  : <span className="text-xs text-slate-600">ללא סיווג</span>,
+                  ? <span className="text-xs text-ink-2">{e.category}</span>
+                  : <span className="text-xs text-ghost">ללא סיווג</span>,
               },
               {
-                key: 'doc', header: 'מסמך', sortValue: (e: any) => e.number, className: 'whitespace-nowrap text-xs text-slate-500',
+                key: 'doc', header: 'מסמך', sortValue: (e: any) => e.number, className: 'whitespace-nowrap text-xs text-faint',
                 render: (e: any) => [e.doc_type_label, e.number ? `#${e.number}` : ''].filter(Boolean).join(' ') || '—',
               },
               {
@@ -166,18 +171,16 @@ export function Expenses() {
                   <>
                     {nis(e.amount)}
                     {e.currency && e.currency !== 'ILS' && (
-                      <span className="text-xs text-slate-500" dir="ltr"> ({e.currency})</span>
+                      <span className="text-xs text-faint" dir="ltr"> ({e.currency})</span>
                     )}
                   </>
                 ),
               },
-              { key: 'vat', header: 'מע"מ', sortValue: (e: any) => e.vat_amount, className: 'text-slate-400', render: (e: any) => nis(e.vat_amount) },
-              { key: 'total', header: 'סה"כ', sortValue: (e: any) => e.total, className: 'font-medium text-rose-400', render: (e: any) => nis(e.total) },
+              { key: 'vat', header: 'מע"מ', sortValue: (e: any) => e.vat_amount, className: 'text-muted', render: (e: any) => nis(e.vat_amount) },
+              { key: 'total', header: 'סה"כ', sortValue: (e: any) => e.total, className: 'font-medium text-neg', render: (e: any) => nis(e.total) },
               { key: 'status', header: 'סטטוס', sortValue: (e: any) => e.status, render: (e: any) => <StatusBadge status={e.status} /> },
             ]}
           />
-        )}
-      </Card>
     </div>
   );
 }

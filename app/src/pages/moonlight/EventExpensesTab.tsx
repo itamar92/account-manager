@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { del, post, put, nis } from '../../api';
-import { Card, Combobox, DataTable, EditableCell, Empty, PeriodSelect, SearchInput, textMatch } from '../../ui';
+import { Combobox, DataTable, EditableCell, PageHeader, PeriodSelect, SearchInput, textMatch } from '../../ui';
 import { eventLabel, type PeriodTabProps } from './shared';
 
 /** The cost lines of a show, in table order. `paid` marks the ones settled separately. */
@@ -75,92 +75,90 @@ export function EventExpensesTab({ expenses, events, period, isOwner, onError, r
   const visible = expenses.filter((x) => textMatch(search, x.event));
 
   return (
-    <Card>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2">
-          <h2 className="font-bold">הוצאות הופעות</h2>
-          <PeriodSelect year={period.year} month={period.month}
-            onYearChange={period.setYear} onMonthChange={period.setMonth} />
-        </div>
-        <p className="text-xs text-slate-500">שם ההופעה מגיע מטבלת ההכנסות · הסכומים כאן מזינים את «הוצאות» ו«רווח»</p>
-      </div>
+    <div className="space-y-4">
+      <PageHeader
+        title="הוצאות הופעות"
+        sub="שם ההופעה מגיע מטבלת ההכנסות · הסכומים כאן מזינים את «הוצאות» ו«רווח»"
+        actions={
+          <>
+            <PeriodSelect year={period.year} month={period.month}
+              onYearChange={period.setYear} onMonthChange={period.setMonth} />
+            <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי הופעה…" className="w-44" />
+          </>
+        }
+      />
 
-      <div className="mb-4">
-        <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי הופעה…" className="w-full sm:max-w-xs" />
-      </div>
-
-      {visible.length === 0 ? <Empty text="אין נתונים בטווח הזה" /> : (
-        <DataTable
-          rows={visible}
-          rowKey={(x) => x.id}
-          rowClassName={() => 'hover:bg-slate-800/40 align-top'}
-          columns={[
-            {
-              key: 'event', header: 'הופעה', mobile: 'title', sortValue: (x) => x.event,
-              className: 'font-medium whitespace-nowrap min-w-[14rem]',
-              render: (x) => isOwner ? (
-                <>
-                  {!x.event_id && (
-                    <div className="text-amber-400 text-xs mb-1" title="השורה לא משויכת להופעה — בחרו הופעה מהרשימה">
-                      ⚠ {x.event}
-                    </div>
-                  )}
-                  <Combobox
-                    value={x.event_id || ''}
-                    placeholder="בחרו הופעה לשיוך…"
-                    options={[
-                      { value: '', label: 'ללא שיוך' },
-                      ...events
-                        .filter((e) => !taken.has(e.id) || e.id === x.event_id)
-                        .map((e) => ({ value: e.id, label: eventLabel(e) })),
-                    ]}
-                    onChange={(v) => assign(x, v)}
-                  />
-                </>
-              ) : x.event_id ? x.event : <span className="text-amber-400">⚠ {x.event}</span>,
-            },
-            ...COLUMNS.map((c) => ({
-              key: c.key,
-              header: c.label,
-              sortValue: (x: any) => Number(x[c.key]) || 0,
-              className: 'whitespace-nowrap',
-              render: (x: any) => (
-                <>
-                  <EditableCell type="number" value={x[c.key]} display={Number(x[c.key]) ? nis(x[c.key]) : '—'}
-                    disabled={!isOwner} onSave={(v) => saveField(x.id, { [c.key]: v })} />
-                  {c.paid && (
-                    <label className="flex items-center gap-1 text-xs text-slate-500 mt-1">
-                      <EditableCell type="checkbox" value={x[`${c.key}_paid`]} disabled={!isOwner}
-                        onSave={(v) => saveField(x.id, { [`${c.key}_paid`]: v })} />
-                      שולם
-                    </label>
-                  )}
-                </>
-              ),
-            })),
-            {
-              key: 'vat', header: 'מע"מ', sortValue: (x) => Number(x.vat_summary) || 0,
-              render: (x) => (
-                <EditableCell type="number" value={x.vat_summary} display={Number(x.vat_summary) ? nis(x.vat_summary) : '—'}
-                  disabled={!isOwner} onSave={(v) => saveField(x.id, { vat_summary: v })} />
-              ),
-            },
-            {
-              key: 'total', header: 'סה"כ', sortValue: (x) => rowTotal(x),
-              className: 'font-medium text-rose-400 whitespace-nowrap',
-              render: (x) => <span className="font-medium text-rose-400">{nis(rowTotal(x))}</span>,
-            },
-            isOwner && {
-              key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
-              render: (x: any) => (
-                <button onClick={() => removeRow(x)} className="text-sm text-rose-400 hover:underline">
-                  {x.event_id ? 'ניקוי' : 'מחיקה'}
-                </button>
-              ),
-            },
-          ]}
-        />
-      )}
-    </Card>
+      <DataTable
+        empty="אין נתונים בטווח הזה"
+        rows={visible}
+        rowKey={(x) => x.id}
+        rowClassName={() => 'hover:bg-soft align-top'}
+        columns={[
+          {
+            key: 'event', header: 'הופעה', mobile: 'title', sortValue: (x) => x.event,
+            className: 'font-medium whitespace-nowrap min-w-[14rem]',
+            render: (x) => isOwner ? (
+              <>
+                {!x.event_id && (
+                  <div className="text-warn text-xs mb-1" title="השורה לא משויכת להופעה — בחרו הופעה מהרשימה">
+                    ⚠ {x.event}
+                  </div>
+                )}
+                <Combobox
+                  value={x.event_id || ''}
+                  placeholder="בחרו הופעה לשיוך…"
+                  options={[
+                    { value: '', label: 'ללא שיוך' },
+                    ...events
+                      .filter((e) => !taken.has(e.id) || e.id === x.event_id)
+                      .map((e) => ({ value: e.id, label: eventLabel(e) })),
+                  ]}
+                  onChange={(v) => assign(x, v)}
+                />
+              </>
+            ) : x.event_id ? x.event : <span className="text-warn">⚠ {x.event}</span>,
+          },
+          ...COLUMNS.map((c) => ({
+            key: c.key,
+            header: c.label,
+            sortValue: (x: any) => Number(x[c.key]) || 0,
+            className: 'whitespace-nowrap',
+            render: (x: any) => (
+              <>
+                <EditableCell type="number" value={x[c.key]} display={Number(x[c.key]) ? nis(x[c.key]) : '—'}
+                  disabled={!isOwner} onSave={(v) => saveField(x.id, { [c.key]: v })} />
+                {c.paid && (
+                  <label className="flex items-center gap-1 text-xs text-faint mt-1">
+                    <EditableCell type="checkbox" value={x[`${c.key}_paid`]} disabled={!isOwner}
+                      onSave={(v) => saveField(x.id, { [`${c.key}_paid`]: v })} />
+                    שולם
+                  </label>
+                )}
+              </>
+            ),
+          })),
+          {
+            key: 'vat', header: 'מע"מ', sortValue: (x) => Number(x.vat_summary) || 0,
+            render: (x) => (
+              <EditableCell type="number" value={x.vat_summary} display={Number(x.vat_summary) ? nis(x.vat_summary) : '—'}
+                disabled={!isOwner} onSave={(v) => saveField(x.id, { vat_summary: v })} />
+            ),
+          },
+          {
+            key: 'total', header: 'סה"כ', sortValue: (x) => rowTotal(x),
+            className: 'font-medium text-neg whitespace-nowrap',
+            render: (x) => <span className="font-medium text-neg">{nis(rowTotal(x))}</span>,
+          },
+          isOwner && {
+            key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
+            render: (x: any) => (
+              <button onClick={() => removeRow(x)} className="text-sm text-neg hover:underline">
+                {x.event_id ? 'ניקוי' : 'מחיקה'}
+              </button>
+            ),
+          },
+        ]}
+      />
+    </div>
   );
 }

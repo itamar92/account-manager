@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
-import { Button, Card, DataTable, Empty, Input, Modal, PeriodSelect, SearchInput, textMatch } from '../../ui';
+import { Button, Card, DataTable, Input, Modal, PageHeader, PeriodSelect, SearchInput, textMatch } from '../../ui';
 import { ASSIGNMENT_ROLES, roleName, type PeriodTabProps } from './shared';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -74,58 +74,58 @@ export function AssignmentsTab({ isOwner, onError, period }: PeriodTabProps) {
   return (
     <div className="space-y-3">
       {upcomingMissing.length > 0 && (
-        <Card className="border-amber-500/40">
-          <div className="font-bold text-amber-400 mb-2">
+        <Card className="border-warn/25">
+          <div className="font-bold text-warn mb-2">
             ⚠ {upcomingMissing.length} הופעות קרובות עם שיבוץ חסר
           </div>
           <div className="space-y-1 text-sm">
             {upcomingMissing.slice(0, 6).map((e) => (
               <div key={e.id} className="flex flex-wrap items-center gap-2">
                 <span className="font-medium">{e.venue}</span>
-                <span className="text-xs text-slate-500">{e.date}</span>
-                <span className="text-amber-400 text-xs">
+                <span className="text-xs text-faint">{e.date}</span>
+                <span className="text-warn text-xs">
                   חסר: {e.missing.map((r: string) => roleName(r)).join(', ')}
                 </span>
               </div>
             ))}
             {upcomingMissing.length > 6 && (
-              <div className="text-xs text-slate-500">ועוד {upcomingMissing.length - 6} הופעות…</div>
+              <div className="text-xs text-faint">ועוד {upcomingMissing.length - 6} הופעות…</div>
             )}
           </div>
         </Card>
       )}
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <h2 className="font-bold">שיבוצים להופעות</h2>
+      <PageHeader
+        title="שיבוצים להופעות"
+        actions={
+          <>
             <PeriodSelect year={period.year} month={period.month}
               onYearChange={period.setYear} onMonthChange={period.setMonth} />
-          </div>
-          {isOwner && (
-            <span title="משווה את רשימת האורחים של כל הופעה מהיומן לאימיילים של הספקים">
-              <Button variant="ghost" disabled={matching} onClick={autoMatch}>
-                {matching ? 'מתאים…' : 'התאמה מהיומן'}
-              </Button>
-            </span>
-          )}
-        </div>
-        <div className="mb-4">
-          <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי מקום…" className="w-full sm:max-w-xs" />
-        </div>
+            <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי מקום…" className="w-40" />
+            {isOwner && (
+              <span title="משווה את רשימת האורחים של כל הופעה מהיומן לאימיילים של הספקים">
+                <Button variant="ghost" disabled={matching} onClick={autoMatch}>
+                  {matching ? 'מתאים…' : 'התאמה מהיומן'}
+                </Button>
+              </span>
+            )}
+          </>
+        }
+      />
 
-        {visible.length === 0 ? <Empty text="אין הופעות בטווח הזה" /> : (
+      <div>
           <DataTable
+            empty="אין הופעות בטווח הזה"
             rows={visible}
             rowKey={(e) => e.id}
-            rowClassName={(e) => clsx('hover:bg-slate-800/40',
-              e.date >= today() && e.missing.length > 0 && 'bg-amber-500/5')}
+            rowClassName={(e) => clsx('hover:bg-soft',
+              e.date >= today() && e.missing.length > 0 && 'bg-warn-soft')}
             columns={[
               {
                 key: 'venue', header: 'מקום', mobile: 'title', sortValue: (e) => e.venue, className: 'font-medium',
                 render: (e) => (
                   <div className="flex items-center gap-1.5">
-                    {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-indigo-400 text-xs">◷</span>}
+                    {e.calendar_event_id && <span title="מסונכרן מהיומן" className="text-accent text-xs">◷</span>}
                     <span>{e.venue}</span>
                   </div>
                 ),
@@ -150,28 +150,25 @@ export function AssignmentsTab({ isOwner, onError, period }: PeriodTabProps) {
               })),
             ]}
           />
-        )}
-        <p className="text-xs text-slate-500 mt-3">
+        <p className="text-xs text-faint mt-3">
           שיבוץ עם ◷ הותאם אוטומטית מרשימת האורחים ביומן; הסכום מתחת לכל שיבוץ הוא שכר התפקיד
           מתוך הוצאות ההופעה — אדום כל עוד לא שולם, ירוק לאחר תשלום.
         </p>
-      </Card>
+      </div>
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div>
-            <h2 className="font-bold">ספקים</h2>
-            <p className="text-xs text-slate-500">התאמת אימייל לתפקיד — כך אורח ביומן הופך לשיבוץ</p>
-          </div>
-          {isOwner && (
+      <div className="pt-2">
+        <PageHeader
+          title="ספקים"
+          sub="התאמת אימייל לתפקיד — כך אורח ביומן הופך לשיבוץ"
+          actions={isOwner && (
             <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '' })}>
               + ספק
             </Button>
           )}
-        </div>
-
-        {suppliers.length === 0 ? <Empty text="עדיין אין ספקים — הוסיפו ספק כדי להתחיל לשבץ" /> : (
+        />
+        <div className="mt-4">
           <DataTable
+            empty="עדיין אין ספקים — הוסיפו ספק כדי להתחיל לשבץ"
             rows={suppliers}
             rowKey={(s) => s.id}
             columns={[
@@ -191,25 +188,25 @@ export function AssignmentsTab({ isOwner, onError, period }: PeriodTabProps) {
                   <button
                     onClick={() => setDebtsFor(s)}
                     title="פירוט החוב לפי הופעה"
-                    className="text-rose-400 font-medium hover:underline"
+                    className="text-neg font-medium hover:underline"
                   >
                     {nis(s.owed)} · {s.owed_shows.length} הופעות
                   </button>
-                ) : <span className="text-emerald-400">—</span>,
+                ) : <span className="text-pos">—</span>,
               },
               isOwner && {
                 key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
                 render: (s: any) => (
                   <div className="flex gap-3 md:gap-2 justify-end">
-                    <button onClick={() => setSupplierModal({ ...s })} className="text-sm text-indigo-400 hover:underline">עריכה</button>
-                    <button onClick={() => removeSupplier(s)} className="text-sm text-rose-400 hover:underline">מחיקה</button>
+                    <button onClick={() => setSupplierModal({ ...s })} className="text-sm text-accent hover:underline">עריכה</button>
+                    <button onClick={() => removeSupplier(s)} className="text-sm text-neg hover:underline">מחיקה</button>
                   </div>
                 ),
               },
             ]}
           />
-        )}
-      </Card>
+        </div>
+      </div>
 
       <Modal title={supplierModal?.id ? 'עריכת ספק' : 'ספק חדש'} open={!!supplierModal} onClose={() => setSupplierModal(null)}>
         {supplierModal && (
@@ -217,10 +214,10 @@ export function AssignmentsTab({ isOwner, onError, period }: PeriodTabProps) {
             <Input label="שם *" value={supplierModal.name} required
               onChange={(e) => setSupplierModal({ ...supplierModal, name: e.target.value })} />
             <label className="block">
-              <span className="block text-sm text-slate-400 mb-1">תפקיד *</span>
+              <span className="block text-sm text-muted mb-1">תפקיד *</span>
               <select value={supplierModal.role}
                 onChange={(e) => setSupplierModal({ ...supplierModal, role: e.target.value })}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-indigo-500">
+                className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-accent">
                 {ASSIGNMENT_ROLES.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
               </select>
             </label>
@@ -240,19 +237,19 @@ export function AssignmentsTab({ isOwner, onError, period }: PeriodTabProps) {
           <div className="space-y-2">
             {debtsFor.owed_shows.map((row: any) => (
               <div key={`${row.event_id}-${row.role}`}
-                className="flex items-center justify-between text-sm border-b border-slate-800/60 pb-2 last:border-0">
+                className="flex items-center justify-between text-sm border-b border-line pb-2 last:border-0">
                 <div>
                   <div className="font-medium">{row.venue}</div>
-                  <div className="text-xs text-slate-500">{row.date} · {roleName(row.role)}</div>
+                  <div className="text-xs text-faint">{row.date} · {roleName(row.role)}</div>
                 </div>
-                <span className="text-rose-400 font-medium">{nis(row.amount)}</span>
+                <span className="text-neg font-medium">{nis(row.amount)}</span>
               </div>
             ))}
             <div className="flex items-center justify-between pt-2 font-bold">
               <span>סה״כ</span>
-              <span className="text-rose-400">{nis(debtsFor.owed)}</span>
+              <span className="text-neg">{nis(debtsFor.owed)}</span>
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-faint">
               הסימון «שולם» נעשה בלשונית «הוצאות הופעות», בשורת ההופעה המתאימה.
             </p>
           </div>
@@ -290,14 +287,14 @@ function RoleCell({ event, role, suppliers, isOwner, onAssign }: {
       {isOwner ? (
         <div className="flex items-center gap-1">
           {assignment?.source === 'calendar' && (
-            <span title="הותאם אוטומטית מרשימת האורחים ביומן" className="text-indigo-400 text-xs">◷</span>
+            <span title="הותאם אוטומטית מרשימת האורחים ביומן" className="text-accent text-xs">◷</span>
           )}
           <select
             value={value}
             onChange={(e) => onAssign(e.target.value)}
             className={clsx(
-              'w-full bg-slate-800 border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-indigo-500',
-              missing ? 'border-amber-500/60 text-amber-400' : 'border-slate-700'
+              'w-full bg-soft border rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-accent',
+              missing ? 'border-warn/25 text-warn' : 'border-line'
             )}
           >
             <option value="">{missing ? '⚠ לא שובץ' : '—'}</option>
@@ -306,12 +303,12 @@ function RoleCell({ event, role, suppliers, isOwner, onAssign }: {
           </select>
         </div>
       ) : (
-        <span className={clsx('text-sm', missing && 'text-amber-400')}>
+        <span className={clsx('text-sm', missing && 'text-warn')}>
           {assignment?.not_needed ? 'לא נדרש' : assignment?.supplier_name || (missing ? '⚠ לא שובץ' : '—')}
         </span>
       )}
       {amount.amount > 0 && !assignment?.not_needed && (
-        <div className={clsx('text-xs mt-0.5', amount.paid ? 'text-emerald-400' : 'text-rose-400')}
+        <div className={clsx('text-xs mt-0.5', amount.paid ? 'text-pos' : 'text-neg')}
           title={amount.paid ? 'שולם' : 'טרם שולם — מתוך הוצאות ההופעה'}>
           {nis(amount.amount)}{amount.paid ? ' ✓' : ''}
         </div>

@@ -1,7 +1,37 @@
 import React, { useEffect, useState } from 'react';
+import { clsx } from 'clsx';
+import { Building2, CalendarCheck, Key, Percent, Plug, Settings2, Users } from 'lucide-react';
 import { get, post, put, del } from '../api';
-import { Button, Card, Input, Modal, Empty } from '../ui';
+import { Button, Card, Input, Modal, Empty, PageHeader } from '../ui';
 import { CalendarRules } from './CalendarRules';
+
+/** The drawers of the filing cabinet, in the order they are needed when setting the app up. */
+const SECTIONS = [
+  { key: 'general', label: 'כללי', icon: Settings2 },
+  { key: 'business', label: 'פרטי העסק', icon: Building2 },
+  { key: 'connections', label: 'חיבורים', icon: Plug },
+  { key: 'calendar', label: 'כללי יומן', icon: CalendarCheck },
+  { key: 'vat', label: 'מע"מ ומס', icon: Percent },
+  { key: 'users', label: 'משתמשים', icon: Users },
+  { key: 'api', label: 'מפתחות API', icon: Key },
+] as const;
+
+type Section = typeof SECTIONS[number]['key'];
+
+const SECTION_TITLES: Record<Section, string> = {
+  general: 'כללי', business: 'פרטי העסק', connections: 'חיבורים',
+  calendar: 'כללי יומן', vat: 'מע"מ ומס', users: 'משתמשים והרשאות', api: 'מפתחות API',
+};
+
+const SECTION_SUBS: Record<Section, string> = {
+  general: 'מע"מ וטווח הסנכרון מ-Morning',
+  business: 'פרטי העוסק כפי שהם מופיעים על מסמכים',
+  connections: 'שלושה מקורות נתונים — המפתחות עצמם יושבים ב-.env',
+  calendar: 'כללים שקובעים אילו אירועים נמשכים, ולאן',
+  vat: 'תדירות דיווח ונקודות זיכוי להערכת המס',
+  users: 'מי נכנס לאפליקציה ומה הוא רואה',
+  api: 'גישה לאפליקציות חיצוניות ולסוכני AI',
+};
 
 /**
  * A plain rounded number for the sync summary. Not `nis`: the Meta line reports the ad account's
@@ -12,6 +42,7 @@ const amount = (value: unknown) => Math.round(Number(value) || 0).toLocaleString
 export function Settings() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
+  const [sec, setSec] = useState<Section>('general');
   const [newKey, setNewKey] = useState<any>(null);
   const [keyName, setKeyName] = useState('');
   const [userModal, setUserModal] = useState(false);
@@ -186,17 +217,38 @@ export function Settings() {
   if (!data) return <Empty text="טוען…" />;
 
   return (
-    <div className="space-y-6">
-      <h1 className="text-2xl font-bold">הגדרות</h1>
-      {error && <div className="text-sm text-rose-400">{error}</div>}
+    <div className="flex flex-col md:flex-row gap-6 items-start">
+      {/* The rail. Settings is a filing cabinet, not a page: showing one drawer at a time is
+          what keeps the section you came for from being eight screens down. */}
+      <div className="w-full md:w-52 md:shrink-0 md:sticky md:top-[73px]">
+        <h1 className="ser text-2xl mb-3 hidden md:block">הגדרות</h1>
+        <div className="flex md:flex-col gap-1 overflow-x-auto pb-1">
+          {SECTIONS.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              onClick={() => setSec(key)}
+              className={clsx(
+                'flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-sm whitespace-nowrap transition-colors',
+                sec === key ? 'bg-accent-soft text-accent-ink font-semibold' : 'text-ink-2 hover:bg-soft'
+              )}
+            >
+              <Icon size={17} className="shrink-0" /> {label}
+            </button>
+          ))}
+        </div>
+      </div>
 
+      <div className="flex-1 min-w-0 space-y-4">
+      <PageHeader title={SECTION_TITLES[sec]} sub={SECTION_SUBS[sec]} />
+      {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+
+      {sec === 'general' && (
       <Card>
-        <h2 className="font-bold mb-1">כללי</h2>
-        <p className="text-xs text-slate-500 mb-4">
+        <p className="text-xs text-faint mb-4">
           טווח הסנכרון קובע כמה אחורה כל משיכה מ-Morning מגיעה. סנכרון מרענן כל שורה שהוא מוצא במלואה,
           כך שהרחבת הטווח וסנכרון חוזר היא הדרך לתקן שורות ישנות שנמשכו בעבר.
         </p>
-        {generalSaved && <div className="text-sm text-emerald-400 mb-3">{generalSaved}</div>}
+        {generalSaved && <div className="text-sm text-pos mb-3">{generalSaved}</div>}
         <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
           <Input label='מע"מ (%)' type="number" step="0.1" value={vat} onChange={(e) => setVat(e.target.value)} />
           <Input label="טווח סנכרון מ-Morning (ימים)" type="number" min="1" max="1825" value={syncDays}
@@ -204,20 +256,21 @@ export function Settings() {
           <Button variant="ghost" onClick={saveGeneral}>שמירה</Button>
         </div>
       </Card>
+      )}
 
       {/* What the דוחות page needs to know that the books cannot tell it: how often מע"מ is
           filed, and how many נקודות זיכוי the income-tax estimate should credit. */}
+      {sec === 'vat' && (
       <Card>
-        <h2 className="font-bold mb-1">דוחות מס</h2>
-        <p className="text-xs text-slate-500 mb-4">
+        <p className="text-xs text-faint mb-4">
           משפיע על חלוקת תקופות הדיווח בדוח המע"מ ועל הערכת המס השנתית.
         </p>
-        {reportsSaved && <div className="text-sm text-emerald-400 mb-3">{reportsSaved}</div>}
+        {reportsSaved && <div className="text-sm text-pos mb-3">{reportsSaved}</div>}
         <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
           <label className="block">
-            <span className="block text-sm text-slate-400 mb-1">תדירות דיווח מע"מ</span>
+            <span className="block text-sm text-muted mb-1">תדירות דיווח מע"מ</span>
             <select value={vatFrequency} onChange={(e) => setVatFrequency(e.target.value)}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+              className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
               <option value="bimonthly">דו-חודשי</option>
               <option value="monthly">חודשי</option>
             </select>
@@ -227,21 +280,21 @@ export function Settings() {
           <Button variant="ghost" onClick={saveReportSettings}>שמירה</Button>
         </div>
       </Card>
+      )}
 
-      {business && (
+      {sec === 'business' && business && (
         <Card>
-          <h2 className="font-bold mb-1">פרטי העסק</h2>
-          <p className="text-xs text-slate-500 mb-4">
+            <p className="text-xs text-faint mb-4">
             הכותרת שמוצגת בתצוגה המקדימה לפני הנפקה ב-Morning. המסמך עצמו מונפק לפי תבנית העיצוב
             שמוגדרת ב-Morning — הפרטים כאן לא נשלחים אליו, אלא רק משלימים את התצוגה.
           </p>
-          {businessSaved && <div className="text-sm text-emerald-400 mb-3">{businessSaved}</div>}
+          {businessSaved && <div className="text-sm text-pos mb-3">{businessSaved}</div>}
           <form onSubmit={saveBusiness} className="grid gap-3 md:grid-cols-2">
             <Input label="שם העסק" value={business.name || ''} onChange={(e) => setBusinessField('name', e.target.value)} />
             <label className="block">
-              <span className="block text-sm text-slate-400 mb-1">סוג העסק</span>
+              <span className="block text-sm text-muted mb-1">סוג העסק</span>
               <select value={business.type || ''} onChange={(e) => setBusinessField('type', e.target.value)}
-                className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+                className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
                 <option value="">ללא</option>
                 {data.business_types.map((t: any) => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
@@ -255,7 +308,7 @@ export function Settings() {
             <div className="md:col-span-2">
               <Input label="קישור ללוגו" dir="ltr" placeholder="https://…"
                 value={business.logoUrl || ''} onChange={(e) => setBusinessField('logoUrl', e.target.value)} />
-              <p className="text-xs text-slate-500 mt-1">כתובת תמונה מלאה (https) — הלוגו עצמו נשאר מוגדר ב-Morning.</p>
+              <p className="text-xs text-faint mt-1">כתובת תמונה מלאה (https) — הלוגו עצמו נשאר מוגדר ב-Morning.</p>
             </div>
             <div className="md:col-span-2">
               <Button type="submit">שמירת פרטי העסק</Button>
@@ -264,14 +317,14 @@ export function Settings() {
         </Card>
       )}
 
+      {sec === 'connections' && (
       <Card>
-        <h2 className="font-bold mb-1">חיבורים</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. ההגדרה עצמה (מפתחות) נמצאת בקובץ <code dir="ltr" className="text-indigo-300">.env</code>
+        <p className="text-xs text-faint mb-4">
+          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. ההגדרה עצמה (מפתחות) נמצאת בקובץ <code dir="ltr" className="text-accent">.env</code>
         </p>
 
         {syncResult && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 mb-4 text-sm text-emerald-300 whitespace-pre-line">
+          <div className="bg-pos-soft border border-pos/25 rounded-xl p-3 mb-4 text-sm text-pos whitespace-pre-line">
             {syncResult}
           </div>
         )}
@@ -336,7 +389,7 @@ export function Settings() {
             that account is billed in something other than shekels. */}
         {data.integrations.meta.configured && data.integrations.meta.currency !== 'ILS' && (
           <div className="mt-4 max-w-xl">
-            <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-sm text-amber-300 mb-3">
+            <div className="bg-warn-soft border border-warn/25 rounded-xl p-3 text-sm text-warn mb-3">
               חשבון הפרסום מחויב ב-{data.integrations.meta.currency}. עמודת «קמפיין» בהוצאות ההופעות
               היא בשקלים, ולכן נדרש שער המרה — בלעדיו הסנכרון לא כותב סכומים בכלל.
             </div>
@@ -348,80 +401,81 @@ export function Settings() {
               />
               <Button variant="ghost" onClick={saveMetaSettings}>שמירה</Button>
             </div>
-            {metaSaved && <div className="text-sm text-emerald-400 mt-2">{metaSaved}</div>}
+            {metaSaved && <div className="text-sm text-pos mt-2">{metaSaved}</div>}
           </div>
         )}
 
-        <p className="text-xs text-slate-500 mt-4">
+        <p className="text-xs text-faint mt-4">
           סנכרון Meta מושך את הקמפיינים וההוצאה היומית שלהם, ומזין את עמודת «קמפיין» של כל הופעה
           שקמפיין שויך אליה. השיוך עצמו נעשה ב-Moonlight → פרסום, ידנית: שם של קמפיין נכתב לבני
           אדם, וקמפיין שקידם כמה הופעות לא ניתן לפצל לפי שום כלל אוטומטי.
         </p>
       </Card>
+      )}
 
-      <CalendarRules onChange={load} onError={setError} />
+      {sec === 'calendar' && <CalendarRules onChange={load} onError={setError} />}
 
+      {sec === 'users' && (
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <div>
-            <h2 className="font-bold">משתמשים</h2>
-            <p className="text-xs text-slate-500">חברי להקה (role: band) רואים רק את אזור Moonlight</p>
-          </div>
+          <p className="text-xs text-faint">חברי להקה (role: band) רואים רק את אזור Moonlight</p>
           <Button onClick={openNewUser}>+ משתמש</Button>
         </div>
-        <div className="divide-y divide-slate-800/60">
+        <div className="divide-y divide-line">
           {data.users.map((u: any) => (
             <div key={u.id} className="flex items-center justify-between gap-3 py-2.5 text-sm">
               <div className="min-w-0">
                 <span className="font-medium">{u.name}</span>
-                <span className="text-slate-500 mr-2" dir="ltr">{u.email}</span>
+                <span className="text-faint mr-2" dir="ltr">{u.email}</span>
               </div>
               <div className="flex items-center gap-3">
-                <span className={u.role === 'owner' ? 'text-indigo-400' : 'text-slate-400'}>
+                <span className={u.role === 'owner' ? 'text-accent' : 'text-muted'}>
                   {u.role === 'owner' ? 'בעלים' : 'חבר להקה'}
                 </span>
-                <button onClick={() => openEditUser(u)} className="text-xs text-indigo-400 hover:underline">עריכה</button>
+                <button onClick={() => openEditUser(u)} className="text-xs text-accent hover:underline">עריכה</button>
                 {u.role !== 'owner' && (
                   <button onClick={async () => { if (confirm('למחוק משתמש?')) { await del(`/settings/users/${u.id}`); load(); } }}
-                    className="text-xs text-rose-400 hover:underline">מחיקה</button>
+                    className="text-xs text-neg hover:underline">מחיקה</button>
                 )}
               </div>
             </div>
           ))}
         </div>
       </Card>
+      )}
 
+      {sec === 'api' && (
       <Card>
-        <h2 className="font-bold mb-1">מפתחות API</h2>
-        <p className="text-xs text-slate-500 mb-4">
-          לחיבור אפליקציות חיצוניות (Morning / מערכת ניהול לקוחות). שליחת בקשות עם כותרת <code className="text-indigo-300" dir="ltr">X-API-Key</code> אל <code className="text-indigo-300" dir="ltr">/api/v1/*</code>
+        <p className="text-xs text-faint mb-4">
+          לחיבור אפליקציות חיצוניות (Morning / מערכת ניהול לקוחות). שליחת בקשות עם כותרת <code className="text-accent" dir="ltr">X-API-Key</code> אל <code className="text-accent" dir="ltr">/api/v1/*</code>
         </p>
         <form onSubmit={createKey} className="flex items-end gap-3 max-w-md mb-4">
           <Input label="שם המפתח" value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="למשל: morning-app" required />
           <Button type="submit">יצירה</Button>
         </form>
         {newKey && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 mb-4 text-sm">
-            <div className="font-medium text-emerald-400 mb-1">המפתח נוצר — העתק אותו עכשיו, הוא לא יוצג שוב:</div>
+          <div className="bg-pos-soft border border-pos/25 rounded-xl p-3 mb-4 text-sm">
+            <div className="font-medium text-pos mb-1">המפתח נוצר — העתק אותו עכשיו, הוא לא יוצג שוב:</div>
             <code className="break-all select-all" dir="ltr">{newKey.key}</code>
           </div>
         )}
-        <div className="divide-y divide-slate-800/60">
+        <div className="divide-y divide-line">
           {data.api_keys.map((k: any) => (
             <div key={k.id} className="flex items-center justify-between py-2.5 text-sm">
               <div>
                 <span className="font-medium">{k.name}</span>
-                <span className="text-slate-500 mr-2 font-mono" dir="ltr">{k.key_prefix}…</span>
+                <span className="text-faint mr-2 font-mono" dir="ltr">{k.key_prefix}…</span>
               </div>
-              <div className="flex items-center gap-3 text-xs text-slate-500">
+              <div className="flex items-center gap-3 text-xs text-faint">
                 {k.last_used_at ? `שימוש אחרון: ${k.last_used_at}` : 'לא היה בשימוש'}
                 <button onClick={async () => { if (confirm('לבטל את המפתח?')) { await del(`/settings/api-keys/${k.id}`); load(); } }}
-                  className="text-rose-400 hover:underline">ביטול</button>
+                  className="text-neg hover:underline">ביטול</button>
               </div>
             </div>
           ))}
         </div>
       </Card>
+      )}
 
       <Modal
         title={editUser ? `עריכת ${editUser.name}` : 'משתמש חדש'}
@@ -439,21 +493,22 @@ export function Settings() {
             required={!editUser}
           />
           <label className="block">
-            <span className="block text-sm text-slate-400 mb-1">תפקיד</span>
+            <span className="block text-sm text-muted mb-1">תפקיד</span>
             <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+              className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
               <option value="band">חבר להקה (Moonlight בלבד)</option>
               <option value="owner">בעלים (גישה מלאה)</option>
             </select>
           </label>
           {editUser && userForm.password && (
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-faint">
               שינוי סיסמה מנתק את המשתמש מכל המכשירים שבהם הוא מחובר.
             </p>
           )}
           <Button type="submit" className="w-full">{editUser ? 'שמירה' : 'יצירה'}</Button>
         </form>
       </Modal>
+      </div>
     </div>
   );
 }
@@ -480,17 +535,17 @@ function IntegrationRow({
   neverLabel?: string;
 }) {
   return (
-    <div className="bg-slate-800/40 border border-slate-800 rounded-xl p-3">
+    <div className="bg-soft border border-line rounded-xl p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className={`w-2 h-2 rounded-full shrink-0 ${configured ? 'bg-emerald-400' : 'bg-slate-600'}`} />
+            <span className={`w-2 h-2 rounded-full shrink-0 ${configured ? 'bg-pos' : 'bg-line-strong'}`} />
             <span className="font-medium truncate">{title}</span>
           </div>
-          <div className="text-xs text-slate-500 mt-1">
+          <div className="text-xs text-faint mt-1">
             {configured ? detail : missingHint}
           </div>
-          <div className="text-xs text-slate-600 mt-0.5">
+          <div className="text-xs text-ghost mt-0.5">
             {lastSync ? `${lastLabel}: ${new Date(lastSync).toLocaleString('he-IL')}` : neverLabel}
           </div>
         </div>

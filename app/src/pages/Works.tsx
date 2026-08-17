@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
-import { Button, Card, Input, Modal, StatusBadge, DataTable, Empty, PeriodSelect, SearchInput, textMatch, usePeriodFilter } from '../ui';
+import {
+  Button, Card, Input, Modal, StatusBadge, DataTable, FilterBar, PageHeader, PeriodSelect,
+  SearchInput, filterClass, textMatch, usePeriodFilter,
+} from '../ui';
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
@@ -10,7 +13,7 @@ export function Works() {
   const [statusFilter, setStatusFilter] = useState('');
   // Lists open on the year you are working in; older years are a deliberate step back.
   const period = usePeriodFilter();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [clientFilter, setClientFilter] = useState(searchParams.get('client') || '');
   const [search, setSearch] = useState('');
   const [open, setOpen] = useState(false);
@@ -30,6 +33,16 @@ export function Works() {
   };
   useEffect(() => { load(); setSelected(new Set()); }, [statusFilter, clientFilter, period.year, period.month]);
   useEffect(() => { get('/clients').then((d) => setClients(d.clients)); }, []);
+
+  // `?new=1` is how the header's quick action opens the dialog. The parameter is dropped
+  // again so reloading the page does not reopen a dialog that was already closed.
+  useEffect(() => {
+    if (searchParams.get('new') !== '1') return;
+    setEditing(null);
+    setOpen(true);
+    searchParams.delete('new');
+    setSearchParams(searchParams, { replace: true });
+  }, [searchParams]);
 
   const toggle = (w: any) => {
     if (w.status !== 'unpaid') return;
@@ -153,21 +166,24 @@ export function Works() {
     } catch (err: any) { setError(err.message); }
   };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">עבודות</h1>
-        <Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>
-      </div>
+  const unbilledTotal = works
+    .filter((w) => w.status === 'unpaid')
+    .reduce((sum, w) => sum + (Number(w.total) || 0), 0);
 
-      <div className="flex flex-wrap gap-2">
-        <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)}
-          className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="עבודות"
+        sub={<><span className="num">{works.length}</span> עבודות מוצגות · <span className="num text-warn">{nis(unbilledTotal)}</span> טרם חויבו</>}
+        actions={<Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>}
+      />
+
+      <FilterBar>
+        <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} className={filterClass}>
           <option value="">כל הלקוחות</option>
           {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
-          className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm">
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={filterClass}>
           <option value="">כל הסטטוסים</option>
           <option value="unpaid">לא חויב</option>
           <option value="invoiced">בחשבונית</option>
@@ -176,25 +192,25 @@ export function Works() {
         <PeriodSelect year={period.year} month={period.month}
           onYearChange={period.setYear} onMonthChange={period.setMonth} />
         <SearchInput value={search} onChange={setSearch} placeholder="חיפוש בפירוט או בלקוח…" className="flex-1 min-w-[10rem] sm:max-w-xs" />
-      </div>
+      </FilterBar>
 
-      {error && <div className="text-sm text-rose-400">{error}</div>}
-      {notice && <div className="text-sm text-emerald-400">{notice}</div>}
+      {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
 
       {/* Sticky: the actions belong next to the rows you are ticking, however far down the
           table you have scrolled — not at the top of a page you have to scroll back to. */}
       {selected.size > 0 && (
-        <Card className="sticky top-2 z-30 border-indigo-500/40 bg-slate-900/95 backdrop-blur shadow-xl shadow-black/40 space-y-3">
+        <Card className="sticky top-2 z-30 border-accent/25 bg-surface backdrop-blur shadow-xl shadow-black/40 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm">
               נבחרו <b>{selected.size}</b> עבודות · סה"כ <b>{nis(selectedTotal)}</b>
-              {!canInvoice && <span className="text-amber-400 mr-2">— חשבונית אפשרית רק ללקוח אחד</span>}
+              {!canInvoice && <span className="text-warn mr-2">— חשבונית אפשרית רק ללקוח אחד</span>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={assignTo}
                 onChange={(e) => { setAssignTo(e.target.value); if (e.target.value) assignClient(e.target.value); }}
-                className="bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm"
+                className="bg-soft border border-line rounded-xl px-3 py-2 text-sm"
               >
                 <option value="">שיוך ללקוח אחר…</option>
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -204,94 +220,91 @@ export function Works() {
             </div>
           </div>
           {selectedFromCalendar > 0 && (
-            <label className="flex items-center gap-2 text-xs text-slate-400">
+            <label className="flex items-center gap-2 text-xs text-muted">
               <input type="checkbox" checked={excludeCalendar} onChange={(e) => setExcludeCalendar(e.target.checked)}
-                className="w-3.5 h-3.5 accent-indigo-500" />
+                className="w-3.5 h-3.5 accent-accent" />
               <span>
                 מחיקה תסמן גם את {selectedFromCalendar} האירועים מהיומן כ«לא עבודה»
-                <span className="text-slate-600"> (אחרת הם יימשכו שוב בסנכרון הבא)</span>
+                <span className="text-ghost"> (אחרת הם יימשכו שוב בסנכרון הבא)</span>
               </span>
             </label>
           )}
         </Card>
       )}
 
-      <Card>
-        {visible.length === 0 ? <Empty text="אין עבודות" /> : (
-          <DataTable
-            rows={visible}
-            rowKey={(w) => w.id}
-            onRowClick={toggle}
-            rowClassName={(w) => (w.status === 'unpaid' ? 'hover:bg-slate-800/40' : 'opacity-75')}
-            columns={[
-              {
-                key: 'select',
-                mobile: 'lead',
-                header: (
-                  <input
-                    type="checkbox" className="accent-indigo-500" title="בחר הכל"
-                    checked={selected.size > 0 && selected.size === visible.filter((w) => w.status === 'unpaid').length}
-                    onChange={toggleAll}
-                  />
-                ),
-                render: (w) => w.status === 'unpaid' && (
-                  <input type="checkbox" checked={selected.has(w.id)} onChange={() => toggle(w)} onClick={(e) => e.stopPropagation()} className="accent-indigo-500" />
-                ),
-              },
-              {
-                key: 'date', header: 'תאריך', sortValue: (w) => w.date, className: 'whitespace-nowrap',
-                render: (w) => w.date,
-              },
-              {
-                key: 'client', header: 'לקוח', mobile: 'title', sortValue: (w) => w.client_name,
-                className: 'font-medium', render: (w) => w.client_name,
-              },
-              {
-                key: 'description', header: 'פירוט', sortValue: (w) => w.description, className: 'text-slate-300',
-                render: (w) => (
-                  <>
-                    {w.description}
-                    {!!w.description_locked && w.calendar_event_id && (
-                      <span className="text-amber-400 text-xs mr-1" title="הפירוט נערך ידנית — סנכרון מהיומן לא ישנה אותו">✎</span>
-                    )}
-                  </>
-                ),
-              },
-              { key: 'amount', header: 'סכום', sortValue: (w) => w.amount, render: (w) => nis(w.amount) },
-              { key: 'total', header: 'כולל מע"מ', sortValue: (w) => w.total, className: 'font-medium', render: (w) => nis(w.total) },
-              {
-                key: 'status', header: 'סטטוס', sortValue: (w) => w.status,
-                render: (w) => (
-                  <>
-                    <StatusBadge status={w.status} />
-                    {w.invoice_number && <span className="text-xs text-slate-500 mr-1">#{w.invoice_number}</span>}
-                  </>
-                ),
-              },
-              {
-                key: 'actions', mobile: 'actions', className: 'text-left whitespace-nowrap',
-                render: (w) => w.status === 'unpaid' && (
-                  <div className="flex gap-3 md:gap-2 justify-end">
-                    <button onClick={(e) => { e.stopPropagation(); startEdit(w); }} className="text-xs text-indigo-400 hover:underline">עריכה</button>
-                    {w.calendar_event_id && (
-                      <button onClick={(e) => { e.stopPropagation(); excludeFromCalendar(w); }}
-                        className="text-xs text-amber-400 hover:underline">לא עבודה</button>
-                    )}
-                    <button onClick={(e) => { e.stopPropagation(); removeWork(w.id); }} className="text-xs text-rose-400 hover:underline">מחיקה</button>
-                  </div>
-                ),
-              },
-            ]}
-          />
-        )}
-      </Card>
+        <DataTable
+          empty="אין עבודות"
+          rows={visible}
+          rowKey={(w) => w.id}
+          onRowClick={toggle}
+          rowClassName={(w) => (w.status === 'unpaid' ? 'hover:bg-soft' : 'opacity-75')}
+          columns={[
+            {
+              key: 'select',
+              mobile: 'lead',
+              header: (
+                <input
+                  type="checkbox" className="accent-accent" title="בחר הכל"
+                  checked={selected.size > 0 && selected.size === visible.filter((w) => w.status === 'unpaid').length}
+                  onChange={toggleAll}
+                />
+              ),
+              render: (w) => w.status === 'unpaid' && (
+                <input type="checkbox" checked={selected.has(w.id)} onChange={() => toggle(w)} onClick={(e) => e.stopPropagation()} className="accent-accent" />
+              ),
+            },
+            {
+              key: 'date', header: 'תאריך', sortValue: (w) => w.date, className: 'whitespace-nowrap',
+              render: (w) => w.date,
+            },
+            {
+              key: 'client', header: 'לקוח', mobile: 'title', sortValue: (w) => w.client_name,
+              className: 'font-medium', render: (w) => w.client_name,
+            },
+            {
+              key: 'description', header: 'פירוט', sortValue: (w) => w.description, className: 'text-ink-2',
+              render: (w) => (
+                <>
+                  {w.description}
+                  {!!w.description_locked && w.calendar_event_id && (
+                    <span className="text-warn text-xs mr-1" title="הפירוט נערך ידנית — סנכרון מהיומן לא ישנה אותו">✎</span>
+                  )}
+                </>
+              ),
+            },
+            { key: 'amount', header: 'סכום', sortValue: (w) => w.amount, render: (w) => nis(w.amount) },
+            { key: 'total', header: 'כולל מע"מ', sortValue: (w) => w.total, className: 'font-medium', render: (w) => nis(w.total) },
+            {
+              key: 'status', header: 'סטטוס', sortValue: (w) => w.status,
+              render: (w) => (
+                <>
+                  <StatusBadge status={w.status} />
+                  {w.invoice_number && <span className="text-xs text-faint mr-1">#{w.invoice_number}</span>}
+                </>
+              ),
+            },
+            {
+              key: 'actions', mobile: 'actions', className: 'text-left whitespace-nowrap',
+              render: (w) => w.status === 'unpaid' && (
+                <div className="flex gap-3 md:gap-2 justify-end">
+                  <button onClick={(e) => { e.stopPropagation(); startEdit(w); }} className="text-xs text-accent hover:underline">עריכה</button>
+                  {w.calendar_event_id && (
+                    <button onClick={(e) => { e.stopPropagation(); excludeFromCalendar(w); }}
+                      className="text-xs text-warn hover:underline">לא עבודה</button>
+                  )}
+                  <button onClick={(e) => { e.stopPropagation(); removeWork(w.id); }} className="text-xs text-neg hover:underline">מחיקה</button>
+                </div>
+              ),
+            },
+          ]}
+        />
 
       <Modal title={editing ? 'עריכת עבודה' : 'עבודה חדשה'} open={open} onClose={closeModal}>
         <form onSubmit={saveWork} className="space-y-3">
           <label className="block">
-            <span className="block text-sm text-slate-400 mb-1">לקוח *</span>
+            <span className="block text-sm text-muted mb-1">לקוח *</span>
             <select required disabled={!!editing} value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })}
-              className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm disabled:opacity-60">
+              className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm disabled:opacity-60">
               <option value="">בחר לקוח…</option>
               {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>

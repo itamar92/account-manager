@@ -24,22 +24,22 @@ export function DivisionTable({ division }: { division: any }) {
   const nothing = shows.length === 0 && refunds.length === 0 && fundExpenses.length === 0;
 
   const cell = 'px-3 py-2 whitespace-nowrap text-center';
-  const head = 'px-3 py-2 text-center font-medium text-slate-400 whitespace-nowrap';
+  const head = 'px-3 py-2 text-center font-medium text-muted whitespace-nowrap';
 
   return (
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-        <h2 className="font-bold">חלוקת כספים — כמה מגיע לכל אחד</h2>
+        <h2 className="ser text-lg">חלוקת כספים — כמה מגיע לכל אחד</h2>
         {!nothing && (
           <button
             onClick={() => setShowWorking(!showWorking)}
-            className="text-sm text-indigo-400 hover:underline"
+            className="text-sm text-accent hover:underline"
           >
             {showWorking ? 'הסתרת אופן החישוב' : 'איך זה מחושב?'}
           </button>
         )}
       </div>
-      <p className="text-xs text-slate-500 mb-4">
+      <p className="text-xs text-faint mb-4">
         רווח מהופעות שהכסף בגינן התקבל וטרם סומנו «שולם לנגנים», פחות חלק שווה בהוצאות ששולמו
         מהקופה, ועוד החזר למי ששילם מכיסו. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
       </p>
@@ -52,28 +52,28 @@ export function DivisionTable({ division }: { division: any }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-3 py-2 text-right font-medium text-slate-400" />
+              <tr className="border-b border-line">
+                <th className="px-3 py-2 text-right font-medium text-muted" />
                 {members.map((m: any) => <th key={m.key} className={head}>{m.name}</th>)}
               </tr>
             </thead>
             <tbody>
-              <tr className="bg-slate-800/40">
+              <tr className="bg-soft">
                 {/* Held at its natural width so a phone scrolls the table sideways rather than
                     folding the label into a column of single words. */}
-                <td className="px-3 py-2.5 text-right text-slate-300 whitespace-nowrap">
-                  חלק ברווח <span className="text-xs text-slate-500">(לפני החזרי הוצאות)</span>
+                <td className="px-3 py-2.5 text-right text-ink-2 whitespace-nowrap">
+                  חלק ברווח <span className="text-xs text-faint">(לפני החזרי הוצאות)</span>
                 </td>
                 {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-medium text-indigo-300')}>
+                  <td key={m.key} className={clsx(cell, 'font-medium text-accent')}>
                     {nis(beforeRefund[m.key])}
                   </td>
                 ))}
               </tr>
-              <tr className="bg-amber-500/10 border-t-2 border-amber-500/40">
+              <tr className="bg-warn-soft border-t-2 border-warn/25">
                 <td className="px-3 py-2.5 text-right font-bold whitespace-nowrap">סה״כ לתשלום</td>
                 {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-bold text-amber-300 text-base')}>
+                  <td key={m.key} className={clsx(cell, 'font-bold text-warn text-base')}>
                     {nis(payout[m.key])}
                   </td>
                 ))}
@@ -86,25 +86,25 @@ export function DivisionTable({ division }: { division: any }) {
       {nothing ? (
         <Empty text="אין מה לחלק בטווח הנבחר — כל ההופעות חולקו וכל ההוצאות הוסדרו" />
       ) : !showWorking ? null : (
-        <div className="overflow-x-auto mt-5 pt-4 border-t border-slate-800">
+        <div className="overflow-x-auto mt-5 pt-4 border-t border-line">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-slate-800">
-                <th className="px-3 py-2 text-right font-medium text-slate-400">הופעות שטרם חולקו</th>
+              <tr className="border-b border-line">
+                <th className="px-3 py-2 text-right font-medium text-muted">הופעות שטרם חולקו</th>
                 {members.map((m: any) => <th key={m.key} className={head}>{m.name}</th>)}
                 <th className={head}>סה״כ רווח</th>
               </tr>
             </thead>
 
-            <tbody className="divide-y divide-slate-800/60">
+            <tbody className="divide-y divide-line">
               {shows.length === 0 ? (
                 <tr>
-                  <td colSpan={members.length + 2} className="px-3 py-3 text-slate-500 text-right">
+                  <td colSpan={members.length + 2} className="px-3 py-3 text-faint text-right">
                     אין הופעות שממתינות לחלוקה
                   </td>
                 </tr>
               ) : shows.map((s: any) => (
-                <tr key={s.id} className="hover:bg-slate-800/40">
+                <tr key={s.id} className="hover:bg-soft">
                   <td className="px-3 py-2 text-right">{eventLabel(s)}</td>
                   {members.map((m: any) => <td key={m.key} className={cell}>{nis(s[m.key])}</td>)}
                   <td className={clsx(cell, 'font-medium')}>{nis(s.profit)}</td>
@@ -116,7 +116,7 @@ export function DivisionTable({ division }: { division: any }) {
                 as arithmetic. The shared costs come off before the refunds go back on, so that
                 both of the figures shown above the table appear here as lines of it. */}
             <tfoot>
-              <tr className="bg-slate-800/40 border-t-2 border-slate-700">
+              <tr className="bg-soft border-t-2 border-line">
                 <td className="px-3 py-2 text-right font-bold">סה״כ ({showsTotal.count} הופעות)</td>
                 {members.map((m: any) => (
                   <td key={m.key} className={clsx(cell, 'font-bold')}>{nis(showsTotal[m.key])}</td>
@@ -129,21 +129,21 @@ export function DivisionTable({ division }: { division: any }) {
                 label="הוצאות ששולמו מהקופה (חלק שווה)"
                 values={members.map(() => fundShare)}
                 total={fundTotal}
-                accent="text-rose-400"
+                accent="text-neg"
                 negate
                 cell={cell}
               />
 
-              <tr className="bg-slate-800/30 border-t border-slate-700">
-                <td className="px-3 py-2 text-right font-medium text-slate-300">
+              <tr className="bg-soft border-t border-line">
+                <td className="px-3 py-2 text-right font-medium text-ink-2">
                   = חלק ברווח (לפני החזרי הוצאות)
                 </td>
                 {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-medium text-indigo-300')}>
+                  <td key={m.key} className={clsx(cell, 'font-medium text-accent')}>
                     {nis(beforeRefund[m.key])}
                   </td>
                 ))}
-                <td className={clsx(cell, 'font-medium text-indigo-300')}>
+                <td className={clsx(cell, 'font-medium text-accent')}>
                   {nis(division.beforeRefundTotal)}
                 </td>
               </tr>
@@ -153,18 +153,18 @@ export function DivisionTable({ division }: { division: any }) {
                 label="החזר למי ששילם מכיסו"
                 values={members.map((m: any) => refundsByMember[m.key])}
                 total={division.refundsTotal}
-                accent="text-emerald-400"
+                accent="text-pos"
                 cell={cell}
               />
 
-              <tr className="bg-amber-500/10 border-t-2 border-amber-500/40">
+              <tr className="bg-warn-soft border-t-2 border-warn/25">
                 <td className="px-3 py-3 text-right font-bold">= סה״כ לתשלום</td>
                 {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-bold text-amber-300 text-base')}>
+                  <td key={m.key} className={clsx(cell, 'font-bold text-warn text-base')}>
                     {nis(payout[m.key])}
                   </td>
                 ))}
-                <td className={clsx(cell, 'font-bold text-amber-300')}>{nis(division.payoutTotal)}</td>
+                <td className={clsx(cell, 'font-bold text-warn')}>{nis(division.payoutTotal)}</td>
               </tr>
             </tfoot>
           </table>
@@ -172,18 +172,18 @@ export function DivisionTable({ division }: { division: any }) {
       )}
 
       {showWorking && !nothing && (
-        <div className="grid md:grid-cols-2 gap-4 mt-5 pt-4 border-t border-slate-800">
+        <div className="grid md:grid-cols-2 gap-4 mt-5 pt-4 border-t border-line">
           <ExpenseList
             title="הוצאות להחזר"
             empty="אף אחד לא שילם מכיסו בטווח הזה"
-            accent="text-emerald-400"
+            accent="text-pos"
             rows={refunds}
             note={(row: any) => row.paid_by}
           />
           <ExpenseList
             title="הוצאות ששולמו מהקופה"
             empty="הקופה לא שילמה על כלום בטווח הזה"
-            accent="text-rose-400"
+            accent="text-neg"
             rows={fundExpenses}
             note={() => `${nis(fundShare)} לכל אחד`}
           />
@@ -204,16 +204,16 @@ function StepRow({ sign, label, values, total, accent, negate, cell }: {
   cell: string;
 }) {
   return (
-    <tr className="border-t border-slate-800/60">
-      <td className="px-3 py-2 text-right text-slate-300">
+    <tr className="border-t border-line">
+      <td className="px-3 py-2 text-right text-ink-2">
         <span className={clsx('font-bold ml-1', accent)}>{sign}</span> {label}
       </td>
       {values.map((value, i) => (
-        <td key={i} className={clsx(cell, value ? accent : 'text-slate-600')}>
+        <td key={i} className={clsx(cell, value ? accent : 'text-ghost')}>
           {value ? nis(negate ? -value : value) : '—'}
         </td>
       ))}
-      <td className={clsx(cell, total ? accent : 'text-slate-600')}>
+      <td className={clsx(cell, total ? accent : 'text-ghost')}>
         {total ? nis(negate ? -total : total) : '—'}
       </td>
     </tr>
@@ -231,14 +231,14 @@ function ExpenseList({ title, rows, empty, accent, note }: {
     <div>
       <h3 className="text-sm font-bold mb-2">{title}</h3>
       {rows.length === 0 ? (
-        <p className="text-xs text-slate-500">{empty}</p>
+        <p className="text-xs text-faint">{empty}</p>
       ) : (
         <div className="space-y-1.5">
           {rows.map((row) => (
-            <div key={row.id} className="flex items-center justify-between gap-3 text-sm border-b border-slate-800/60 pb-1.5 last:border-0">
+            <div key={row.id} className="flex items-center justify-between gap-3 text-sm border-b border-line pb-1.5 last:border-0">
               <div className="min-w-0">
                 <div className="truncate">{row.description}</div>
-                <div className="text-xs text-slate-500">{row.date} · {note(row)}</div>
+                <div className="text-xs text-faint">{row.date} · {note(row)}</div>
               </div>
               <span className={clsx('shrink-0 font-medium', accent)}>{nis(row.amount)}</span>
             </div>

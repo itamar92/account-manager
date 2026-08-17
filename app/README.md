@@ -104,7 +104,32 @@ cannot demote yourself.
 - **דוחות** (`/reports`) turns the same books into the two filings they have to produce —
   see [Reports](#reports-דוחות) below.
 
-### Dashboard
+### The shell — two workspaces, one app
+
+The app is split into a **business** side and a **Moonlight** side, switched from the pill in
+the header. They are separate books, so they get separate navigation and separate accent
+colours: the switch sets `data-ws` on `<html>`, and every accent, canvas and border in
+`src/index.css` hangs off that one attribute — no component knows which workspace it is being
+shown in. Band members only ever see the Moonlight side, enforced server-side as before.
+
+Colours are named for what they are for rather than what they are (`bg-surface`, `text-muted`,
+`border-line`, `text-pos` / `text-warn` / `text-neg`), so a page never hard-codes a palette.
+The one dark slab per screen (`InkPanel`) is reserved for the single figure that page exists
+to report.
+
+### מה דורש טיפול (`/`)
+
+The landing page is not a summary of the year but a list of what is unfinished: invoices past
+their due date, works not yet billed, expenses with no classification (input VAT that will not
+make it into a return), shows whose money has not arrived, and shows with a role unstaffed.
+Every item is **derived** — `GET /api/inbox` recomputes them from the books on each load — so
+an item disappears by being dealt with, never by being dismissed, and the count on the sidebar
+badge is the same number the page shows because the server counts it once.
+
+The one VAT period with a deadline in front of it gets the dark slab; the year's figures moved
+one click over, to **סקירה** (`/overview`).
+
+### Dashboard (סקירה)
 
 The overview chart is income **and** expenses month by month, with profit drawn over them as
 a line — it is the difference between the two, not a third quantity competing for the same

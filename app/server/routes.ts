@@ -222,6 +222,105 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
   });
 }));
 
+// ============ inbox — מה דורש טיפול ============
+/**
+ * The loose ends, computed rather than kept: every item here is something the books already
+ * say is unfinished, so nothing has to be ticked off by hand and nothing can go stale.
+ *
+ * Each entry carries its own count and sum, because the point of the screen is to be read
+ * without opening anything — the amount is the reason to act on one item before another.
+ */
+export function inboxItems() {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const overdue = db.prepare(
+    `SELECT i.id, i.number, i.date, i.due_date, i.total, c.name AS client_name,
+            CAST(julianday(?) - julianday(i.due_date) AS INTEGER) AS days_late
+     FROM invoices i JOIN clients c ON c.id = i.client_id
+     WHERE i.status = 'issued' AND i.due_date IS NOT NULL AND i.due_date < ?
+       AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})
+     ORDER BY i.due_date`
+  ).all(today, today) as any[];
+
+  // Which client has the most unbilled work is what decides whether one invoice can cover
+  // several jobs, so it travels with the count.
+  const unbilled = db.prepare(
+    `SELECT w.id, w.total, c.name AS client_name FROM works w JOIN clients c ON c.id = w.client_id
+     WHERE w.status = 'unpaid'`
+  ).all() as any[];
+  const byClient = new Map<string, { count: number; total: number }>();
+  for (const w of unbilled) {
+    const entry = byClient.get(w.client_name) ?? { count: 0, total: 0 };
+    entry.count++;
+    entry.total += Number(w.total) || 0;
+    byClient.set(w.client_name, entry);
+  }
+  const biggestClient = [...byClient.entries()].sort((a, b) => b[1].count - a[1].count)[0];
+
+  // An expense with no category is input VAT that will not make it into a return — the sum
+  // that matters on it is the VAT, not what was paid.
+  const uncategorized = db.prepare(
+    `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total, COALESCE(SUM(vat_amount),0) AS vat
+     FROM expenses WHERE category IS NULL OR TRIM(category) = ''`
+  ).get() as any;
+
+  // The VAT period standing between "closed" and "filed": the one with a deadline ahead of it,
+  // or behind it. An open period is still collecting documents and asks nothing of anybody.
+  const report = vatReport(new Date().getFullYear());
+  const period = report.periods.find((p) => p.status === 'overdue')
+    ?? report.periods.find((p) => p.status === 'due');
+  const vat = period ? {
+    key: period.key,
+    label: period.label,
+    due_date: period.due_date,
+    days_left: Math.round(
+      (Date.parse(`${period.due_date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000
+    ),
+    vat_due: period.vat_due,
+    output_vat: period.output_vat,
+    input_vat: period.input_vat,
+    open_expenses: period.open_expenses,
+    status: period.status,
+  } : null;
+
+  const band = bandFollowUps();
+
+  const sum = (rows: any[], key: string) => round2(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0));
+  // One number for the sidebar badge, counted here so it can never disagree with the list.
+  const openCount = [
+    overdue.length, unbilled.length, Number(uncategorized.count) || 0,
+    band.awaitingPayment.length, band.missingAssignments.length,
+  ].filter(Boolean).length;
+
+  return {
+    openCount,
+    overdueInvoices: {
+      count: overdue.length,
+      total: sum(overdue, 'total'),
+      oldest: overdue[0] ?? null,
+    },
+    unbilledWorks: {
+      count: unbilled.length,
+      total: sum(unbilled, 'total'),
+      topClient: biggestClient ? { name: biggestClient[0], ...biggestClient[1] } : null,
+    },
+    uncategorizedExpenses: {
+      count: Number(uncategorized.count) || 0,
+      total: round2(Number(uncategorized.total) || 0),
+      vat: round2(Number(uncategorized.vat) || 0),
+    },
+    vat,
+    band: {
+      awaitingPaymentTotal: band.awaitingPaymentTotal,
+      awaitingPaymentCount: band.awaitingPayment.length,
+      owedToSuppliersTotal: band.owedToSuppliersTotal,
+      missingAssignments: band.missingAssignments,
+    },
+  };
+}
+
+router.get('/inbox', requireOwner, handle((_req, res) => res.json({ inbox: inboxItems() })));
+
 // ============ reports — מע"מ and מס הכנסה (owner) ============
 router.get('/reports/vat', requireOwner, handle((req, res) => {
   res.json({ report: vatReport(reportYear(req.query)) });

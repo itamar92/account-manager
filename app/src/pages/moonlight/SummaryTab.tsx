@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { get, nis } from '../../api';
 import { PerShowChart } from '../../charts';
-import { Button, Card, Empty, Input, MonthSelect, StatCard, YearSelect } from '../../ui';
+import { Button, Card, Empty, FilterBar, Input, MonthSelect, PageHeader, StatCard, YearSelect } from '../../ui';
 import { MEMBERS, PAYMENT_STATUS_STYLES, paymentStatusLabel, roleName } from './shared';
 import { DivisionTable } from './DivisionTable';
 
@@ -60,58 +60,56 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
 
   return (
     <div className="space-y-4">
-      <Card>
-        <div className="flex flex-wrap items-end gap-3">
-          <div>
-            <span className="block text-sm text-slate-400 mb-1">טווח תאריכים</span>
-            <div className="flex gap-2">
-              <YearSelect value={selectedYear} onChange={(year) => setPeriod(year, month)} />
-              <MonthSelect
-                value={selectedYear === '' ? '' : month}
-                disabled={selectedYear === ''}
-                onChange={(next) => setPeriod(selectedYear, next)}
-              />
-            </div>
-          </div>
-          <Button variant="ghost" onClick={() => setCustom(!custom)}>
-            {custom ? 'לפי שנה' : 'טווח מותאם'}
-          </Button>
-          {custom && (
-            <>
-              <Input label="מתאריך" type="date" value={range.from}
-                onChange={(e) => setRange({ ...range, from: e.target.value })} />
-              <Input label="עד תאריך" type="date" value={range.to}
-                onChange={(e) => setRange({ ...range, to: e.target.value })} />
-            </>
-          )}
-        </div>
-      </Card>
+      <PageHeader
+        title="סקירה כספית"
+        sub={summary ? <><span className="num">{summary.eventCount}</span> הופעות · <span className="num">{summary.upcomingEvents}</span> קרובות</> : undefined}
+      />
+
+      <FilterBar>
+        <YearSelect value={selectedYear} onChange={(year) => setPeriod(year, month)} />
+        <MonthSelect
+          value={selectedYear === '' ? '' : month}
+          disabled={selectedYear === ''}
+          onChange={(next) => setPeriod(selectedYear, next)}
+        />
+        <Button variant="ghost" onClick={() => setCustom(!custom)}>
+          {custom ? 'לפי שנה' : 'טווח מותאם'}
+        </Button>
+        {custom && (
+          <>
+            <Input type="date" value={range.from}
+              onChange={(e) => setRange({ ...range, from: e.target.value })} />
+            <Input type="date" value={range.to}
+              onChange={(e) => setRange({ ...range, to: e.target.value })} />
+          </>
+        )}
+      </FilterBar>
 
       {!summary ? <Empty text="טוען…" /> : (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard label="סה״כ הכנסות (לפני מע״מ)" value={nis(summary.totalRevenue)} accent="text-emerald-400"
+            <StatCard label="סה״כ הכנסות (לפני מע״מ)" value={nis(summary.totalRevenue)} accent="text-pos"
               sub={`${summary.eventCount} הופעות`} />
-            <StatCard label="סה״כ הוצאות הופעות" value={nis(summary.totalExpenses)} accent="text-rose-400" />
-            <StatCard label="רווח מצטבר" value={nis(summary.totalProfit)} accent="text-indigo-400" />
-            <StatCard label="הוצאות כלליות" value={nis(summary.generalExpenses)} accent="text-rose-400"
+            <StatCard label="סה״כ הוצאות הופעות" value={nis(summary.totalExpenses)} accent="text-neg" />
+            <StatCard label="רווח מצטבר" value={nis(summary.totalProfit)} accent="text-accent" />
+            <StatCard label="הוצאות כלליות" value={nis(summary.generalExpenses)} accent="text-neg"
               sub={`מתוכן מהקופה ${nis(summary.fundExpenses)}`} />
           </div>
 
           <Card>
-            <h2 className="font-bold mb-3">רווח כולל לכל אחד בטווח הנבחר</h2>
+            <h2 className="ser text-lg mb-3">רווח כולל לכל אחד בטווח הנבחר</h2>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               {MEMBERS.map((m) => (
-                <div key={m.key} className="bg-slate-800/40 rounded-xl p-3 text-center">
-                  <div className="text-sm text-slate-400">{m.name}</div>
-                  <div className="text-xl font-bold mt-1 text-indigo-300">{nis(summary[m.key])}</div>
+                <div key={m.key} className="bg-soft rounded-xl p-3 text-center">
+                  <div className="text-sm text-muted">{m.name}</div>
+                  <div className="text-xl font-bold mt-1 text-accent">{nis(summary[m.key])}</div>
                 </div>
               ))}
             </div>
           </Card>
 
           <Card>
-            <h2 className="font-bold mb-3">הכנסות, הוצאות ורווח לפי הופעה</h2>
+            <h2 className="ser text-lg mb-3">הכנסות, הוצאות ורווח לפי הופעה</h2>
             <PerShowChart rows={summary.perShow ?? []} />
           </Card>
 
@@ -125,7 +123,7 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
               total={followUps?.awaitingPaymentTotal}
               rows={followUps?.awaitingPayment}
               empty="כל ההופעות שולמו"
-              accent="text-amber-400"
+              accent="text-warn"
               render={(row: any) => (
                 <>
                   <span className={PAYMENT_STATUS_STYLES[row.payment_status]}>{paymentStatusLabel(row.payment_status)}</span>
@@ -138,27 +136,27 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
               total={followUps?.owedToSuppliersTotal}
               rows={followUps?.owedToSuppliers}
               empty="אין חובות פתוחים לספקים"
-              accent="text-rose-400"
-              render={(row: any) => <span className="font-medium text-rose-400">{nis(row.outstanding)}</span>}
+              accent="text-neg"
+              render={(row: any) => <span className="font-medium text-neg">{nis(row.outstanding)}</span>}
             />
           </div>
 
           {(followUps?.missingAssignments?.length ?? 0) > 0 && (
-            <Card className="border-amber-500/40">
+            <Card className="border-warn/25">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="font-bold text-amber-400">
+                <h2 className="font-bold text-warn">
                   ⚠ הופעות קרובות עם שיבוץ חסר ({followUps.missingAssignments.length})
                 </h2>
-                <span className="text-sm text-indigo-400">לשונית «שיבוצים» ←</span>
+                <span className="text-sm text-accent">לשונית «שיבוצים» ←</span>
               </div>
               <div className="space-y-2">
                 {followUps.missingAssignments.slice(0, 6).map((row: any) => (
-                  <div key={row.id} className="flex items-center justify-between text-sm border-b border-slate-800/60 pb-2 last:border-0">
+                  <div key={row.id} className="flex items-center justify-between text-sm border-b border-line pb-2 last:border-0">
                     <div>
                       <div className="font-medium">{row.venue}</div>
-                      <div className="text-xs text-slate-500">{row.date}</div>
+                      <div className="text-xs text-faint">{row.date}</div>
                     </div>
-                    <span className="text-amber-400 text-xs">
+                    <span className="text-warn text-xs">
                       חסר: {row.missing.map((r: string) => roleName(r)).join(', ')}
                     </span>
                   </div>
@@ -167,7 +165,7 @@ export function SummaryTab({ onError }: { onError: (message: string) => void }) 
             </Card>
           )}
 
-          <div className="text-sm text-slate-500">הופעות קרובות: {summary.upcomingEvents}</div>
+          <div className="text-sm text-faint">הופעות קרובות: {summary.upcomingEvents}</div>
         </>
       )}
     </div>
@@ -186,22 +184,22 @@ function FollowUpCard({ title, total, rows, empty, accent, render }: {
   return (
     <Card>
       <div className="flex items-center justify-between mb-3">
-        <h2 className="font-bold">{title}</h2>
+        <h2 className="ser text-lg">{title}</h2>
         <span className={`text-lg font-bold ${accent}`}>{nis(total)}</span>
       </div>
       {list.length === 0 ? <Empty text={empty} /> : (
         <div className="space-y-2">
           {list.slice(0, 6).map((row) => (
-            <div key={row.id} className="flex items-center justify-between text-sm border-b border-slate-800/60 pb-2 last:border-0">
+            <div key={row.id} className="flex items-center justify-between text-sm border-b border-line pb-2 last:border-0">
               <div>
                 <div className="font-medium">{row.venue}</div>
-                <div className="text-xs text-slate-500">{row.date}</div>
+                <div className="text-xs text-faint">{row.date}</div>
               </div>
               <div className="flex items-center gap-3">{render(row)}</div>
             </div>
           ))}
           {list.length > 6 && (
-            <Link to="/moonlight" className="block text-xs text-indigo-400 hover:underline pt-1">
+            <Link to="/moonlight" className="block text-xs text-accent hover:underline pt-1">
               ועוד {list.length - 6} הופעות ←
             </Link>
           )}
