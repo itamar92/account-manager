@@ -17,6 +17,17 @@ export const DOC_TYPE = {
 /** Document types whose amounts count as revenue. */
 export const REVENUE_DOC_TYPES: number[] = [DOC_TYPE.INVOICE_RECEIPT, DOC_TYPE.TAX_INVOICE];
 
+/**
+ * What "still owed" is counted from: the revenue documents, plus the חשבון עסקה that precedes
+ * one. A proforma is not revenue — it is excluded everywhere income is summed — but an open one
+ * is money a client has been billed for and has not paid, which is the whole question the
+ * collection figures ask. Morning closes a proforma when its tax document is issued, so the two
+ * are never open at once and nothing is counted twice.
+ */
+export const RECEIVABLE_DOC_TYPES: number[] = [...REVENUE_DOC_TYPES, DOC_TYPE.PROFORMA];
+
+export const RECEIVABLE_DOC_TYPES_SQL = RECEIVABLE_DOC_TYPES.join(',');
+
 /** Document types that reduce revenue (stored with negative amounts). */
 export const CREDIT_DOC_TYPES: number[] = [DOC_TYPE.CREDIT_INVOICE];
 

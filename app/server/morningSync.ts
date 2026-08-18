@@ -94,17 +94,21 @@ export function pullFromMorning(options: { days?: number } = {}): Promise<PullRe
 
         const { subtotal, vat, total } = splitVat(doc);
         const status = mapStatus(doc);
+        // Morning's own "still owed" figure, kept as it comes. A document it has closed against
+        // a receipt reports 0 here whatever its status says, which is what the collection
+        // figures are counted from.
+        const openAmount = typeof doc.amountOpened === 'number' ? round2(doc.amountOpened) : null;
         const date = (doc.documentDate || '').slice(0, 10) || to;
 
         if (existing) {
           db.prepare(
             `UPDATE invoices SET number = ?, doc_type = ?, date = ?, due_date = ?,
-               subtotal = ?, vat_amount = ?, total = ?, status = ?,
+               subtotal = ?, vat_amount = ?, total = ?, status = ?, open_amount = ?,
                paid_date = CASE WHEN ? = 'paid' THEN COALESCE(paid_date, ?) ELSE NULL END
              WHERE id = ?`
           ).run(
             String(doc.number ?? ''), doc.type, date, doc.dueDate ?? null,
-            subtotal, vat, total, status, status, date, existing.id
+            subtotal, vat, total, status, openAmount, status, date, existing.id
           );
           updated++;
           syncWorkStatuses(existing.id, status);
@@ -118,11 +122,12 @@ export function pullFromMorning(options: { days?: number } = {}): Promise<PullRe
         const clientId = resolveClient(doc.client);
         db.prepare(
           `INSERT INTO invoices (id, number, doc_type, client_id, date, due_date, subtotal, vat_amount, total,
-             status, paid_date, external_id, source, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?)`
+             status, open_amount, paid_date, external_id, source, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?)`
         ).run(
           invoiceId, String(doc.number ?? ''), doc.type, clientId, date, doc.dueDate ?? null,
-          subtotal, vat, total, status, status === 'paid' ? date : null, doc.id, doc.remarks ?? null
+          subtotal, vat, total, status, openAmount, status === 'paid' ? date : null,
+          doc.id, doc.remarks ?? null
         );
 
         // Proformas mirror a sale a tax document already records, and a cancelled document

@@ -47,6 +47,14 @@ export function Moonlight() {
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [error, setError] = useState('');
   const [eventModal, setEventModal] = useState<any | null>(null);
+  // The rate the two income fields convert between. Fetched rather than assumed, so a change
+  // in Morning's settings does not leave this dialog doing last year's arithmetic.
+  const [vatPercent, setVatPercent] = useState(18);
+
+  useEffect(() => {
+    if (!isOwner) return;
+    get('/settings').then((d) => setVatPercent(Number(d.settings.vat_percent) || 18)).catch(() => {});
+  }, [isOwner]);
 
   const load = () => {
     const query = period.params().toString();
@@ -67,6 +75,22 @@ export function Moonlight() {
       setEventModal(null);
       load();
     } catch (err: any) { setError(err.message); }
+  };
+
+  /**
+   * The two income fields are one number said twice, so filling in either fills in the other.
+   * Whichever side is typed leads; the server derives the same way for an edit that touches
+   * only one of them, so the pair can never drift apart.
+   */
+  const setIncome = (side: 'pre' | 'gross', raw: string) => {
+    const value = parseFloat(raw) || 0;
+    const rate = 1 + vatPercent / 100;
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    setEventModal({
+      ...eventModal,
+      amount_pre_vat: side === 'pre' ? value : round2(value / rate),
+      amount_with_vat: side === 'gross' ? value : round2(value * rate),
+    });
   };
 
   const newEvent = () => setEventModal({
@@ -130,9 +154,9 @@ export function Moonlight() {
               <Input label="כרטיסים" type="number" value={eventModal.tickets}
                 onChange={(e) => setEventModal({ ...eventModal, tickets: parseInt(e.target.value) || 0 })} />
               <Input label='לפני מע"מ' type="number" step="0.01" value={eventModal.amount_pre_vat}
-                onChange={(e) => setEventModal({ ...eventModal, amount_pre_vat: parseFloat(e.target.value) || 0 })} />
-              <Input label='כולל מע"מ' type="number" step="0.01" value={eventModal.amount_with_vat}
-                onChange={(e) => setEventModal({ ...eventModal, amount_with_vat: parseFloat(e.target.value) || 0 })} />
+                onChange={(e) => setIncome('pre', e.target.value)} />
+              <Input label={`כולל מע"מ (${vatPercent}%)`} type="number" step="0.01" value={eventModal.amount_with_vat}
+                onChange={(e) => setIncome('gross', e.target.value)} />
             </div>
             <div className="space-y-2">
               <label className="flex items-center gap-2 text-sm text-ink-2">

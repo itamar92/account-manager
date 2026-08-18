@@ -1,8 +1,8 @@
 import React from 'react';
 import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Moon, Settings,
-  LogOut, Wallet, Music, Megaphone, Sparkles, CalendarCheck, Plus, ChevronDown,
+  Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Settings,
+  LogOut, Wallet, Music, Megaphone, Sparkles, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
@@ -74,13 +74,16 @@ const quickActions = [
   { to: '/moonlight/shows?new=1', label: 'הופעה חדשה' },
 ];
 
-/** The phone's bottom bar: the destinations worth a thumb, not the whole sidebar. */
+/**
+ * The phone's bottom bar: the four destinations worth a thumb. Everything else the workspace
+ * has is one tap away under «עוד», which lists the sidebar in full — a screen with no bar slot
+ * used to be unreachable on a phone altogether.
+ */
 const bizMobile: NavItem[] = [
   { to: '/', label: 'טיפול', icon: Inbox },
   { to: '/works', label: 'עבודות', icon: Briefcase },
   { to: '/invoices', label: 'חשבוניות', icon: FileText },
   { to: '/expenses', label: 'הוצאות', icon: Receipt },
-  { to: '/moonlight/summary', label: 'להקה', icon: Moon },
 ];
 
 const moonMobile: NavItem[] = [
@@ -100,8 +103,12 @@ export function Layout() {
   const navigate = useNavigate();
   const [inboxCount, setInboxCount] = React.useState<number | undefined>();
   const [quickOpen, setQuickOpen] = React.useState(false);
+  const [moreOpen, setMoreOpen] = React.useState(false);
 
   const moon = location.pathname.startsWith('/moonlight');
+
+  // The sheet is a way through to somewhere, so arriving there closes it.
+  React.useEffect(() => setMoreOpen(false), [location.pathname]);
 
   // The accent, the canvas and the borders all hang off this one attribute (see index.css),
   // so switching workspaces recolours the whole app without a single component knowing.
@@ -212,26 +219,7 @@ export function Layout() {
             content gets; the nav inside it is what sticks to the top when you scroll. */}
         <div className="hidden md:block w-60 shrink-0 border-s border-line bg-surface">
           <nav className="p-3 sticky top-[57px] max-h-[calc(100vh-57px)] overflow-y-auto">
-          {groups.map((group, i) => (
-            <div key={group.head ?? i} className="mb-4">
-              {group.head && (
-                <div className="text-[11px] font-semibold tracking-[.1em] text-ghost px-3 pb-1.5">
-                  {group.head}
-                </div>
-              )}
-              <div className="space-y-0.5">
-                {group.items.map(({ to, label, icon: Icon, badge }) => (
-                  <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => navClass(isActive)}>
-                    <Icon size={18} className="shrink-0" />
-                    <span className="truncate">{label}</span>
-                    {!!badge && (
-                      <span className="num ms-auto bg-neg text-white text-xs px-1.5 rounded-full">{badge}</span>
-                    )}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          ))}
+            <NavGroups groups={groups} navClass={navClass} />
           </nav>
         </div>
 
@@ -260,8 +248,72 @@ export function Layout() {
             <Icon size={20} /> {label}
           </NavLink>
         ))}
+        <button
+          onClick={() => setMoreOpen(true)}
+          className={clsx(
+            'flex flex-col items-center gap-1 px-2 py-1 text-[11px] font-medium rounded-lg shrink-0',
+            moreOpen ? 'text-accent' : 'text-faint'
+          )}
+        >
+          <MoreHorizontal size={20} /> עוד
+        </button>
       </nav>
+
+      {/* The rest of the workspace, on a phone: the whole sidebar as a sheet. */}
+      {moreOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-50 bg-[rgba(26,22,45,.45)] flex items-end"
+          onClick={() => setMoreOpen(false)}
+        >
+          <div
+            className="w-full bg-surface rounded-t-2xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))] max-h-[80vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="ser text-lg">{moon ? 'Moonlight' : 'העסק'} · כל המסכים</h2>
+              <button
+                onClick={() => setMoreOpen(false)}
+                className="bg-soft rounded-lg w-8 h-8 text-ink-2 leading-none shrink-0"
+              >
+                ✕
+              </button>
+            </div>
+            <NavGroups groups={groups} navClass={navClass} />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+/** The workspace's destinations, drawn the same for the sidebar and for the phone's sheet. */
+function NavGroups({ groups, navClass }: {
+  groups: NavGroup[];
+  navClass: (isActive: boolean) => string;
+}) {
+  return (
+    <>
+      {groups.map((group, i) => (
+        <div key={group.head ?? i} className="mb-4 last:mb-0">
+          {group.head && (
+            <div className="text-[11px] font-semibold tracking-[.1em] text-ghost px-3 pb-1.5">
+              {group.head}
+            </div>
+          )}
+          <div className="space-y-0.5">
+            {group.items.map(({ to, label, icon: Icon, badge }) => (
+              <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => navClass(isActive)}>
+                <Icon size={18} className="shrink-0" />
+                <span className="truncate">{label}</span>
+                {!!badge && (
+                  <span className="num ms-auto bg-neg text-white text-xs px-1.5 rounded-full">{badge}</span>
+                )}
+              </NavLink>
+            ))}
+          </div>
+        </div>
+      ))}
+    </>
   );
 }
 

@@ -5,6 +5,7 @@ import {
   Button, Card, Input, Modal, StatusBadge, DataTable, FilterBar, PageHeader, PeriodSelect,
   SearchInput, filterClass, textMatch, usePeriodFilter,
 } from '../ui';
+import { PeriodInvoiceModal } from './PeriodInvoiceModal';
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
@@ -22,6 +23,7 @@ export function Works() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [assignTo, setAssignTo] = useState('');
+  const [periodOpen, setPeriodOpen] = useState(false);
   const [excludeCalendar, setExcludeCalendar] = useState(true);
   const navigate = useNavigate();
 
@@ -175,7 +177,13 @@ export function Works() {
       <PageHeader
         title="עבודות"
         sub={<><span className="num">{works.length}</span> עבודות מוצגות · <span className="num text-warn">{nis(unbilledTotal)}</span> טרם חויבו</>}
-        actions={<Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>}
+        actions={
+          <>
+            {/* A month's work billed in one document — the way most clients here are invoiced. */}
+            <Button variant="ghost" onClick={() => setPeriodOpen(true)}>חשבונית תקופתית</Button>
+            <Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>
+          </>
+        }
       />
 
       <FilterBar>
@@ -298,6 +306,14 @@ export function Works() {
             },
           ]}
         />
+
+      <PeriodInvoiceModal
+        open={periodOpen}
+        onClose={() => setPeriodOpen(false)}
+        clients={clients}
+        initialClientId={clientFilter}
+        onCreated={(invoice) => { setPeriodOpen(false); navigate(`/invoices?open=${invoice.id}`); }}
+      />
 
       <Modal title={editing ? 'עריכת עבודה' : 'עבודה חדשה'} open={open} onClose={closeModal}>
         <form onSubmit={saveWork} className="space-y-3">

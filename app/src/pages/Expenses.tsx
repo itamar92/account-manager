@@ -23,6 +23,9 @@ export function Expenses() {
   const [category, setCategory] = useState('');
   const [search, setSearch] = useState('');
   const [syncing, setSyncing] = useState(false);
+  // The category breakdown is a question you ask now and then, not something to read past on
+  // the way to the table — so it stays folded until it is asked for.
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -113,30 +116,37 @@ export function Expenses() {
 
       {summary.byCategory.length > 1 && (
         <Card>
-          <h2 className="ser text-lg mb-3">לפי סיווג</h2>
-          <div className="space-y-2">
-            {summary.byCategory.map((row: any) => (
-              <button
-                key={row.category}
-                onClick={() => setCategory(row.category === 'ללא סיווג' ? UNCATEGORIZED : row.category)}
-                className="w-full text-right hover:bg-soft rounded-lg px-2 py-1.5 transition-colors"
-              >
-                <div className="flex items-center justify-between text-sm gap-3">
-                  <span className="truncate">{row.category}</span>
-                  <span className="text-muted shrink-0">
-                    {nis(row.total)} <span className="text-xs text-ghost">· {row.count}</span>
-                  </span>
-                </div>
-                {/* Each category against the largest one, so the year's weight is visible at a glance. */}
-                <div className="mt-1 h-1 rounded-full bg-soft overflow-hidden">
-                  <div
-                    className="h-full bg-neg-soft"
-                    style={{ width: `${Math.max(2, (row.total / (summary.byCategory[0].total || 1)) * 100)}%` }}
-                  />
-                </div>
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="ser text-lg">פילוח הוצאות לפי קטגוריות</h2>
+            <Button variant="ghost" onClick={() => setBreakdownOpen(!breakdownOpen)}>
+              {breakdownOpen ? 'הסתרה' : 'הצגת הפילוח'}
+            </Button>
           </div>
+          {breakdownOpen && (
+            <div className="space-y-2 mt-3">
+              {summary.byCategory.map((row: any) => (
+                <button
+                  key={row.category}
+                  onClick={() => setCategory(row.category === 'ללא סיווג' ? UNCATEGORIZED : row.category)}
+                  className="w-full text-right hover:bg-soft rounded-lg px-2 py-1.5 transition-colors"
+                >
+                  <div className="flex items-center justify-between text-sm gap-3">
+                    <span className="truncate">{row.category}</span>
+                    <span className="text-muted shrink-0">
+                      {nis(row.total)} <span className="text-xs text-ghost">· {row.count}</span>
+                    </span>
+                  </div>
+                  {/* Each category against the largest one, so the year's weight is visible at a glance. */}
+                  <div className="mt-1 h-1 rounded-full bg-soft overflow-hidden">
+                    <div
+                      className="h-full bg-neg-soft"
+                      style={{ width: `${Math.max(2, (row.total / (summary.byCategory[0].total || 1)) * 100)}%` }}
+                    />
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </Card>
       )}
 

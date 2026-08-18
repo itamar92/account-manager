@@ -16,6 +16,7 @@ export interface MorningDocument {
   dueDate?: string | null;
   status: number; // 0 = open, 1 = closed/paid, anything else treated as cancelled
   amount: number; // total, including VAT
+  amountOpened?: number; // of that total, what is still owed
   vat?: number;
   currency?: string;
   client?: { id?: string; name?: string; emails?: string[] };

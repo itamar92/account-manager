@@ -10,7 +10,24 @@
  */
 
 import { db } from './db.js';
-import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
+import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
+
+/**
+ * What a document still has outstanding, as SQL.
+ *
+ * Morning's `amountOpened` answers it whenever it is known: a tax invoice is settled by a
+ * receipt raised against it, and Morning closes it without anything on the invoice itself
+ * saying so — reading the status alone reports money as owed that has been in the bank for
+ * weeks, or (for a business that bills on חשבון עסקה) reports nothing owed at all. An invoice
+ * raised here has never been to Morning, so there the whole total stands while it is open.
+ */
+export const outstandingSql = (alias = '') => {
+  const col = alias ? `${alias}.` : '';
+  return `(CASE WHEN ${col}status = 'cancelled' THEN 0
+                WHEN ${col}open_amount IS NOT NULL THEN ${col}open_amount
+                WHEN ${col}status = 'issued' THEN ${col}total
+                ELSE 0 END)`;
+};
 
 export interface ListRange {
   from?: string;
@@ -20,8 +37,10 @@ export interface ListRange {
 /**
  * Clients with what each one owes: uninvoiced work, and invoices issued but not yet paid.
  *
- * The open-invoice total counts revenue documents only — a sale usually carries a חשבון עסקה
- * recording the same money, and summing every document would double it.
+ * The open-invoice total is what those documents still have outstanding, over the receivable
+ * types — the tax documents plus the חשבון עסקה that precedes one, because an open proforma is
+ * money owed as much as an unpaid invoice is. The revenue figure beside it still counts tax
+ * documents only: a sale carries both, and summing every document would double it.
  */
 export function listClients() {
   // The two figures the client cards lead with — what this client has been worth this year,
@@ -33,8 +52,8 @@ export function listClients() {
       `SELECT c.*,
          (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_total,
          (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_count,
-         (SELECT COALESCE(SUM(total),0) FROM invoices i WHERE i.client_id = c.id AND i.status = 'issued'
-            AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS open_invoices_total,
+         (SELECT COALESCE(SUM(${outstandingSql('i')}),0) FROM invoices i WHERE i.client_id = c.id
+            AND i.doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})) AS open_invoices_total,
          (SELECT COALESCE(SUM(subtotal),0) FROM invoices i WHERE i.client_id = c.id
             AND i.status != 'cancelled' AND i.date >= @from AND i.date <= @to
             AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})) AS revenue_ytd,
