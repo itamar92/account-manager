@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { clsx } from 'clsx';
 import { nis } from '../../api';
 import { Card, Empty } from '../../ui';
@@ -12,9 +12,12 @@ import { eventLabel } from './shared';
  * Three steps, each its own row: the shares of shows whose profit has not been handed out, plus
  * what a member paid out of their own pocket and has not had back, minus an equal part of what
  * the band's float covered for everyone.
+ *
+ * The whole calculation is on screen from the moment the table opens. It lives behind the
+ * question «איך זה מחושב?», and hiding the arithmetic behind a second press of the same
+ * question left the dialog answering it with nothing.
  */
 export function DivisionTable({ division }: { division: any }) {
-  const [showWorking, setShowWorking] = useState(false);
   if (!division) return <Card><Empty text="טוען…" /></Card>;
 
   const {
@@ -28,17 +31,7 @@ export function DivisionTable({ division }: { division: any }) {
 
   return (
     <Card>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-        <h2 className="ser text-lg">חלוקת כספים — כמה מגיע לכל אחד</h2>
-        {!nothing && (
-          <button
-            onClick={() => setShowWorking(!showWorking)}
-            className="text-sm text-accent hover:underline"
-          >
-            {showWorking ? 'הסתרת אופן החישוב' : 'איך זה מחושב?'}
-          </button>
-        )}
-      </div>
+      <h2 className="ser text-lg mb-1">חלוקת כספים — כמה מגיע לכל אחד</h2>
       <p className="text-xs text-faint mb-4">
         רווח מהופעות שהכסף בגינן התקבל וטרם סומנו «שולם לנגנים», פחות חלק שווה בהוצאות ששולמו
         מהקופה, ועוד החזר למי ששילם מכיסו. הוצאה שסומנה «שולם» כבר הוסדרה ואינה נכנסת לחישוב.
@@ -85,7 +78,7 @@ export function DivisionTable({ division }: { division: any }) {
 
       {nothing ? (
         <Empty text="אין מה לחלק בטווח הנבחר — כל ההופעות חולקו וכל ההוצאות הוסדרו" />
-      ) : !showWorking ? null : (
+      ) : (
         <div className="overflow-x-auto mt-5 pt-4 border-t border-line">
           <table className="w-full text-sm">
             <thead>
@@ -171,7 +164,7 @@ export function DivisionTable({ division }: { division: any }) {
         </div>
       )}
 
-      {showWorking && !nothing && (
+      {!nothing && (
         <div className="grid md:grid-cols-2 gap-4 mt-5 pt-4 border-t border-line">
           <ExpenseList
             title="הוצאות להחזר"

@@ -9,7 +9,7 @@ import {
   requireApiKey, loginRateLimit, clearLoginAttempts,
 } from './auth.js';
 import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
-import { DOC_TYPE_LABELS, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
+import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
 import { buildMorningDraft, morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
 import {
@@ -39,7 +39,7 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
-import { listClients, listInvoices, listWorks } from './queries.js';
+import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import {
   analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
@@ -182,9 +182,13 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
   //
   // The two outstanding-balance cards are deliberately not scoped to the year: an invoice
   // issued last December and still unpaid is money owed now, whichever year is on screen.
+  // They count receivable documents rather than revenue ones — a חשבון עסקה that is still open
+  // is money owed too, and on a business that bills that way it is most of the balance.
   const openInvoices = db.prepare(
-    `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM invoices
-     WHERE status = 'issued' AND doc_type IN (${REVENUE_DOC_TYPES_SQL})`
+    `SELECT COUNT(*) AS count, COALESCE(SUM(owed),0) AS total FROM (
+       SELECT ${outstandingSql()} AS owed FROM invoices
+       WHERE doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})
+     ) WHERE owed > 0`
   ).get() as any;
   const unpaidWorks = db.prepare(
     "SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE status = 'unpaid'"
@@ -234,12 +238,15 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
 export function inboxItems() {
   const today = new Date().toISOString().slice(0, 10);
 
+  // `total` here is what the document still has outstanding, not what it was written for —
+  // this is a list of what to chase, and a part-paid invoice is only worth chasing for the rest.
   const overdue = db.prepare(
-    `SELECT i.id, i.number, i.date, i.due_date, i.total, c.name AS client_name,
+    `SELECT i.id, i.number, i.date, i.due_date, ${outstandingSql('i')} AS total, c.name AS client_name,
             CAST(julianday(?) - julianday(i.due_date) AS INTEGER) AS days_late
      FROM invoices i JOIN clients c ON c.id = i.client_id
-     WHERE i.status = 'issued' AND i.due_date IS NOT NULL AND i.due_date < ?
-       AND i.doc_type IN (${REVENUE_DOC_TYPES_SQL})
+     WHERE i.due_date IS NOT NULL AND i.due_date < ?
+       AND i.doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})
+       AND ${outstandingSql('i')} > 0
      ORDER BY i.due_date`
   ).all(today, today) as any[];
 
@@ -914,6 +921,29 @@ router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, re
   res.json({ event: recomputeEvent(event.id), settled: paid.length });
 }));
 
+/**
+ * A show's income is one number written two ways, so entering either side fills in the other.
+ *
+ * Whichever side the request carries is worked out into the other at the business VAT rate.
+ * Typing into one field and leaving the other at a figure that no longer matches it is always
+ * a mistake, and re-typing both by hand was the only way to keep them in step. A request that
+ * carries two figures of its own is taken at its word — a show can be billed at its own rate,
+ * and clearing both to zero has to stay possible.
+ */
+function showIncome(body: any, existing?: any): { pre: number; gross: number } {
+  const num = (value: any) => (value === '' || value == null ? 0 : Number(value) || 0);
+  const rate = 1 + getVatPercent() / 100;
+  const prePresent = body.amount_pre_vat !== undefined;
+  const grossPresent = body.amount_with_vat !== undefined;
+  const pre = prePresent ? num(body.amount_pre_vat) : num(existing?.amount_pre_vat);
+  const gross = grossPresent ? num(body.amount_with_vat) : num(existing?.amount_with_vat);
+
+  // The side that was just typed leads; the other follows it whenever it holds nothing to lose.
+  if (prePresent && pre && (!grossPresent || !gross)) return { pre, gross: round2(pre * rate) };
+  if (grossPresent && gross && (!prePresent || !pre)) return { pre: round2(gross / rate), gross };
+  return { pre, gross };
+}
+
 // Writes to moonlight data are owner-only; band members are view-only.
 // `expenses`, `expenses_paid` and `profit` are never taken from the client: they are derived
 // from the show's expense row by recomputeEvent.
@@ -921,12 +951,13 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.venue || !b.date) return res.status(400).json({ error: 'venue and date are required' });
   const id = uuid();
+  const income = showIncome(b);
   db.prepare(
     `INSERT INTO band_events (id, venue, date, tickets, capacity, amount_pre_vat, amount_with_vat,
       receiver, invoice, has_commission, commission_percent, paid_to_musicians, payment_status)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, b.venue, b.date, b.tickets || 0, b.capacity || 0, b.amount_pre_vat || 0, b.amount_with_vat || 0,
+    id, b.venue, b.date, b.tickets || 0, b.capacity || 0, income.pre, income.gross,
     b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0,
     b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT,
     b.paid_to_musicians ? 1 : 0,
@@ -957,6 +988,7 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     : body.venue_locked !== undefined ? (body.venue_locked ? 1 : 0)
     : existing.venue_locked ? 1 : 0;
 
+  const income = showIncome(body, existing);
   db.prepare(
     `UPDATE band_events SET venue=?, date=?, tickets=?, capacity=?, amount_pre_vat=?, amount_with_vat=?,
       receiver=?, invoice=?, has_commission=?, commission_percent=?, paid_to_musicians=?,
@@ -964,7 +996,7 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
      WHERE id=?`
   ).run(
     b.venue, b.date, b.tickets, Math.max(0, Math.round(Number(b.capacity) || 0)),
-    b.amount_pre_vat, b.amount_with_vat,
+    income.pre, income.gross,
     b.receiver, b.invoice, b.has_commission ? 1 : 0, normalizeCommissionPercent(b.commission_percent),
     b.paid_to_musicians ? 1 : 0, divisionMode,
     normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',

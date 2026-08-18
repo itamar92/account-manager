@@ -239,12 +239,25 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
           {/* ---- the float ---- */}
           {fund && (
             <div className="bg-surface border border-line rounded-2xl p-5 md:p-6 flex gap-6 flex-wrap">
+              {/* Once somebody has said what the account actually holds, that is what the float
+                  is — the computed figure drops to a line of the working beside the gap, so
+                  updating the balance moves the number the band reads. */}
               <div className="flex-1 min-w-[17rem]">
                 <div className="flex items-center justify-between gap-3 mb-1">
                   <h2 className="ser text-lg">קופת הלהקה</h2>
-                  <span className="text-[12.5px] text-muted">מחושב מהתקבולים והתשלומים</span>
+                  <span className="text-[12.5px] text-muted">
+                    {fund.actual === null ? 'מחושב מהתקבולים והתשלומים' : 'לפי היתרה שנמסרה בחשבון'}
+                  </span>
                 </div>
-                <div className="num ser text-4xl text-moon leading-tight">{nis(fund.computed)}</div>
+                <div className="num ser text-4xl text-moon leading-tight">
+                  {nis(fund.actual === null ? fund.computed : fund.actual)}
+                </div>
+                {fund.actual !== null && (
+                  <div className="num text-[12.5px] text-muted mt-1">
+                    לפי החישוב {nis(fund.computed)}
+                    {fund.gap !== 0 && <span className="text-neg"> · פער {nis(fund.gap)}</span>}
+                  </div>
+                )}
                 <div className="grid gap-x-6 gap-y-2.5 mt-3.5 text-sm sm:grid-cols-2">
                   <FundLine label="תקבולים שהתקבלו" value={fund.received} tone="text-pos" sign="+" />
                   <FundLine label="תשלומים לספקים" value={-fund.toSuppliers} />

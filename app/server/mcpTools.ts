@@ -13,7 +13,8 @@
  */
 
 import { db } from './db.js';
-import { listClients, listInvoices, listWorks } from './queries.js';
+import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
+import { RECEIVABLE_DOC_TYPES_SQL } from './docTypes.js';
 import { listExpenses, expenseCategories, expensesSummary } from './morningExpenses.js';
 import { bandDivision, bandFollowUps, bandSummary } from './routes.js';
 import { adAnalysis, listCampaigns, monthlyBreakdown, campaignDaily } from './metaSync.js';
@@ -95,9 +96,14 @@ export const MCP_TOOLS: McpTool[] = [
         business: getBusinessDetails(),
         profit_and_loss: { monthly, totals: pnlTotals(monthly) },
         owed_to_business: {
+          // The same "still owed" the dashboard card is counted from, so the agent and the
+          // screen cannot quote different figures for the same question.
           open_invoices: db
             .prepare(
-              `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM invoices WHERE status = 'issued'`
+              `SELECT COUNT(*) AS count, COALESCE(SUM(owed),0) AS total FROM (
+                 SELECT ${outstandingSql()} AS owed FROM invoices
+                 WHERE doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})
+               ) WHERE owed > 0`
             )
             .get(),
           uninvoiced_works: db

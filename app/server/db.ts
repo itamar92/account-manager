@@ -395,6 +395,12 @@ addColumnIfMissing('band_events', 'attendees', 'TEXT');
 // because that is a decision about the show; 20 (the default) nets the band's 30/30/20/20.
 addColumnIfMissing('band_events', 'commission_percent', 'REAL NOT NULL DEFAULT 20');
 addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
+// What Morning says a document still has outstanding (its `amountOpened`). A tax invoice is
+// settled by a receipt raised against it, which closes it in Morning without changing anything
+// about the invoice itself — so what is still owed is a figure to be read rather than inferred.
+// NULL means nobody has said: an invoice raised here has never been to Morning, and rows synced
+// before this column existed only learn their figure on the next sync.
+addColumnIfMissing('invoices', 'open_amount', 'REAL');
 // The Morning payload a synced expense was mapped from. Kept so a field Morning spells
 // differently than expected can be seen in the data instead of guessed at — reading the
 // classification object as a scalar once wrote "[object Object]" into every category, and
