@@ -3,10 +3,12 @@ import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-route
 import {
   Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Settings,
   LogOut, Wallet, Music, Megaphone, Sparkles, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
+  Calculator,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
 import { get } from './api';
+import { MoneyCalculator } from './pages/moonlight/MoneyCalculator';
 
 type NavItem = { to: string; label: string; icon: React.ElementType; badge?: number };
 type NavGroup = { head?: string; items: NavItem[] };
@@ -104,6 +106,7 @@ export function Layout() {
   const [inboxCount, setInboxCount] = React.useState<number | undefined>();
   const [quickOpen, setQuickOpen] = React.useState(false);
   const [moreOpen, setMoreOpen] = React.useState(false);
+  const [calcOpen, setCalcOpen] = React.useState(false);
 
   const moon = location.pathname.startsWith('/moonlight');
 
@@ -188,6 +191,20 @@ export function Layout() {
                 </div>
               )}
             </div>
+          )}
+          {/* Moonlight's pocket calculator. It floats over the page rather than replacing it,
+              because both sums it does are read against numbers already on screen. */}
+          {moon && isOwner && (
+            <button
+              onClick={() => setCalcOpen((v) => !v)}
+              title='מחשבון מע"מ והעברות'
+              className={clsx(
+                'p-2 rounded-lg transition-colors',
+                calcOpen ? 'bg-accent-soft text-accent-ink' : 'text-faint hover:text-ink-2 hover:bg-soft'
+              )}
+            >
+              <Calculator size={18} />
+            </button>
           )}
           <div
             title={`${user.name} · ${isOwner ? 'בעלים' : 'חבר להקה'}`}
@@ -282,6 +299,8 @@ export function Layout() {
           </div>
         </div>
       )}
+
+      {moon && isOwner && <MoneyCalculator open={calcOpen} onClose={() => setCalcOpen(false)} />}
     </div>
   );
 }
