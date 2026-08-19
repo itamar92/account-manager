@@ -118,3 +118,17 @@ export function useBandMembers(): { members: BandMember[]; reload: () => void } 
   React.useEffect(load, [load]);
   return { members, reload: load };
 }
+
+/**
+ * The cost columns of an expense row, mirroring EXPENSE_FIELDS on the server. `vat_summary`
+ * is left out there and here alike: it restates the VAT inside the lines rather than adding
+ * a cost of its own.
+ */
+export const EXPENSE_FIELDS = [
+  'campaign', 'refreshments', 'design', 'other', 'expense_amount',
+  'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer',
+] as const;
+
+/** What one expense row adds up to, for reading a row the server has not totalled for us. */
+export const expenseRowTotal = (row: any) =>
+  Math.round(EXPENSE_FIELDS.reduce((sum, f) => sum + (Number(row?.[f]) || 0), 0) * 100) / 100;
