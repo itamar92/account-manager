@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { del, get, post, put, nis } from '../../api';
 import { Button, DataTable, Input, Modal, PageHeader, fieldClass } from '../../ui';
 import { ASSIGNMENT_ROLES, roleName, type TabProps } from './shared';
+import { MembersPanel } from './MembersPanel';
 
 /**
  * Who the band hires, and what it still owes them.
@@ -56,9 +57,14 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
   const owedTotal = suppliers.reduce((sum, s) => sum + (Number(s.owed) || 0), 0);
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-7">
+      {/* The band comes before the people it hires: this page is called «ספקים וחברים», and
+          who is in the band is the part the rest of the app reads back. */}
+      <MembersPanel isOwner={isOwner} onError={onError} />
+
+      <div className="space-y-4">
       <PageHeader
-        title="ספקים וחברים"
+        title="ספקים"
         sub={owedTotal > 0
           ? <>חוב פתוח לספקים <span className="num text-neg">{nis(owedTotal)}</span></>
           : 'אין חובות פתוחים לספקים'}
@@ -167,6 +173,7 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
           </div>
         )}
       </Modal>
+      </div>
     </div>
   );
 }

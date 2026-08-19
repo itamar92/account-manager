@@ -26,7 +26,8 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  BAND_MEMBERS, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, deleteEventCascade, deleteExpenseRow,
+  BAND_MEMBERS, BUSINESS_TYPES, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, bandMemberByKey,
+  deleteEventCascade, deleteExpenseRow, listBandMembers,
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
   memberByName, normalizeCommissionPercent, normalizePaymentStatus, reassignExpenseRow,
   PAID_EXPENSE_FIELDS,
@@ -1171,6 +1172,50 @@ function suppliersWithDebts() {
     owed_shows: debts.get(s.id)?.shows ?? [],
   }));
 }
+
+// ---- the band itself ----
+// There is no create or delete here, and that is a fact about the schema rather than an
+// oversight: a member's share of a show lives in a column named after them on band_events, so
+// a member who is not one of those keys has nowhere to be paid. Until those columns become
+// rows, the roster is fixed and only what is recorded about each member can change.
+router.get('/moonlight/members', requireAuth, handle((_req, res) => {
+  res.json({ members: listBandMembers(), business_types: BUSINESS_TYPES });
+}));
+
+router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
+  const existing = bandMemberByKey(req.params.key);
+  if (!existing) return res.status(404).json({ error: 'member not found' });
+  const b = { ...existing, ...(req.body || {}) };
+
+  const name = String(b.name ?? '').trim();
+  if (!name) return res.status(400).json({ error: 'שם חבר חובה' });
+  if (!BUSINESS_TYPES.some((t) => t.value === b.business_type)) {
+    return res.status(400).json({ error: 'סוג עסק לא חוקי' });
+  }
+  const email = String(b.email ?? '').trim();
+  // The name is what a general expense's «שולם על ידי» is matched against, so renaming a member
+  // would orphan every row that names them. Refused rather than silently rewriting history.
+  if (name !== existing.name) {
+    const inUse = db
+      .prepare('SELECT COUNT(*) AS n FROM band_general_expenses WHERE TRIM(paid_by) = ?')
+      .get(existing.name) as { n: number };
+    if (inUse.n > 0) {
+      return res.status(409).json({
+        error: `לא ניתן לשנות את השם — ${inUse.n} הוצאות כלליות רשומות על «${existing.name}»`,
+      });
+    }
+  }
+
+  db.prepare(
+    `UPDATE band_members
+       SET name = ?, email = ?, role = ?, is_manager = ?, business_type = ?, active = ?
+     WHERE member_key = ?`
+  ).run(
+    name, email || null, String(b.role ?? '').trim() || null,
+    b.is_manager ? 1 : 0, b.business_type, b.active ? 1 : 0, req.params.key
+  );
+  res.json({ member: bandMemberByKey(req.params.key) });
+}));
 
 router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
   res.json({ suppliers: suppliersWithDebts() });

@@ -87,6 +87,62 @@ export const BAND_MEMBERS = [
 
 export type MemberKey = (typeof BAND_MEMBERS)[number]['key'];
 
+/**
+ * What each member's row starts as, the first time the table is filled.
+ *
+ * The two managers are אמיר and איתמר, which is not an arbitrary label: the producer fee is
+ * split between exactly those two, and that is what makes the band's default 30/30/20/20 the
+ * shape it is. איתמר is the עוסק מורשה the band invoices through — everyone else is an עוסק
+ * פטור, so their invoices are a deductible cost with no מע"מ inside to reclaim.
+ */
+const MEMBER_DEFAULTS: Record<MemberKey, {
+  email: string; is_manager: number; business_type: BusinessType;
+}> = {
+  amir: { email: 'amir@moonlight.band', is_manager: 1, business_type: 'patur' },
+  itamar: { email: 'itamar92@gmail.com', is_manager: 1, business_type: 'morshe' },
+  yuval: { email: 'yuval@moonlight.band', is_manager: 0, business_type: 'patur' },
+  guy: { email: 'guy@moonlight.band', is_manager: 0, business_type: 'patur' },
+};
+
+/**
+ * What kind of business a member runs, which is the whole reason this is recorded: it decides
+ * what their share costs the band once they invoice for it.
+ */
+export type BusinessType = 'patur' | 'morshe' | 'none';
+
+export const BUSINESS_TYPES: Array<{ value: BusinessType; label: string }> = [
+  { value: 'morshe', label: 'עוסק מורשה' },
+  { value: 'patur', label: 'עוסק פטור' },
+  { value: 'none', label: 'לא רשום' },
+];
+
+/** Creates any member row that does not exist yet, leaving the ones that do exactly as they are. */
+export function seedBandMembers() {
+  const insert = db.prepare(
+    `INSERT INTO band_members (id, member_key, name, email, is_manager, business_type, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(member_key) DO NOTHING`
+  );
+  db.transaction(() => {
+    BAND_MEMBERS.forEach((m, i) => {
+      const d = MEMBER_DEFAULTS[m.key];
+      insert.run(uuid(), m.key, m.name, d.email, d.is_manager, d.business_type, i);
+    });
+  })();
+}
+
+/** The band as it is recorded, in display order. */
+export function listBandMembers(): any[] {
+  return db.prepare(
+    'SELECT * FROM band_members ORDER BY sort_order, name'
+  ).all() as any[];
+}
+
+/** A member's row by the key that names their share column, or undefined. */
+export function bandMemberByKey(key: string): any {
+  return db.prepare('SELECT * FROM band_members WHERE member_key = ?').get(key);
+}
+
 /** The band's own float — an expense it paid is one everybody shares. */
 export const FUND_PAYER = 'קופה';
 
@@ -327,6 +383,10 @@ export const deleteEventCascade = db.transaction(
  * added by a calendar sync in an older version.
  */
 export function backfillMoonlight() {
+  // Not guarded by a flag: it only ever inserts a member row that is missing, so it costs
+  // nothing on a database that already has them and fills one that predates the table.
+  seedBandMembers();
+
   const firstRun = getSetting('moonlight_backfill_v1', '') !== 'done';
   const commissionDone = getSetting('moonlight_commission_percent_v1', '') === 'done';
   const campaignLocksDone = getSetting('moonlight_campaign_lock_v1', '') === 'done';

@@ -1,3 +1,5 @@
+import React from 'react';
+import { get } from '../../api';
 import type { PeriodFilter } from '../../ui';
 
 /** The band, in the order the tables and the summary show them. */
@@ -73,4 +75,46 @@ export interface TabProps {
 /** The tabs that show a table share the shell's period filter and its selects. */
 export interface PeriodTabProps extends TabProps {
   period: PeriodFilter;
+}
+
+/**
+ * What kind of business a member runs. It is recorded because it decides what their share
+ * costs: an עוסק מורשה hands back a חשבונית מס whose מע"מ can be reclaimed, an עוסק פטור hands
+ * back one that is deductible but carries none, and someone registered as nothing hands back
+ * nothing that can be deducted at all.
+ */
+export type BusinessType = 'patur' | 'morshe' | 'none';
+
+export const BUSINESS_TYPES: Array<{ value: BusinessType; label: string; short: string }> = [
+  { value: 'morshe', label: 'עוסק מורשה', short: 'מורשה' },
+  { value: 'patur', label: 'עוסק פטור', short: 'פטור' },
+  { value: 'none', label: 'לא רשום', short: 'לא רשום' },
+];
+
+export const businessTypeLabel = (value: string) =>
+  BUSINESS_TYPES.find((t) => t.value === value)?.label || value;
+
+export interface BandMember {
+  id: string;
+  member_key: string;
+  name: string;
+  email: string | null;
+  role: string | null;
+  is_manager: number;
+  business_type: BusinessType;
+  active: number;
+  sort_order: number;
+}
+
+/**
+ * The band as it is recorded, for the screens that need to know more about a member than their
+ * name. Falls back to the four built-in names, so a screen still renders if the fetch fails.
+ */
+export function useBandMembers(): { members: BandMember[]; reload: () => void } {
+  const [members, setMembers] = React.useState<BandMember[]>([]);
+  const load = React.useCallback(() => {
+    get('/moonlight/members').then((d) => setMembers(d.members || [])).catch(() => {});
+  }, []);
+  React.useEffect(load, [load]);
+  return { members, reload: load };
 }

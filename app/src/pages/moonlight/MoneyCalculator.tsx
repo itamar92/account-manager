@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Calculator, Plus, X } from 'lucide-react';
 import { get, nisExact } from '../../api';
 import { FloatingWindow, Segmented, fieldClass } from '../../ui';
-import { MEMBERS, eventLabel } from './shared';
+import { useAuth } from '../../AuthContext';
+import { MEMBERS, eventLabel, useBandMembers, type BandMember } from './shared';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const num = (raw: string) => {
@@ -45,7 +46,10 @@ const INVOICE_KINDS: Array<{ value: InvoiceKind; label: string }> = [
   { value: 'none', label: 'ללא' },
 ];
 
-/** Whose books these are: the owner does not invoice himself, so his share is simply profit. */
+/**
+ * Whose books these are. The owner does not invoice himself, so his share is simply profit —
+ * used only until the roster arrives and says which member holds the עוסק these books belong to.
+ */
 const OWNER_KEY = 'itamar';
 
 interface MemberSplit {
@@ -56,12 +60,43 @@ interface MemberSplit {
   invoice: InvoiceKind;
 }
 
+/**
+ * What a member's business type means for the invoice they hand back: an עוסק מורשה's carries
+ * מע"מ that can be reclaimed, an עוסק פטור's is deductible in full but carries none, and a
+ * member registered as nothing has nothing deductible to give.
+ */
+const INVOICE_FOR_BUSINESS: Record<string, InvoiceKind> = {
+  morshe: 'vat',
+  patur: 'exempt',
+  none: 'none',
+};
+
+/** The roster before it has loaded — the built-in four, split evenly, nobody invoicing. */
 const startingMembers = (): MemberSplit[] => MEMBERS.map((m) => ({
   key: m.key,
   name: m.name,
   share: '25',
-  invoice: m.key === OWNER_KEY ? 'none' : 'vat',
+  invoice: 'none',
 }));
+
+/**
+ * The roster as the band actually records it. Each member's invoice starts from their business
+ * type rather than from an assumption, and the owner's row is the member holding the עוסק the
+ * money is received into, matched by email so it follows whoever is signed in.
+ */
+const membersFromRoster = (roster: BandMember[], ownerEmail?: string): MemberSplit[] => {
+  const active = roster.filter((m) => m.active);
+  const owner = active.find((m) => ownerEmail && m.email
+    && m.email.toLowerCase() === ownerEmail.toLowerCase());
+  const ownerKey = owner?.member_key ?? OWNER_KEY;
+  const even = active.length > 0 ? Math.round((100 / active.length) * 10) / 10 : 0;
+  return active.map((m) => ({
+    key: m.member_key,
+    name: m.name,
+    share: String(even),
+    invoice: m.member_key === ownerKey ? 'none' : (INVOICE_FOR_BUSINESS[m.business_type] ?? 'none'),
+  }));
+};
 
 /**
  * The pocket calculator for the two sums that come up while reading these pages.
@@ -83,6 +118,7 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
   const [lines, setLines] = useState<CostLine[]>(startingLines);
   const [taxRate, setTaxRate] = useState(String(FALLBACK_TAX_RATE));
   const [members, setMembers] = useState<MemberSplit[]>(startingMembers);
+  const [ownerKey, setOwnerKey] = useState(OWNER_KEY);
   const [splitToMembers, setSplitToMembers] = useState(true);
   const [events, setEvents] = useState<any[]>([]);
   const [showExplainer, setShowExplainer] = useState(false);
@@ -103,6 +139,20 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
       .catch(() => {});
     get('/moonlight/events').then((d) => setEvents(d.events || [])).catch(() => {});
   }, [open]);
+
+  // The roster decides who is in the split, what each one's invoice is worth, and which row is
+  // yours. It is adopted whenever it changes rather than merged into what is on screen: the
+  // shares here are a starting point for one sheet, and a member's business type changing is a
+  // fact about the band, not an edit to be preserved against it.
+  const { user } = useAuth();
+  const { members: roster } = useBandMembers();
+  useEffect(() => {
+    if (roster.length === 0) return;
+    setMembers(membersFromRoster(roster, user?.email));
+    const owner = roster.find((m) => user?.email && m.email
+      && m.email.toLowerCase() === user.email.toLowerCase());
+    setOwnerKey(owner?.member_key ?? OWNER_KEY);
+  }, [roster, user?.email]);
 
   const vat = Math.max(0, num(vatPercent)) / 100;
 
@@ -131,7 +181,7 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
 
   // What is left once the invoices are paid is the owner's profit after tax — but it is his
   // alone only when nobody else is sitting in the same untaxed pile.
-  const ownerAlone = members.every((m) => m.key === OWNER_KEY || m.invoice !== 'none');
+  const ownerAlone = members.every((m) => m.key === ownerKey || m.invoice !== 'none');
 
   const setLine = (id: string, patch: Partial<CostLine>) =>
     setLines((prev) => prev.map((l) => (l.id === id ? { ...l, ...patch } : l)));
@@ -152,13 +202,16 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
     ]);
     // The show already knows how it divides — a producer fee makes that 30/30/20/20 rather
     // than an even four ways — so the split follows it instead of being re-entered by hand.
-    const total = MEMBERS.reduce((sum, m) => sum + (Number(event[m.key]) || 0), 0);
-    if (total > 0) {
-      setMembers((prev) => prev.map((m) => ({
+    // Read off the rows on screen rather than the built-in four, so an inactive member is not
+    // handed a share of a show they had no part in.
+    setMembers((prev) => {
+      const total = prev.reduce((sum, m) => sum + (Number(event[m.key]) || 0), 0);
+      if (total <= 0) return prev;
+      return prev.map((m) => ({
         ...m,
         share: String(Math.round(((Number(event[m.key]) || 0) / total) * 1000) / 10),
-      })));
-    }
+      }));
+    });
   };
 
   return (
@@ -337,7 +390,7 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
                     <span className="text-[12px] text-faint shrink-0">%</span>
                     {/* The owner is the עוסק these books belong to; he cannot invoice himself,
                         so his share is simply the profit that is left once the others have. */}
-                    {m.key === OWNER_KEY ? (
+                    {m.key === ownerKey ? (
                       <span className="w-[124px] shrink-0 text-[12px] text-faint text-center">
                         החלק שלך
                       </span>
@@ -401,7 +454,7 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
                         {nisExact(split.shares[i] ?? 0)}
                       </div>
                       <div className="text-[11px] text-ghost">
-                        {m.key === OWNER_KEY ? 'שלך' :
+                        {m.key === ownerKey ? 'שלך' :
                           INVOICE_KINDS.find((k) => k.value === m.invoice)?.label}
                       </div>
                     </div>
