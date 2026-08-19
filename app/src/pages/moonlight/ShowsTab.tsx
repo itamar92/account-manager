@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { get, post, nis } from '../../api';
+import { del, get, post, nis } from '../../api';
 import { Button, Combobox, Empty, FilterBar, PageHeader, Pill, PeriodSelect, SearchInput, textMatch } from '../../ui';
-import { eventLabel, paymentStatusLabel, type PeriodTabProps } from './shared';
+import { eventLabel, expenseRowTotal, paymentStatusLabel, type PeriodTabProps } from './shared';
 
 const HEB_MONTHS = ['ינו', 'פבר', 'מרץ', 'אפר', 'מאי', 'יונ', 'יול', 'אוג', 'ספט', 'אוק', 'נוב', 'דצמ'];
 
@@ -131,8 +131,14 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
  * Every show owns exactly one expense row, created with it — so these can only be leftovers
  * from the spreadsheet migration, where a row named its show in prose and the matching could
  * not be certain. They are the one thing about a show's costs that cannot be fixed from the
- * show itself, since the row does not yet know which show it belongs to. The panel appears
- * only while any are left, and disappears for good once they are all attached.
+ * show itself, since the row does not yet know which show it belongs to.
+ *
+ * A leftover has two ends, which is why the row offers both: it either names a show whose
+ * costs are still missing, and is attached to it, or it restates costs the show already
+ * carries, and is deleted. Attaching was the only option here before, so a row of the second
+ * kind — the migration's own duplicate of a show already typed up in full — could not be
+ * cleared at all: the show refuses a second row of figures, and the panel stayed for good.
+ * The row's total is shown because that is what tells the two apart at a glance.
  */
 function OrphanCosts({ onError, onChange }: { onError: (m: string) => void; onChange: () => void }) {
   const [rows, setRows] = useState<any[]>([]);
@@ -158,16 +164,32 @@ function OrphanCosts({ onError, onChange }: { onError: (m: string) => void; onCh
     } catch (err: any) { onError(err.message); }
   };
 
+  // Deleting one is final — an unassigned row belongs to no show, so there is nowhere for its
+  // figures to survive. The total goes into the question, since that is the whole of what is lost.
+  const remove = async (row: any) => {
+    const total = expenseRowTotal(row);
+    const worth = total ? ` על סך ${nis(total)}` : '';
+    if (!confirm(`למחוק את שורת העלויות «${row.event}»${worth}? הפעולה אינה הפיכה.`)) return;
+    onError('');
+    try {
+      await del(`/moonlight/event-expenses/${row.id}`);
+      load();
+      onChange();
+    } catch (err: any) { onError(err.message); }
+  };
+
   return (
     <div className="bg-surface border border-line border-s-[3px] border-s-warn rounded-2xl p-4 md:p-5">
       <h2 className="ser text-base">{rows.length} שורות עלויות ללא שיוך להופעה</h2>
       <p className="text-[13px] text-muted mt-1 mb-3">
         שורות מהגיליון הישן שלא הותאמו לשום הופעה. עד שישויכו, הסכומים שבהן אינם נספרים באף הופעה.
+        שורה שהעלויות שבה כבר רשומות בהופעה עצמה אפשר למחוק — היא כפילות מהגיליון הישן.
       </p>
       <div className="flex flex-col gap-2.5">
         {rows.map((row) => (
           <div key={row.id} className="flex items-center gap-3 flex-wrap text-sm">
             <span className="flex-1 min-w-[10rem] font-medium truncate">{row.event}</span>
+            <span className="num text-muted shrink-0">{nis(expenseRowTotal(row))}</span>
             <Combobox
               className="w-56"
               value=""
@@ -175,6 +197,13 @@ function OrphanCosts({ onError, onChange }: { onError: (m: string) => void; onCh
               options={shows.map((e) => ({ value: e.id, label: eventLabel(e) }))}
               onChange={(v) => attach(row, v)}
             />
+            <button
+              type="button"
+              onClick={() => remove(row)}
+              className="shrink-0 text-[13px] font-semibold text-neg hover:underline px-1 py-1"
+            >
+              מחיקה
+            </button>
           </div>
         ))}
       </div>
