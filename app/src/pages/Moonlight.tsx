@@ -9,7 +9,7 @@ import { SummaryTab } from './moonlight/SummaryTab';
 import { SuppliersTab } from './moonlight/SuppliersTab';
 import { AdsTab } from './moonlight/AdsTab';
 import { CampaignAnalysisTab } from './moonlight/CampaignAnalysisTab';
-import { DEFAULT_COMMISSION_PERCENT, MEMBERS, divisionSplitLabel } from './moonlight/shared';
+import { DEFAULT_COMMISSION_PERCENT, divisionSplitLabel, useBandMembers } from './moonlight/shared';
 
 /**
  * The band's areas, each its own route so the sidebar can link straight to it.
@@ -50,6 +50,9 @@ export function Moonlight() {
   // The rate the two income fields convert between. Fetched rather than assumed, so a change
   // in Morning's settings does not leave this dialog doing last year's arithmetic.
   const [vatPercent, setVatPercent] = useState(18);
+  // Who the profit is divided between, and how many ways — read rather than assumed, so the
+  // dialog follows the roster the moment somebody joins or leaves.
+  const { members } = useBandMembers();
 
   useEffect(() => {
     if (!isOwner) return;
@@ -171,7 +174,7 @@ export function Moonlight() {
                     value={eventModal.commission_percent}
                     onChange={(e) => setEventModal({ ...eventModal, commission_percent: e.target.value })} />
                   <span className="text-xs text-faint pb-2.5 whitespace-nowrap">
-                    יוצא {divisionSplitLabel(eventModal.commission_percent)}
+                    יוצא {divisionSplitLabel(eventModal.commission_percent, members)}
                   </span>
                 </div>
               )}
@@ -195,10 +198,12 @@ export function Moonlight() {
                   <span className="text-pos">{nis(eventModal.profit)}</span>
                 </div>
                 <div className="grid grid-cols-4 gap-2 pt-1">
-                  {MEMBERS.map((m) => (
-                    <div key={m.key} className="text-center">
+                  {members.filter((m) => m.active).map((m) => (
+                    <div key={m.member_key} className="text-center">
                       <div className="text-xs text-faint">{m.name}</div>
-                      <div className="text-sm font-medium text-accent">{nis(eventModal[m.key])}</div>
+                      <div className="text-sm font-medium text-accent">
+                        {nis(eventModal.shares?.[m.member_key])}
+                      </div>
                     </div>
                   ))}
                 </div>

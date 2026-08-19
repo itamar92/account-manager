@@ -3,7 +3,7 @@ import { Calculator, Plus, X } from 'lucide-react';
 import { get, nisExact } from '../../api';
 import { FloatingWindow, Segmented, fieldClass } from '../../ui';
 import { useAuth } from '../../AuthContext';
-import { MEMBERS, eventLabel, useBandMembers, type BandMember } from './shared';
+import { eventLabel, useBandMembers, type BandMember } from './shared';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const num = (raw: string) => {
@@ -71,13 +71,8 @@ const INVOICE_FOR_BUSINESS: Record<string, InvoiceKind> = {
   none: 'none',
 };
 
-/** The roster before it has loaded — the built-in four, split evenly, nobody invoicing. */
-const startingMembers = (): MemberSplit[] => MEMBERS.map((m) => ({
-  key: m.key,
-  name: m.name,
-  share: '25',
-  invoice: 'none',
-}));
+/** Nothing until the roster arrives — who is in the band is not something to guess at. */
+const startingMembers = (): MemberSplit[] => [];
 
 /**
  * The roster as the band actually records it. Each member's invoice starts from their business
@@ -205,11 +200,11 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
     // Read off the rows on screen rather than the built-in four, so an inactive member is not
     // handed a share of a show they had no part in.
     setMembers((prev) => {
-      const total = prev.reduce((sum, m) => sum + (Number(event[m.key]) || 0), 0);
+      const total = prev.reduce((sum, m) => sum + (Number(event.shares?.[m.key]) || 0), 0);
       if (total <= 0) return prev;
       return prev.map((m) => ({
         ...m,
-        share: String(Math.round(((Number(event[m.key]) || 0) / total) * 1000) / 10),
+        share: String(Math.round(((Number(event.shares?.[m.key]) || 0) / total) * 1000) / 10),
       }));
     });
   };

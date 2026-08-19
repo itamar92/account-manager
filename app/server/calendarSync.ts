@@ -3,7 +3,9 @@ import { eventDate, isCalendarConfigured, listEvents, type CalendarEvent } from 
 import {
   cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
 } from './calendarRules.js';
-import { ensureExpenseRow, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel } from './moonlight.js';
+import {
+  ensureExpenseRow, eventSharesTotal, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel,
+} from './moonlight.js';
 import { setEventAttendees } from './assignments.js';
 
 export interface RuleSyncResult {
@@ -67,8 +69,10 @@ async function fetchCalendars(
  */
 function bandEventIsEmpty(row: any): boolean {
   const fields = ['tickets', 'amount_pre_vat', 'amount_with_vat', 'expenses', 'expenses_paid', 'profit',
-    'commission_amount', 'amir', 'itamar', 'yuval', 'guy'];
-  return fields.every((f) => !Number(row[f])) && !expenseTotal(expenseRowForEvent(row.id));
+    'commission_amount'];
+  return fields.every((f) => !Number(row[f]))
+    && !eventSharesTotal(row.id)
+    && !expenseTotal(expenseRowForEvent(row.id));
 }
 
 /**

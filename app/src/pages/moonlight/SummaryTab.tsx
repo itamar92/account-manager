@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import { get, post, put, nis } from '../../api';
 import { PerShowChart } from '../../charts';
 import { Button, Card, Empty, FilterBar, Input, Modal, MonthSelect, PageHeader, YearSelect } from '../../ui';
-import { MEMBERS, paymentStatusLabel, roleName } from './shared';
+import { paymentStatusLabel, roleName } from './shared';
 import { DivisionTable } from './DivisionTable';
 
 const yearBounds = (year: number) => ({ from: `${year}-01-01`, to: `${year}-12-31` });
@@ -98,7 +98,12 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
   const awaiting = [...(followUps?.awaitingPayment ?? [])].sort((a: any, b: any) => b.amount - a.amount);
   const awaitingTotal = followUps?.awaitingPaymentTotal ?? 0;
   const payouts = division?.payout;
-  const maxPayout = payouts ? Math.max(1, ...MEMBERS.map((m) => Math.abs(payouts[m.key] || 0))) : 1;
+  // The roster comes back with the division rather than being imported, so a member who joined
+  // or left shows up here the moment the summary is refetched.
+  const divisionMembers: any[] = division?.members ?? [];
+  const maxPayout = payouts
+    ? Math.max(1, ...divisionMembers.map((m: any) => Math.abs(payouts[m.member_key] || 0)))
+    : 1;
 
   return (
     <div className="space-y-4">
@@ -197,10 +202,10 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
                   </button>
                 </div>
                 <div className="flex flex-col gap-3">
-                  {MEMBERS.map((m) => {
-                    const due = payouts?.[m.key] ?? 0;
+                  {divisionMembers.map((m: any) => {
+                    const due = payouts?.[m.member_key] ?? 0;
                     return (
-                      <div key={m.key} className="flex items-center gap-3">
+                      <div key={m.member_key} className="flex items-center gap-3">
                         <span className="w-14 text-[14.5px] font-semibold shrink-0">{m.name}</span>
                         <span className="flex-1 h-6 bg-soft rounded-md overflow-hidden">
                           <span

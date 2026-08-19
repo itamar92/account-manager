@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Empty, Input, Modal, SelectCell, fieldClass } from '../../ui';
-import { MEMBERS, PAYMENT_STATUSES, divisionSplitLabel, roleName } from './shared';
+import { PAYMENT_STATUSES, divisionSplitLabel, roleName, useBandMembers } from './shared';
 
 /**
  * Every cost line of a show, in the order the page lists them.
@@ -50,6 +50,7 @@ export function ShowDetail() {
   const [busy, setBusy] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<any>(null);
+  const { members } = useBandMembers();
 
   const load = () =>
     get(`/moonlight/events/${id}`).then(setData).catch((e) => setError(e.message));
@@ -63,12 +64,19 @@ export function ShowDetail() {
   const gross = Number(event.amount_with_vat) || 0;
   const spent = Number(event.expenses) || 0;
   const profit = Number(event.profit) || 0;
+  // The band as it is now, plus anybody who has a share of *this* show and has since left —
+  // their money is still on the row, so hiding them would make it uneditable and unexplained.
+  const divisionRows = [
+    ...members.filter((m) => m.active),
+    ...members.filter((m) => !m.active && Number(event.shares?.[m.member_key])),
+  ];
   const sold = Number(event.tickets) || 0;
   const capacity = Number(event.capacity) || 0;
   const manual = event.division_mode === 'manual';
   // Hand-entered shares do not follow the profit, so they can quietly stop adding up to it —
   // typically after a cost was corrected later. Saying so is the whole reason to show it.
-  const sharesTotal = MEMBERS.reduce((sum, m) => sum + (Number(event[m.key]) || 0), 0);
+  const sharesTotal = Object.values(event.shares ?? {})
+    .reduce((sum: number, v) => sum + (Number(v) || 0), 0);
   const shareGap = manual && Math.abs(sharesTotal - profit) > 1;
 
   const saveEvent = async (patch: Record<string, any>) => {
@@ -299,7 +307,7 @@ export function ShowDetail() {
               <div className="text-[12.5px] text-muted mt-0.5">
                 {!event.has_commission
                   ? 'כבויים — הרווח מתחלק שווה בשווה'
-                  : `יוצא ${divisionSplitLabel(event.commission_percent)} · ${nis(event.commission_amount)}`}
+                  : `יוצא ${divisionSplitLabel(event.commission_percent, members)} · ${nis(event.commission_amount)}`}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -338,21 +346,22 @@ export function ShowDetail() {
           )}
 
           <div className="grid grid-cols-2 gap-2.5 mt-3">
-            {MEMBERS.map((m) => {
-              const share = Number(event[m.key]) || 0;
+            {divisionRows.map((m) => {
+              const share = Number(event.shares?.[m.member_key]) || 0;
               const pct = profit ? Math.round((share / profit) * 1000) / 10 : 0;
               return (
-                <div key={m.key} className="bg-soft rounded-xl p-3 min-w-0">
+                <div key={m.member_key} className="bg-soft rounded-xl p-3 min-w-0">
                   <div className="flex items-center gap-1.5 flex-wrap">
                     <span className="text-[13px] text-muted">{m.name}</span>
                     <span className="num text-[13px] font-bold">{pct}%</span>
+                    {!m.active && <span className="text-[11px] text-faint">לשעבר</span>}
                   </div>
                   <div className="mt-1">
                     <InlineAmount
                       value={share}
                       disabled={!isOwner}
                       className="num text-xl font-extrabold tracking-[-0.03em] text-moon"
-                      onSave={(v) => saveEvent({ [m.key]: v })}
+                      onSave={(v) => saveEvent({ shares: { [m.member_key]: v } })}
                     />
                   </div>
                 </div>

@@ -2,31 +2,31 @@ import React from 'react';
 import { get } from '../../api';
 import type { PeriodFilter } from '../../ui';
 
-/** The band, in the order the tables and the summary show them. */
-export const MEMBERS = [
-  { key: 'amir', name: 'אמיר' },
-  { key: 'itamar', name: 'איתמר' },
-  { key: 'yuval', name: 'יובל' },
-  { key: 'guy', name: 'גיא' },
-] as const;
+/** The band's own float — an expense it paid is one everybody shares. */
+export const FUND_PAYER = 'קופה';
 
 /** Who a general expense can have been paid by: any member, or the band's own float. */
-export const PAYERS = [...MEMBERS.map((m) => m.name), 'קופה'];
+export const payerNames = (members: BandMember[]) =>
+  [...members.map((m) => m.name), FUND_PAYER];
 
 /** The producer fee a new show starts with — matches the server's default. 20% is 30/30/20/20. */
 export const DEFAULT_COMMISSION_PERCENT = 20;
 
 /**
  * What a producer-fee percentage works out to per member, for showing beside the input.
- * Mirrors computeDivision on the server: half the fee to each of אמיר and איתמר, and the rest
- * split four ways.
+ * Mirrors computeDivision on the server: the fee shared by the managers, the rest shared by
+ * everybody. For four members and two managers, 20% still reads 30/30/20/20.
  */
-export function divisionSplitLabel(percent: unknown): string {
-  const rate = Math.min(100, Math.max(0, Number(percent) || 0)) / 100;
-  const even = ((1 - rate) / 4) * 100;
-  const lead = (rate / 2) * 100 + even;
+export function divisionSplitLabel(percent: unknown, members: BandMember[]): string {
+  const active = members.filter((m) => m.active);
+  if (active.length === 0) return '—';
+  const managers = active.filter((m) => m.is_manager).length;
+  const rate = managers > 0 ? Math.min(100, Math.max(0, Number(percent) || 0)) / 100 : 0;
+  const even = ((1 - rate) / active.length) * 100;
   const round = (n: number) => Math.round(n * 10) / 10;
-  return `${round(lead)}/${round(lead)}/${round(even)}/${round(even)}`;
+  return active
+    .map((m) => round(even + (m.is_manager && managers > 0 ? (rate / managers) * 100 : 0)))
+    .join('/');
 }
 
 /** Mirrors eventLabel on the server, for labelling shows in dropdowns before a save. */

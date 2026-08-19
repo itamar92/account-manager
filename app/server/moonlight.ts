@@ -78,14 +78,19 @@ export function expenseOutstanding(row: any): number {
  * a member covered out of their own pocket is told from one the band's own float paid for —
  * the two are settled in opposite directions when the money is divided up.
  */
-export const BAND_MEMBERS = [
+export const SEED_MEMBERS = [
   { key: 'amir', name: 'אמיר' },
   { key: 'itamar', name: 'איתמר' },
   { key: 'yuval', name: 'יובל' },
   { key: 'guy', name: 'גיא' },
 ] as const;
 
-export type MemberKey = (typeof BAND_MEMBERS)[number]['key'];
+/**
+ * A member is identified by a string that is generated once and never changes, so renaming
+ * somebody does not orphan the shows they played. It used to be a union of the four column
+ * names on band_events, which is exactly what made the band uncountable-by-design.
+ */
+export type MemberKey = string;
 
 /**
  * What each member's row starts as, the first time the table is filled.
@@ -95,7 +100,7 @@ export type MemberKey = (typeof BAND_MEMBERS)[number]['key'];
  * shape it is. איתמר is the עוסק מורשה the band invoices through — everyone else is an עוסק
  * פטור, so their invoices are a deductible cost with no מע"מ inside to reclaim.
  */
-const MEMBER_DEFAULTS: Record<MemberKey, {
+const MEMBER_DEFAULTS: Record<string, {
   email: string; is_manager: number; business_type: BusinessType;
 }> = {
   amir: { email: 'amir@moonlight.band', is_manager: 1, business_type: 'patur' },
@@ -124,7 +129,7 @@ export function seedBandMembers() {
      ON CONFLICT(member_key) DO NOTHING`
   );
   db.transaction(() => {
-    BAND_MEMBERS.forEach((m, i) => {
+    SEED_MEMBERS.forEach((m, i) => {
       const d = MEMBER_DEFAULTS[m.key];
       insert.run(uuid(), m.key, m.name, d.email, d.is_manager, d.business_type, i);
     });
@@ -138,21 +143,35 @@ export function listBandMembers(): any[] {
   ).all() as any[];
 }
 
-/** A member's row by the key that names their share column, or undefined. */
+/** A member's row by key, or undefined. */
 export function bandMemberByKey(key: string): any {
   return db.prepare('SELECT * FROM band_members WHERE member_key = ?').get(key);
+}
+
+/** Only the members currently in the band — the ones a new show's profit is divided between. */
+export function activeBandMembers(): any[] {
+  return listBandMembers().filter((m) => m.active);
 }
 
 /** The band's own float — an expense it paid is one everybody shares. */
 export const FUND_PAYER = 'קופה';
 
-/** Which member a `paid_by` names, or null when it names the fund or nobody recognisable. */
+/**
+ * Which member a `paid_by` names, or null when it names the fund or nobody recognisable.
+ * Reads the roster rather than a constant, so a member added today can front an expense today.
+ * Inactive members still resolve: they are gone from the band, not from its history.
+ */
 export function memberByName(name: unknown): MemberKey | null {
   const trimmed = String(name ?? '').trim();
-  return BAND_MEMBERS.find((m) => m.name === trimmed)?.key ?? null;
+  if (!trimmed) return null;
+  return (listBandMembers().find((m) => m.name === trimmed)?.member_key as MemberKey) ?? null;
 }
 
-export interface Division { amir: number; itamar: number; yuval: number; guy: number; commission_amount: number }
+export interface Division {
+  /** Amount per member key. Every active member appears, even at zero. */
+  shares: Record<MemberKey, number>;
+  commission_amount: number;
+}
 
 /**
  * The producer fee a show takes off the top by default, as a percentage of its profit, when
@@ -168,45 +187,90 @@ export function normalizeCommissionPercent(value: unknown): number {
 }
 
 /**
- * Splits a show's profit four ways.
+ * Splits a show's profit between the members who were in the band.
  *
- * With the producer fee on, `percent` of the profit is the fee and goes to איתמר and אמיר in
- * equal halves; the rest is shared equally by all four. The percentage is the *whole* fee, so
- * 20% nets 30/30/20/20 and 40% nets 35/35/15/15 — it is per show, because what the fee is worth
- * is a decision about that show. With the fee off it is a plain quarter each.
+ * With the producer fee on, `percent` of the profit is the fee and is shared equally by the
+ * managers; the rest is shared equally by everybody. The percentage is the *whole* fee, so for
+ * a band of four with two managers 20% nets 30/30/20/20 and 40% nets 35/35/15/15 — it is per
+ * show, because what the fee is worth is a decision about that show. With the fee off it is an
+ * equal share each.
  *
- * The rounding remainder lands on איתמר so the four shares always add up to the profit exactly;
- * without that the summary drifts by agorot per show.
+ * That reads as the same rule the band already had, because it is: the old code hard-coded
+ * "half the fee each to איתמר and אמיר, the rest in quarters", which is this rule with two
+ * managers out of four members written out longhand.
+ *
+ * The rounding remainder lands on the first manager — the first member if the band has named
+ * none — so the shares always add up to the profit exactly. Without it the summary drifts by
+ * agorot per show. It used to land on איתמר, so a recomputed show can move a single agora
+ * between the two managers; nothing that was already stored is touched.
  */
 export function computeDivision(
   profit: number,
   hasProducerFee: boolean,
-  percent: number = DEFAULT_COMMISSION_PERCENT
+  percent: number = DEFAULT_COMMISSION_PERCENT,
+  members: any[] = activeBandMembers()
 ): Division {
   const total = round2(Number(profit) || 0);
   const rate = normalizeCommissionPercent(percent) / 100;
-  if (hasProducerFee && rate > 0) {
-    const half = round2((total * rate) / 2);
-    const even = round2((total * (1 - rate)) / 4);
-    const amir = round2(half + even);
-    const yuval = even;
-    const guy = even;
-    return {
-      amir,
-      itamar: round2(total - amir - yuval - guy),
-      yuval,
-      guy,
-      commission_amount: round2(total * rate),
-    };
+  const keys: MemberKey[] = members.map((m) => m.member_key);
+  if (keys.length === 0) return { shares: {}, commission_amount: 0 };
+
+  const managers = members.filter((m) => m.is_manager).map((m) => m.member_key);
+  // A fee with nobody to pay it to is not a fee: it would vanish from the division entirely,
+  // so it is folded back into the equal share instead.
+  const feeEarners = managers.length > 0 ? managers : [];
+  const feeOn = hasProducerFee && rate > 0 && feeEarners.length > 0;
+
+  const fee = feeOn ? round2(total * rate) : 0;
+  const perManager = feeOn ? round2(fee / feeEarners.length) : 0;
+  const even = round2((total - fee) / keys.length);
+
+  const shares: Record<MemberKey, number> = {};
+  for (const key of keys) {
+    shares[key] = round2(even + (feeEarners.includes(key) ? perManager : 0));
   }
-  const even = round2(total / 4);
-  return {
-    amir: even,
-    itamar: round2(total - even * 3),
-    yuval: even,
-    guy: even,
-    commission_amount: 0,
-  };
+
+  // Whatever the rounding lost or gained, given to one member so the total is exact.
+  const absorber = feeEarners[0] ?? keys[0];
+  const drift = round2(total - keys.reduce((sum, key) => sum + shares[key], 0));
+  shares[absorber] = round2(shares[absorber] + drift);
+
+  return { shares, commission_amount: fee };
+}
+
+/** What each member took from one show, as a plain object. Absent members read as zero. */
+export function eventShares(eventId: string): Record<MemberKey, number> {
+  const rows = db
+    .prepare('SELECT member_key, amount FROM band_event_shares WHERE event_id = ?')
+    .all(eventId) as Array<{ member_key: string; amount: number }>;
+  return Object.fromEntries(rows.map((r) => [r.member_key, round2(Number(r.amount) || 0)]));
+}
+
+/** Replaces a show's division outright, so a member removed from it does not linger at zero. */
+export const setEventShares = db.transaction((eventId: string, shares: Record<string, unknown>) => {
+  db.prepare('DELETE FROM band_event_shares WHERE event_id = ?').run(eventId);
+  const insert = db.prepare(
+    'INSERT INTO band_event_shares (event_id, member_key, amount) VALUES (?, ?, ?)'
+  );
+  for (const [key, value] of Object.entries(shares)) {
+    insert.run(eventId, key, round2(Number(value) || 0));
+  }
+});
+
+/** What the sum of a show's shares comes to — the figure a manual division is checked against. */
+export function eventSharesTotal(eventId: string): number {
+  const row = db
+    .prepare('SELECT COALESCE(SUM(amount), 0) AS total FROM band_event_shares WHERE event_id = ?')
+    .get(eventId) as { total: number };
+  return round2(Number(row.total) || 0);
+}
+
+/**
+ * A show with its division attached, which is the shape every API response uses. The division
+ * is its own table now, so an event row on its own no longer says who got what.
+ */
+export function withShares(event: any): any {
+  return event ? { ...event, shares: eventShares(event.id) } : event;
 }
 
 export function getEvent(id: string): any {
@@ -254,7 +318,7 @@ export const recomputeEvent = db.transaction((eventId: string) => {
   const event = getEvent(eventId);
   if (!event) return undefined;
   const expenseRow = expenseRowForEvent(eventId);
-  if (!expenseRow) return event;
+  if (!expenseRow) return withShares(event);
 
   const expenses = expenseTotal(expenseRow);
   const expensesPaid = expensePaidTotal(expenseRow);
@@ -268,12 +332,11 @@ export const recomputeEvent = db.transaction((eventId: string) => {
   } else {
     const d = computeDivision(profit, !!event.has_commission, event.commission_percent);
     db.prepare(
-      `UPDATE band_events SET expenses = ?, expenses_paid = ?, profit = ?,
-         amir = ?, itamar = ?, yuval = ?, guy = ?, commission_amount = ?
-       WHERE id = ?`
-    ).run(expenses, expensesPaid, profit, d.amir, d.itamar, d.yuval, d.guy, d.commission_amount, eventId);
+      'UPDATE band_events SET expenses = ?, expenses_paid = ?, profit = ?, commission_amount = ? WHERE id = ?'
+    ).run(expenses, expensesPaid, profit, d.commission_amount, eventId);
+    setEventShares(eventId, d.shares);
   }
-  return getEvent(eventId);
+  return withShares(getEvent(eventId));
 });
 
 /**
@@ -386,6 +449,7 @@ export function backfillMoonlight() {
   // Not guarded by a flag: it only ever inserts a member row that is missing, so it costs
   // nothing on a database that already has them and fills one that predates the table.
   seedBandMembers();
+  backfillEventShares();
 
   const firstRun = getSetting('moonlight_backfill_v1', '') !== 'done';
   const commissionDone = getSetting('moonlight_commission_percent_v1', '') === 'done';
@@ -470,4 +534,33 @@ export function backfillMoonlight() {
 
   if (firstRun) setSetting('moonlight_backfill_v1', 'done');
   if (!commissionDone) setSetting('moonlight_commission_percent_v1', 'done');
+}
+
+
+/**
+ * Moves every show's division out of the four columns it used to live in and into rows.
+ *
+ * Run once, and only for shows that have no rows yet, so it can neither run twice nor tread on
+ * a division entered since. The amounts are copied across exactly rather than recomputed:
+ * a settled show's division is history, and a show taken over by hand would be silently
+ * rewritten by a recompute. What was stored is what is kept.
+ *
+ * The columns it reads are left on band_events afterwards. See the note in db.ts — they are
+ * frozen rather than dropped, so there is a way back if a division ever looks wrong.
+ */
+export function backfillEventShares() {
+  if (getSetting('moonlight_shares_v1', '') === 'done') return;
+  const legacyKeys = SEED_MEMBERS.map((m) => m.key);
+  db.transaction(() => {
+    const events = db.prepare('SELECT * FROM band_events').all() as any[];
+    const has = db.prepare('SELECT COUNT(*) AS n FROM band_event_shares WHERE event_id = ?');
+    for (const event of events) {
+      if ((has.get(event.id) as { n: number }).n > 0) continue;
+      const shares = Object.fromEntries(
+        legacyKeys.map((key) => [key, round2(Number(event[key]) || 0)])
+      );
+      setEventShares(event.id, shares);
+    }
+    setSetting('moonlight_shares_v1', 'done');
+  })();
 }

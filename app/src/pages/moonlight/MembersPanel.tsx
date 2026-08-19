@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { put } from '../../api';
+import { del, post, put } from '../../api';
 import { Button, DataTable, Input, Modal, fieldClass } from '../../ui';
 import { BUSINESS_TYPES, businessTypeLabel, useBandMembers, type BandMember } from './shared';
 
@@ -12,10 +12,9 @@ import { BUSINESS_TYPES, businessTypeLabel, useBandMembers, type BandMember } fr
  * registered as nothing hands back nothing deductible at all. The transfer calculator reads
  * this table rather than assuming, so getting it right here is what makes that sum right.
  *
- * There is no «+ חבר» button. A member's share of every show lives in a column named after
- * them on band_events, so a fifth member would have nowhere to be paid; the roster is fixed
- * until those columns become rows. The note under the table says so rather than leaving
- * somebody hunting for the button.
+ * The roster is the band's real membership, not a fixed list: shares live in their own table,
+ * one row per member per show, so a fifth member has somewhere to be paid the moment they are
+ * added. Removing one is deliberately harder than adding — see `remove`.
  */
 export function MembersPanel({ isOwner, onError }: {
   isOwner: boolean;
@@ -27,12 +26,32 @@ export function MembersPanel({ isOwner, onError }: {
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editing) return;
+    onError('');
     try {
-      await put(`/moonlight/members/${editing.member_key}`, editing);
+      if (editing.member_key) await put(`/moonlight/members/${editing.member_key}`, editing);
+      else await post('/moonlight/members', editing);
       setEditing(null);
       reload();
     } catch (err: any) { onError(err.message); }
   };
+
+  /**
+   * Only ever right for a member entered by mistake. Somebody who has played has shares on
+   * those shows — money that was divided — so the server refuses, and «לא פעיל» is the answer.
+   */
+  const remove = async (m: BandMember) => {
+    if (!confirm(`למחוק את ${m.name} מהלהקה?`)) return;
+    onError('');
+    try {
+      await del(`/moonlight/members/${m.member_key}`);
+      reload();
+    } catch (err: any) { onError(err.message); }
+  };
+
+  const blank = (): BandMember => ({
+    id: '', member_key: '', name: '', email: '', role: '',
+    is_manager: 0, business_type: 'patur', active: 1, sort_order: 0,
+  });
 
   const managers = members.filter((m) => m.is_manager).map((m) => m.name);
 
@@ -48,6 +67,7 @@ export function MembersPanel({ isOwner, onError }: {
               : 'טוען…'}
           </p>
         </div>
+        {isOwner && <Button onClick={() => setEditing(blank())}>+ חבר</Button>}
       </div>
 
       <DataTable
@@ -101,21 +121,31 @@ export function MembersPanel({ isOwner, onError }: {
           isOwner && {
             key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
             render: (m: BandMember) => (
-              <button onClick={() => setEditing({ ...m })} className="text-sm text-accent hover:underline">
-                עריכה
-              </button>
+              <div className="flex gap-3 md:gap-2 justify-end">
+                <button onClick={() => setEditing({ ...m })} className="text-sm text-accent hover:underline">
+                  עריכה
+                </button>
+                <button onClick={() => remove(m)} className="text-sm text-neg hover:underline">
+                  מחיקה
+                </button>
+              </div>
             ),
           },
         ]}
       />
 
       <p className="text-[12.5px] text-faint">
-        סוג העסק של כל חבר הוא מה שקובע כיצד חלקו מחושב במחשבון ההעברה ללהקה.
-        מספר החברים קבוע — חלקו של כל חבר בכל הופעה שמור בעמודה נפרדת בבסיס הנתונים,
-        ולכן הוספה או הסרה של חבר דורשת שינוי מבנה. חבר שאינו פעיל עוד ניתן לסמן «לא פעיל».
+        סוג העסק קובע כיצד חלקו של כל חבר מחושב במחשבון ההעברה ללהקה, ודמי ההפקה מתחלקים בין
+        המנהלים. חלוקת הרווח בהופעה חדשה נגזרת ממספר החברים הפעילים — הוספה או הסרה משנה אותה
+        מכאן והלאה, אך אינה נוגעת בהופעות שכבר חולקו. חבר שעזב יש לסמן «לא פעיל» ולא למחוק:
+        כך חלקו בהופעות שניגן בהן נשמר, והוא ממשיך להופיע בסקירה עד שיקבל את כספו.
       </p>
 
-      <Modal title={`עריכת ${editing?.name ?? 'חבר'}`} open={!!editing} onClose={() => setEditing(null)}>
+      <Modal
+        title={editing?.member_key ? `עריכת ${editing.name}` : 'חבר חדש'}
+        open={!!editing}
+        onClose={() => setEditing(null)}
+      >
         {editing && (
           <form onSubmit={save} className="space-y-3">
             <Input

@@ -230,10 +230,27 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_band_suppliers_email
 -- מע"מ can be reclaimed; an עוסק פטור hands back an invoice that is deductible but carries
 -- none; a member registered as nothing at all hands back nothing that can be deducted.
 --
--- member_key is what ties a row here to the share columns on band_events. Those columns are
--- why this table cannot yet grow or shrink: a member with no column has nowhere for their
--- share of a show to live. Until that is a join table, the set of keys is fixed and only what
--- is said *about* each member is editable.
+-- member_key is what ties a row here to that member's shares in band_event_shares. It is
+-- generated once and never changes, so a member can be renamed without orphaning a single
+-- show they played.
+-- What each member takes home from one show. This is the authoritative division: it replaced
+-- the amir/itamar/yuval/guy columns on band_events, which is what capped the band at exactly
+-- those four people. A row per member per show means the roster can grow, shrink, or be
+-- renamed without touching the schema.
+--
+-- The old columns are still on band_events and are deliberately left there: they are the
+-- source the backfill read from, and freezing them rather than dropping them keeps a way back
+-- if a division ever looks wrong. Nothing writes them any more — moonlight_shares_v1 in
+-- settings marks the moment they stopped being the truth.
+CREATE TABLE IF NOT EXISTS band_event_shares (
+  event_id TEXT NOT NULL,
+  member_key TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (event_id, member_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_band_event_shares_event ON band_event_shares(event_id);
+
 CREATE TABLE IF NOT EXISTS band_members (
   id TEXT PRIMARY KEY,
   member_key TEXT NOT NULL UNIQUE,
