@@ -451,6 +451,9 @@ export const deleteEventCascade = db.transaction(
       excluded = 1;
     }
     db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(id);
+    // The division goes with the show. Without this the share rows outlive the event they
+    // belonged to and go on being counted in every per-member total.
+    db.prepare('DELETE FROM band_event_shares WHERE event_id = ?').run(id);
     // Its Meta campaign mappings go with it. Deleted here as plain rows rather than through
     // metaSync, which imports this module — and the campaigns themselves are untouched: the
     // spend was real, it just no longer has a show to belong to, and the next sync will list
@@ -474,6 +477,7 @@ export function backfillMoonlight() {
   // nothing on a database that already has them and fills one that predates the table.
   seedBandMembers();
   backfillEventShares();
+  pruneOrphanShares();
 
   const firstRun = getSetting('moonlight_backfill_v1', '') !== 'done';
   const commissionDone = getSetting('moonlight_commission_percent_v1', '') === 'done';
@@ -587,4 +591,19 @@ export function backfillEventShares() {
     }
     setSetting('moonlight_shares_v1', 'done');
   })();
+}
+
+/**
+ * Drops share rows whose show no longer exists.
+ *
+ * An early build of the shares table deleted a show without its division, leaving rows that
+ * belonged to nothing and still counted towards every per-member total. The cascade now takes
+ * them, so this only ever finds something once — but it is cheap, and a stray row here is
+ * silently wrong money rather than a visible error.
+ */
+export function pruneOrphanShares(): number {
+  const result = db.prepare(
+    'DELETE FROM band_event_shares WHERE event_id NOT IN (SELECT id FROM band_events)'
+  ).run();
+  return result.changes;
 }

@@ -71,6 +71,7 @@ function removeRowsForEvent(eventId: string): number {
       && !eventSharesTotal(event.id)
       && !expenseTotal(expenseRowForEvent(event.id))) {
       db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(event.id);
+      db.prepare('DELETE FROM band_event_shares WHERE event_id = ?').run(event.id);
       db.prepare('DELETE FROM meta_campaign_events WHERE event_id = ?').run(event.id);
       db.prepare('DELETE FROM band_events WHERE id = ?').run(event.id);
       removed++;
