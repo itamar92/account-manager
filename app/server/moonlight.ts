@@ -153,6 +153,26 @@ export function activeBandMembers(): any[] {
   return listBandMembers().filter((m) => m.active);
 }
 
+/**
+ * Which member is the person whose books these are — the עוסק the band invoices through.
+ *
+ * Matched by email against the owner's login rather than named by a constant, so it is the same
+ * definition of "you" the transfer calculator uses for «החלק שלך». One rule, in one place: if
+ * the app thinks a row is yours there, it is yours here too.
+ *
+ * Returns null when no member carries the owner's email, which is a real possibility once the
+ * roster is editable — callers are expected to have a fallback rather than assume a match.
+ */
+export function ownerMemberKey(members: any[] = activeBandMembers()): MemberKey | null {
+  const owner = db
+    .prepare("SELECT email FROM users WHERE role = 'owner' ORDER BY created_at LIMIT 1")
+    .get() as { email?: string } | undefined;
+  const email = String(owner?.email ?? '').trim().toLowerCase();
+  if (!email) return null;
+  const match = members.find((m) => String(m.email ?? '').trim().toLowerCase() === email);
+  return (match?.member_key as MemberKey) ?? null;
+}
+
 /** The band's own float — an expense it paid is one everybody shares. */
 export const FUND_PAYER = 'קופה';
 
@@ -199,10 +219,11 @@ export function normalizeCommissionPercent(value: unknown): number {
  * "half the fee each to איתמר and אמיר, the rest in quarters", which is this rule with two
  * managers out of four members written out longhand.
  *
- * The rounding remainder lands on the first manager — the first member if the band has named
- * none — so the shares always add up to the profit exactly. Without it the summary drifts by
- * agorot per show. It used to land on איתמר, so a recomputed show can move a single agora
- * between the two managers; nothing that was already stored is touched.
+ * The rounding remainder lands on the member whose books these are — איתמר, as it always has —
+ * so the shares always add up to the profit exactly. Without it the summary drifts by agorot
+ * per show, and it belongs to him because his is the account the whole division has to
+ * reconcile against. If no member carries the owner's email it falls to the first manager, and
+ * then to the first member, so there is always somebody holding the odd agora.
  */
 export function computeDivision(
   profit: number,
@@ -221,9 +242,12 @@ export function computeDivision(
   const feeEarners = managers.length > 0 ? managers : [];
   const feeOn = hasProducerFee && rate > 0 && feeEarners.length > 0;
 
-  const fee = feeOn ? round2(total * rate) : 0;
-  const perManager = feeOn ? round2(fee / feeEarners.length) : 0;
-  const even = round2((total - fee) / keys.length);
+  // Each part is rounded once, from the profit — not by rounding the fee and then dividing it,
+  // which would round twice and shift an agora. This is the arithmetic the four columns did,
+  // so a show recomputed after the migration comes out to the same figures it had before.
+  const feeRate = feeOn ? rate : 0;
+  const perManager = feeOn ? round2((total * feeRate) / feeEarners.length) : 0;
+  const even = round2((total * (1 - feeRate)) / keys.length);
 
   const shares: Record<MemberKey, number> = {};
   for (const key of keys) {
@@ -231,11 +255,11 @@ export function computeDivision(
   }
 
   // Whatever the rounding lost or gained, given to one member so the total is exact.
-  const absorber = feeEarners[0] ?? keys[0];
+  const absorber = ownerMemberKey(members) ?? feeEarners[0] ?? keys[0];
   const drift = round2(total - keys.reduce((sum, key) => sum + shares[key], 0));
   shares[absorber] = round2(shares[absorber] + drift);
 
-  return { shares, commission_amount: fee };
+  return { shares, commission_amount: round2(total * feeRate) };
 }
 
 /** What each member took from one show, as a plain object. Absent members read as zero. */
