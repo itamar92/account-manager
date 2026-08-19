@@ -26,7 +26,9 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  BAND_MEMBERS, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, deleteEventCascade, deleteExpenseRow,
+  BUSINESS_TYPES, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, activeBandMembers, bandMemberByKey,
+  deleteEventCascade, deleteExpenseRow, eventShares, eventSharesTotal, listBandMembers,
+  setEventShares, withShares,
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
   memberByName, normalizeCommissionPercent, normalizePaymentStatus, reassignExpenseRow,
   PAID_EXPENSE_FIELDS,
@@ -62,11 +64,14 @@ function removeRowsForEvent(eventId: string): number {
   const event = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(eventId) as any;
   if (event) {
     const moneyFields = ['tickets', 'amount_pre_vat', 'amount_with_vat', 'expenses', 'expenses_paid',
-      'profit', 'commission_amount', 'amir', 'itamar', 'yuval', 'guy'];
+      'profit', 'commission_amount'];
     // Its expense row is created empty with the show, so an untouched one does not count as
-    // bookkeeping — but anything typed into it does.
-    if (moneyFields.every((f) => !Number(event[f])) && !expenseTotal(expenseRowForEvent(event.id))) {
+    // bookkeeping — but anything typed into it does, and so does a division.
+    if (moneyFields.every((f) => !Number(event[f]))
+      && !eventSharesTotal(event.id)
+      && !expenseTotal(expenseRowForEvent(event.id))) {
       db.prepare('DELETE FROM band_event_expenses WHERE event_id = ?').run(event.id);
+      db.prepare('DELETE FROM band_event_shares WHERE event_id = ?').run(event.id);
       db.prepare('DELETE FROM meta_campaign_events WHERE event_id = ?').run(event.id);
       db.prepare('DELETE FROM band_events WHERE id = ?').run(event.id);
       removed++;
@@ -651,22 +656,29 @@ export function bandSummary(range: { from?: string; to?: string } = {}) {
   // out yet — "what is still coming to each of us" — so a show marked שולם לנגנים drops out of
   // it, and one whose money has not actually arrived yet is not counted as profit either.
   const unsettled = events.filter((e) => !e.paid_to_musicians && e.payment_status === 'received');
+  // Keyed by member rather than spread across named fields, so the shape follows the roster
+  // instead of pinning it to four names the way the old columns did.
+  const sumShares = (rows: any[]) => {
+    const totals: Record<string, number> = Object.fromEntries(
+      listBandMembers().map((m) => [m.member_key, 0])
+    );
+    for (const row of rows) {
+      for (const [key, amount] of Object.entries(eventShares(row.id))) {
+        totals[key] = round2((totals[key] || 0) + amount);
+      }
+    }
+    return totals;
+  };
   return {
     unpaidDivision: {
-      amir: sum(unsettled, 'amir'),
-      itamar: sum(unsettled, 'itamar'),
-      yuval: sum(unsettled, 'yuval'),
-      guy: sum(unsettled, 'guy'),
+      shares: sumShares(unsettled),
       profit: sum(unsettled, 'profit'),
       count: unsettled.length,
     },
     totalRevenue: sum(events, 'amount_pre_vat'),
     totalExpenses: sum(events, 'expenses'),
     totalProfit: sum(events, 'profit'),
-    amir: sum(events, 'amir'),
-    itamar: sum(events, 'itamar'),
-    yuval: sum(events, 'yuval'),
-    guy: sum(events, 'guy'),
+    shares: sumShares(events),
     fundExpenses: sum(general, 'fund'),
     generalExpenses: sum(general, 'amount'),
     eventCount: events.length,
@@ -709,7 +721,10 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
     .prepare(`SELECT * FROM band_general_expenses${where.sql} ORDER BY date`)
     .all(...where.params) as any[];
 
-  const memberKeys = BAND_MEMBERS.map((m) => m.key);
+  // Everyone who has ever been in the band, not only who is in it now: a member who left is
+  // still owed their share of the shows they played, and dropping them would quietly lose it.
+  const roster = listBandMembers();
+  const memberKeys: MemberKey[] = roster.map((m) => m.member_key);
   const perMember = (fn: (key: MemberKey) => number) =>
     Object.fromEntries(memberKeys.map((key) => [key, round2(fn(key))])) as Record<MemberKey, number>;
 
@@ -718,15 +733,18 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
   // share would be.
   const shows = events
     .filter((e) => !e.paid_to_musicians && e.payment_status === 'received')
-    .map((e) => ({
-      id: e.id,
-      venue: e.venue,
-      date: e.date,
-      profit: round2(Number(e.profit) || 0),
-      ...perMember((key) => Number(e[key]) || 0),
-    }));
-  const showsTotal = {
-    ...perMember((key) => shows.reduce((sum, s) => sum + (s as any)[key], 0)),
+    .map((e) => {
+      const shares = eventShares(e.id);
+      return {
+        id: e.id,
+        venue: e.venue,
+        date: e.date,
+        profit: round2(Number(e.profit) || 0),
+        ...perMember((key) => shares[key] || 0),
+      };
+    });
+  const showsTotal: Record<string, number> = {
+    ...perMember((key) => shows.reduce((sum, s) => sum + ((s as any)[key] || 0), 0)),
     profit: round2(shows.reduce((sum, s) => sum + s.profit, 0)),
     count: shows.length,
   };
@@ -755,20 +773,25 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
       id: g.id, date: g.date, description: g.description, amount: round2(Number(g.amount) || 0),
     }));
   const fundTotal = round2(fundExpenses.reduce((sum, g) => sum + g.amount, 0));
-  const fundShare = round2(fundTotal / memberKeys.length);
+  // Costs the float covered are shared by the members who are in the band now — somebody who
+  // has left does not go on paying for it.
+  const current = activeBandMembers().map((m) => m.member_key as MemberKey);
+  const sharers = current.length > 0 ? current : memberKeys;
+  const fundShare = sharers.length > 0 ? round2(fundTotal / sharers.length) : 0;
 
   // What each member's own share works out to once the shared costs are taken off, before any
   // money they fronted comes back to them. It is the figure that says how the shows actually
   // went for everybody — a refund is the band returning someone's own money, not a share of
   // anything, and leaving it in makes one member look like they earned more than the rest.
-  const beforeRefund = perMember((key) => showsTotal[key] - fundShare);
+  const beforeRefund = perMember((key) =>
+    (showsTotal[key] || 0) - (sharers.includes(key) ? fundShare : 0));
   const payout = perMember((key) => beforeRefund[key] + refundsByMember[key]);
 
   const sumOver = (values: Record<MemberKey, number>) =>
-    round2(memberKeys.reduce((sum, key) => sum + values[key], 0));
+    round2(memberKeys.reduce((sum: number, key: MemberKey) => sum + (values[key] || 0), 0));
 
   return {
-    members: BAND_MEMBERS,
+    members: roster,
     shows,
     showsTotal,
     refunds,
@@ -835,7 +858,7 @@ router.get('/moonlight/events', requireAuth, handle((req, res) => {
     .all(...where.params) as any[];
   // Which roles are unstaffed travels with the show, because that is what the list is scanned
   // for — a gig three weeks out with nobody on sound is the row you are looking for.
-  res.json({ events: events.map((e) => ({ ...e, missing: missingRoles(e.id) })) });
+  res.json({ events: events.map((e) => ({ ...withShares(e), missing: missingRoles(e.id) })) });
 }));
 
 /**
@@ -891,7 +914,7 @@ router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
   }
 
   res.json({
-    event: { ...event, label: eventLabel(event.venue, event.date) },
+    event: { ...withShares(event), label: eventLabel(event.venue, event.date) },
     expenses: expense,
     outstanding: expenseOutstanding(expense),
     assignments,
@@ -967,8 +990,6 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   res.json({ event: recomputeEvent(id) });
 }));
 
-/** The member shares are the only fields whose presence changes the row's mode. */
-const DIVISION_FIELDS = ['amir', 'itamar', 'yuval', 'guy'] as const;
 
 router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
   const existing = getEvent(req.params.id) as any;
@@ -977,7 +998,9 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
   const b = { ...existing, ...body };
 
   // Typing a share by hand takes the division over; asking for 'auto' hands it back.
-  const touchedDivision = DIVISION_FIELDS.some((f) => body[f] !== undefined);
+  const patchedShares: Record<string, unknown> | null =
+    body.shares && typeof body.shares === 'object' ? body.shares : null;
+  const touchedDivision = !!patchedShares && Object.keys(patchedShares).length > 0;
   const divisionMode = body.division_mode === 'auto' ? 'auto'
     : touchedDivision ? 'manual'
     : existing.division_mode || 'auto';
@@ -992,7 +1015,7 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
   db.prepare(
     `UPDATE band_events SET venue=?, date=?, tickets=?, capacity=?, amount_pre_vat=?, amount_with_vat=?,
       receiver=?, invoice=?, has_commission=?, commission_percent=?, paid_to_musicians=?,
-      division_mode=?, payment_status=?, amir=?, itamar=?, yuval=?, guy=?, venue_locked=?
+      division_mode=?, payment_status=?, venue_locked=?
      WHERE id=?`
   ).run(
     b.venue, b.date, b.tickets, Math.max(0, Math.round(Number(b.capacity) || 0)),
@@ -1000,8 +1023,19 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     b.receiver, b.invoice, b.has_commission ? 1 : 0, normalizeCommissionPercent(b.commission_percent),
     b.paid_to_musicians ? 1 : 0, divisionMode,
     normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',
-    b.amir, b.itamar, b.yuval, b.guy, venueLocked, req.params.id
+    venueLocked, req.params.id
   );
+
+  // A share patch names only the members it changes, so it is merged over what is stored
+  // rather than replacing it — editing one member's share must not zero the other three.
+  if (patchedShares) {
+    const unknown = Object.keys(patchedShares).filter((key) => !bandMemberByKey(key));
+    if (unknown.length > 0) {
+      return res.status(400).json({ error: `חבר לא מוכר: ${unknown.join(', ')}` });
+    }
+    setEventShares(req.params.id, { ...eventShares(req.params.id), ...patchedShares });
+  }
+
   const updated = getEvent(req.params.id);
   ensureExpenseRow(updated);
   syncExpenseLabel(updated);
@@ -1100,7 +1134,7 @@ router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
   if (existing.event_id) recomputeEvent(existing.event_id);
   res.json({
     expense: db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id),
-    event: existing.event_id ? getEvent(existing.event_id) : null,
+    event: existing.event_id ? withShares(getEvent(existing.event_id)) : null,
   });
 }));
 
@@ -1171,6 +1205,110 @@ function suppliersWithDebts() {
     owed_shows: debts.get(s.id)?.shows ?? [],
   }));
 }
+
+// ---- the band itself ----
+router.get('/moonlight/members', requireAuth, handle((_req, res) => {
+  res.json({ members: listBandMembers(), business_types: BUSINESS_TYPES });
+}));
+
+router.post('/moonlight/members', requireOwner, handle((req, res) => {
+  const { name, email, role, is_manager, business_type } = req.body || {};
+  const trimmed = String(name ?? '').trim();
+  if (!trimmed) return res.status(400).json({ error: 'שם חבר חובה' });
+  const type = business_type ?? 'none';
+  if (!BUSINESS_TYPES.some((t) => t.value === type)) {
+    return res.status(400).json({ error: 'סוג עסק לא חוקי' });
+  }
+  // The name is how a general expense's «שולם על ידי» finds its member, so two members sharing
+  // one would make that lookup a coin toss.
+  if (listBandMembers().some((m) => m.name === trimmed)) {
+    return res.status(409).json({ error: `כבר קיים חבר בשם «${trimmed}»` });
+  }
+  const order = (db.prepare('SELECT COALESCE(MAX(sort_order), -1) AS n FROM band_members')
+    .get() as { n: number }).n + 1;
+  const id = uuid();
+  // The key is never shown and never changes, which is what lets a member be renamed later
+  // without orphaning the shows they have already played.
+  db.prepare(
+    `INSERT INTO band_members (id, member_key, name, email, role, is_manager, business_type, sort_order)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    id, `m_${id.slice(0, 8)}`, trimmed, String(email ?? '').trim() || null,
+    String(role ?? '').trim() || null, is_manager ? 1 : 0, type, order
+  );
+  res.json({ member: db.prepare('SELECT * FROM band_members WHERE id = ?').get(id) });
+}));
+
+/**
+ * Removing a member is only ever right for one that was entered by mistake. A member who has
+ * played is part of the band's history — their shares are money that was divided — so once
+ * anything is recorded against them the answer is «לא פעיל», not deletion.
+ */
+router.delete('/moonlight/members/:key', requireOwner, handle((req, res) => {
+  const member = bandMemberByKey(req.params.key);
+  if (!member) return res.status(404).json({ error: 'member not found' });
+  if (listBandMembers().length <= 1) {
+    return res.status(409).json({ error: 'חייב להישאר לפחות חבר אחד בלהקה' });
+  }
+
+  const shows = db.prepare(
+    'SELECT COUNT(*) AS n FROM band_event_shares WHERE member_key = ? AND amount != 0'
+  ).get(req.params.key) as { n: number };
+  if (shows.n > 0) {
+    return res.status(409).json({
+      error: `לא ניתן למחוק — ל${member.name} חלק ב-${shows.n} הופעות. סמנו «לא פעיל» במקום.`,
+    });
+  }
+  const expenses = db.prepare(
+    'SELECT COUNT(*) AS n FROM band_general_expenses WHERE TRIM(paid_by) = ?'
+  ).get(member.name) as { n: number };
+  if (expenses.n > 0) {
+    return res.status(409).json({
+      error: `לא ניתן למחוק — ${expenses.n} הוצאות כלליות רשומות על ${member.name}. סמנו «לא פעיל» במקום.`,
+    });
+  }
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM band_event_shares WHERE member_key = ?').run(req.params.key);
+    db.prepare('DELETE FROM band_members WHERE member_key = ?').run(req.params.key);
+  })();
+  res.json({ ok: true });
+}));
+
+router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
+  const existing = bandMemberByKey(req.params.key);
+  if (!existing) return res.status(404).json({ error: 'member not found' });
+  const b = { ...existing, ...(req.body || {}) };
+
+  const name = String(b.name ?? '').trim();
+  if (!name) return res.status(400).json({ error: 'שם חבר חובה' });
+  if (!BUSINESS_TYPES.some((t) => t.value === b.business_type)) {
+    return res.status(400).json({ error: 'סוג עסק לא חוקי' });
+  }
+  const email = String(b.email ?? '').trim();
+  // The name is what a general expense's «שולם על ידי» is matched against, so renaming a member
+  // would orphan every row that names them. Refused rather than silently rewriting history.
+  if (name !== existing.name) {
+    const inUse = db
+      .prepare('SELECT COUNT(*) AS n FROM band_general_expenses WHERE TRIM(paid_by) = ?')
+      .get(existing.name) as { n: number };
+    if (inUse.n > 0) {
+      return res.status(409).json({
+        error: `לא ניתן לשנות את השם — ${inUse.n} הוצאות כלליות רשומות על «${existing.name}»`,
+      });
+    }
+  }
+
+  db.prepare(
+    `UPDATE band_members
+       SET name = ?, email = ?, role = ?, is_manager = ?, business_type = ?, active = ?
+     WHERE member_key = ?`
+  ).run(
+    name, email || null, String(b.role ?? '').trim() || null,
+    b.is_manager ? 1 : 0, b.business_type, b.active ? 1 : 0, req.params.key
+  );
+  res.json({ member: bandMemberByKey(req.params.key) });
+}));
 
 router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
   res.json({ suppliers: suppliersWithDebts() });

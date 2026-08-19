@@ -225,6 +225,49 @@ CREATE TABLE IF NOT EXISTS band_suppliers (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_band_suppliers_email
   ON band_suppliers(email) WHERE email IS NOT NULL AND email != '';
 
+-- The band itself: who is in it, what they do, and — the part the money cares about — what
+-- kind of business each one runs. A member who is an עוסק מורשה hands back a חשבונית מס whose
+-- מע"מ can be reclaimed; an עוסק פטור hands back an invoice that is deductible but carries
+-- none; a member registered as nothing at all hands back nothing that can be deducted.
+--
+-- member_key is what ties a row here to that member's shares in band_event_shares. It is
+-- generated once and never changes, so a member can be renamed without orphaning a single
+-- show they played.
+-- What each member takes home from one show. This is the authoritative division: it replaced
+-- the amir/itamar/yuval/guy columns on band_events, which is what capped the band at exactly
+-- those four people. A row per member per show means the roster can grow, shrink, or be
+-- renamed without touching the schema.
+--
+-- The old columns are still on band_events and are deliberately left there: they are the
+-- source the backfill read from, and freezing them rather than dropping them keeps a way back
+-- if a division ever looks wrong. Nothing writes them any more — moonlight_shares_v1 in
+-- settings marks the moment they stopped being the truth.
+CREATE TABLE IF NOT EXISTS band_event_shares (
+  event_id TEXT NOT NULL,
+  member_key TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (event_id, member_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_band_event_shares_event ON band_event_shares(event_id);
+
+CREATE TABLE IF NOT EXISTS band_members (
+  id TEXT PRIMARY KEY,
+  member_key TEXT NOT NULL UNIQUE,
+  name TEXT NOT NULL,
+  email TEXT COLLATE NOCASE,
+  -- What they do in the band — instrument, vocals, whatever the band calls it. Free text.
+  role TEXT,
+  -- A manager runs the band's business as well as playing in it; the producer fee is split
+  -- between the managers, which is what makes the band's 30/30/20/20 the shape it is.
+  is_manager INTEGER NOT NULL DEFAULT 0,
+  business_type TEXT NOT NULL DEFAULT 'none'
+    CHECK (business_type IN ('patur', 'morshe', 'none')),
+  active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- Who is staffed on each show, one row per role. supplier_id NULL with not_needed = 1 is an
 -- explicit "this show has no sound company"; no row at all means nobody decided yet, which
 -- is what the missing-staff alert looks for.

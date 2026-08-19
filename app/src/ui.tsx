@@ -774,3 +774,143 @@ export function Combobox({ value, options, onChange, placeholder, disabled, clas
     </div>
   );
 }
+
+/**
+ * A window that floats over the page and is moved by dragging its title bar.
+ *
+ * A Modal is the right shape for something you finish and dismiss; this is for a tool you keep
+ * open *while* reading the page behind it — so it takes no backdrop, steals no focus, and stays
+ * where you put it. The position is kept per `storageKey`, because a tool you reopen ten times
+ * a day should come back where you left it rather than in the middle of what you were reading.
+ *
+ * Pointer events rather than mouse events, so the drag works the same under a finger.
+ */
+export function FloatingWindow({
+  title, icon, open, onClose, storageKey, width = 380, children,
+}: {
+  title: React.ReactNode;
+  icon?: React.ReactNode;
+  open: boolean;
+  onClose: () => void;
+  /** Where the position is remembered. Omit to always open at the default spot. */
+  storageKey?: string;
+  width?: number;
+  children: React.ReactNode;
+}) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  const [pos, setPos] = React.useState<{ x: number; y: number } | null>(null);
+  const [collapsed, setCollapsed] = React.useState(false);
+  // Where in the title bar the pointer went down, so the window does not jump on the first move.
+  const grab = React.useRef<{ dx: number; dy: number } | null>(null);
+
+  /** Keeps the window on screen — after a drag, and after the viewport changes under it. */
+  const clamp = React.useCallback((x: number, y: number) => {
+    const box = ref.current;
+    const w = box?.offsetWidth ?? width;
+    // Only the bar has to stay reachable: a tall window may hang off the bottom, but a title
+    // bar dragged past the edge would leave nothing to grab it by.
+    const h = 44;
+    return {
+      x: Math.min(Math.max(8, x), Math.max(8, window.innerWidth - w - 8)),
+      y: Math.min(Math.max(8, y), Math.max(8, window.innerHeight - h - 8)),
+    };
+  }, [width]);
+
+  // Opening decides the spot: the remembered one, or clear of the sidebar on the start side.
+  React.useEffect(() => {
+    if (!open || pos) return;
+    let saved: { x: number; y: number } | null = null;
+    try {
+      const raw = storageKey && localStorage.getItem(storageKey);
+      if (raw) saved = JSON.parse(raw);
+    } catch { /* a corrupt entry just means the default position */ }
+    // Clear of the sidebar, which sits on the start side — the left of the screen on this
+    // right-to-left page, so the default corner has to follow the direction rather than assume.
+    const rtl = getComputedStyle(document.documentElement).direction === 'rtl';
+    const fallback = { x: rtl ? 24 : Math.max(8, window.innerWidth - width - 24), y: 76 };
+    const start = saved && Number.isFinite(saved.x) && Number.isFinite(saved.y) ? saved : fallback;
+    setPos(clamp(start.x, start.y));
+  }, [open, pos, storageKey, width, clamp]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const onResize = () => setPos((p) => (p ? clamp(p.x, p.y) : p));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [open, clamp]);
+
+  if (!open || !pos) return null;
+
+  const startDrag = (e: React.PointerEvent) => {
+    // Not from the buttons in the bar — those are targets, not handles.
+    if ((e.target as HTMLElement).closest('button')) return;
+    const box = ref.current?.getBoundingClientRect();
+    if (!box) return;
+    grab.current = { dx: e.clientX - box.left, dy: e.clientY - box.top };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onDrag = (e: React.PointerEvent) => {
+    if (!grab.current) return;
+    e.preventDefault();
+    setPos(clamp(e.clientX - grab.current.dx, e.clientY - grab.current.dy));
+  };
+
+  const endDrag = () => {
+    if (!grab.current) return;
+    grab.current = null;
+    if (storageKey && pos) {
+      try { localStorage.setItem(storageKey, JSON.stringify(pos)); } catch { /* private mode */ }
+    }
+  };
+
+  return (
+    <div
+      ref={ref}
+      style={{ left: pos.x, top: pos.y, width: `min(${width}px, calc(100vw - 16px))` }}
+      className="fixed z-50 bg-surface border border-line rounded-2xl shadow-[0_24px_60px_rgba(20,24,32,.28)] overflow-hidden"
+    >
+      <div
+        onPointerDown={startDrag}
+        onPointerMove={onDrag}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        className="flex items-center justify-between gap-2 px-3.5 py-2.5 bg-soft border-b border-line cursor-move touch-none select-none"
+      >
+        <div className="flex items-center gap-2 min-w-0 text-accent">
+          {icon}
+          <span className="ser text-[15px] text-ink truncate">{title}</span>
+        </div>
+        <div className="flex items-center gap-0.5 shrink-0">
+          <button
+            type="button"
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? 'הרחבה' : 'צמצום'}
+            className="w-7 h-7 rounded-lg text-muted hover:text-ink hover:bg-surface leading-none"
+          >
+            {collapsed ? '▢' : '—'}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            title="סגירה"
+            className="w-7 h-7 rounded-lg text-muted hover:text-neg hover:bg-surface leading-none"
+          >
+            ✕
+          </button>
+        </div>
+      </div>
+      {/* The body gets exactly the room left under the title bar wherever the window has been
+          dragged to, and scrolls inside that. A fixed max height would let a tall panel run off
+          the bottom of a window parked low, taking its last controls out of reach. */}
+      {!collapsed && (
+        <div
+          style={{ maxHeight: `max(180px, calc(100vh - ${Math.round(pos.y)}px - 60px))` }}
+          className="p-4 overflow-y-auto"
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}

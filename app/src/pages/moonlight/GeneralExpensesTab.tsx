@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { del, post, put, nis } from '../../api';
 import { Button, Combobox, DataTable, EditableCell, Input, Modal, PageHeader, PeriodSelect, SearchInput, textMatch } from '../../ui';
-import { PAYERS, eventLabel, type PeriodTabProps } from './shared';
+import { eventLabel, payerNames, useBandMembers, type PeriodTabProps } from './shared';
 
 interface Props extends PeriodTabProps {
   expenses: any[];
@@ -28,7 +28,11 @@ export function GeneralExpensesTab({ expenses, events, period, isOwner, onError,
     { value: '', label: 'כללי' },
     ...events.map((e) => ({ value: e.id, label: eventLabel(e) })),
   ];
-  const payerOptions = PAYERS.map((name) => ({ value: name, label: name }));
+  // Only members still in the band can be named as having paid for something new; someone who
+  // has left stays on the rows they already fronted.
+  const { members } = useBandMembers();
+  const payerOptions = payerNames(members.filter((m) => m.active))
+    .map((name) => ({ value: name, label: name }));
 
   const saveField = async (id: string, patch: Record<string, any>) => {
     try {
