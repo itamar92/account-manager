@@ -58,12 +58,84 @@ export function expensePaidTotal(row: any): number {
   );
 }
 
-/** How far along a show's payment is. The order is the order it moves through. */
-export const PAYMENT_STATUSES = ['waiting_report', 'invoice_sent', 'received'] as const;
+/**
+ * How far along a show's payment is. The order is the order it moves through.
+ *
+ * «התקבל» and «הכסף הועבר לקופה» are two different facts about the same money, which is why
+ * the second is its own station rather than a flag: the venue pays into the private account,
+ * and what belongs to the band moves on from there in a separate transfer, days or weeks
+ * later. Everything that used to ask whether a show had been paid means «has the money
+ * arrived», so it asks `moneyReceived` rather than comparing to 'received' — a show that has
+ * moved on to the fund has certainly been paid.
+ */
+export const PAYMENT_STATUSES = [
+  'waiting_report', 'invoice_sent', 'received', 'fund_transferred',
+] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/** The last station: the band's share has left the private account for the band's own. */
+export const FUND_TRANSFERRED: PaymentStatus = 'fund_transferred';
+
+/** Whether the venue's money has actually arrived, at whichever of the two stations it sits. */
+export const moneyReceived = (status: unknown): boolean =>
+  status === 'received' || status === FUND_TRANSFERRED;
 
 export function normalizePaymentStatus(value: unknown): PaymentStatus | undefined {
   return PAYMENT_STATUSES.includes(value as PaymentStatus) ? (value as PaymentStatus) : undefined;
+}
+
+/**
+ * Moves the recorded balance of the band's account by what a transfer put into it.
+ *
+ * Only the balance somebody has actually entered is touched. With none entered there is
+ * nothing to move — the fund reads as computed until it is checked against the bank, and
+ * inventing a balance here would turn "nobody has said" into a figure nobody stands behind.
+ */
+export function adjustBandFundActual(delta: number): void {
+  const raw = getSetting('band_fund_actual', '');
+  if (raw === '' || round2(delta) === 0) return;
+  setSetting('band_fund_actual', String(round2((Number(raw) || 0) + delta)));
+}
+
+/**
+ * Keeps the recorded balance in step with the shows whose money has reached the account.
+ *
+ * Marking a show «הכסף הועבר לקופה» is the moment the transfer happened, so the balance moves
+ * by the same amount; stepping back out returns exactly what this show put in, which is what
+ * makes the button safe to press by mistake. A show the migration marked put nothing in — its
+ * transfer predates the step and the balance already reflects it — so it takes nothing out.
+ *
+ * Returns what the show should record as transferred, for the caller to store.
+ */
+export function settleFundTransfer(
+  event: any,
+  nextStatus: PaymentStatus,
+  requested: unknown
+): number | null {
+  const was = event.payment_status === FUND_TRANSFERRED;
+  const now = nextStatus === FUND_TRANSFERRED;
+  const stored = event.fund_transfer_amount == null
+    ? null : round2(Number(event.fund_transfer_amount) || 0);
+  const asked = requested === undefined || requested === null || requested === ''
+    ? null : round2(Number(requested) || 0);
+
+  if (!now) {
+    if (!was) return stored;
+    if (stored !== null) adjustBandFundActual(-stored);
+    return null;
+  }
+  // Nothing said and nothing stored: the show's income without מע"מ is what the band's books
+  // already count as arriving in the fund, so it is the figure to fall back on.
+  if (!was) {
+    const amount = asked ?? stored ?? round2(Number(event.amount_pre_vat) || 0);
+    adjustBandFundActual(amount);
+    return amount;
+  }
+  // Already transferred: only a correction to the amount moves anything, and only by the
+  // difference — the rest of it is in the balance already.
+  if (asked === null || asked === stored) return stored;
+  adjustBandFundActual(round2(asked - (stored ?? 0)));
+  return asked;
 }
 
 /** What is still owed to the suppliers of one show. */
@@ -493,6 +565,8 @@ export function backfillMoonlight() {
     setSetting('moonlight_campaign_lock_v1', 'done');
   }
 
+  backfillFundTransfers();
+
   db.transaction(() => {
     // Adopt the free-text labels as real links, where they are unambiguous.
     const unlinked = db
@@ -564,6 +638,34 @@ export function backfillMoonlight() {
   if (!commissionDone) setSetting('moonlight_commission_percent_v1', 'done');
 }
 
+
+/**
+ * The date the band's own account caught up with its books: everything before it had already
+ * been transferred by the time the step existed.
+ */
+const FUND_TRANSFER_BACKFILL_BEFORE = '2026-07-01';
+
+/**
+ * Marks the shows whose money had already reached the band's account before there was a step
+ * to say so.
+ *
+ * Runs once. The balance is deliberately left alone and no amount is recorded against these
+ * shows: the transfers are history, and whatever was last entered as the account's balance
+ * already includes them — adding them again would double every שקל the band has ever earned.
+ * Recording nothing is also what makes un-marking one of them safe, since a show that put
+ * nothing into the balance takes nothing back out.
+ */
+export function backfillFundTransfers(): number {
+  if (getSetting('moonlight_fund_transfer_v1', '') === 'done') return 0;
+  const result = db
+    .prepare(
+      `UPDATE band_events SET payment_status = ?
+       WHERE date < ? AND payment_status != ?`
+    )
+    .run(FUND_TRANSFERRED, FUND_TRANSFER_BACKFILL_BEFORE, FUND_TRANSFERRED);
+  setSetting('moonlight_fund_transfer_v1', 'done');
+  return result.changes;
+}
 
 /**
  * Moves every show's division out of the four columns it used to live in and into rows.

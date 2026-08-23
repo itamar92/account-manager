@@ -30,7 +30,8 @@ import {
   deleteEventCascade, deleteExpenseRow, eventShares, eventSharesTotal, listBandMembers,
   setEventShares, withShares,
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
-  memberByName, normalizeCommissionPercent, normalizePaymentStatus, reassignExpenseRow,
+  memberByName, moneyReceived, normalizeCommissionPercent, normalizePaymentStatus,
+  reassignExpenseRow, settleFundTransfer,
   PAID_EXPENSE_FIELDS,
   recomputeEvent, syncExpenseLabel, type MemberKey,
 } from './moonlight.js';
@@ -615,7 +616,7 @@ export function bandFollowUps() {
     .all(today) as any[];
 
   const awaitingPayment = past
-    .filter((e) => e.payment_status !== 'received')
+    .filter((e) => !moneyReceived(e.payment_status))
     .map((e) => ({
       id: e.id, venue: e.venue, date: e.date,
       amount: round2(Number(e.amount_pre_vat) || 0),
@@ -655,7 +656,7 @@ export function bandSummary(range: { from?: string; to?: string } = {}) {
   // The member split is shown for the shows whose money has come in but has not been handed
   // out yet — "what is still coming to each of us" — so a show marked שולם לנגנים drops out of
   // it, and one whose money has not actually arrived yet is not counted as profit either.
-  const unsettled = events.filter((e) => !e.paid_to_musicians && e.payment_status === 'received');
+  const unsettled = events.filter((e) => !e.paid_to_musicians && moneyReceived(e.payment_status));
   // Keyed by member rather than spread across named fields, so the shape follows the roster
   // instead of pinning it to four names the way the old columns did.
   const sumShares = (rows: any[]) => {
@@ -732,7 +733,7 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
   // out yet. A show still waiting on payment is not profit to divide, whatever its calculated
   // share would be.
   const shows = events
-    .filter((e) => !e.paid_to_musicians && e.payment_status === 'received')
+    .filter((e) => !e.paid_to_musicians && moneyReceived(e.payment_status))
     .map((e) => {
       const shares = eventShares(e.id);
       return {
@@ -825,7 +826,7 @@ export function bandFund() {
   const general = db.prepare('SELECT * FROM band_general_expenses').all() as any[];
   const sum = (rows: any[], fn: (row: any) => number) => round2(rows.reduce((s, r) => s + (fn(r) || 0), 0));
 
-  const received = sum(events.filter((e) => e.payment_status === 'received'), (e) => Number(e.amount_pre_vat));
+  const received = sum(events.filter((e) => moneyReceived(e.payment_status)), (e) => Number(e.amount_pre_vat));
   const toSuppliers = sum(events, (e) => Number(e.expenses_paid));
   const toMembers = sum(events.filter((e) => e.paid_to_musicians), (e) => Number(e.profit));
   const fromFund = sum(general.filter((g) => String(g.paid_by ?? '').trim() === FUND_PAYER), (g) => Number(g.amount));
@@ -1012,17 +1013,22 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     : existing.venue_locked ? 1 : 0;
 
   const income = showIncome(body, existing);
+  // Reaching — or leaving — «הכסף הועבר לקופה» is the one status change that moves money
+  // outside this row: the band's recorded balance follows it, and what the show records as
+  // transferred is whatever went in, so the same sum can come back out again.
+  const paymentStatus =
+    normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report';
+  const fundTransfer = settleFundTransfer(existing, paymentStatus, body.fund_transfer_amount);
   db.prepare(
     `UPDATE band_events SET venue=?, date=?, tickets=?, capacity=?, amount_pre_vat=?, amount_with_vat=?,
       receiver=?, invoice=?, has_commission=?, commission_percent=?, paid_to_musicians=?,
-      division_mode=?, payment_status=?, venue_locked=?
+      division_mode=?, payment_status=?, fund_transfer_amount=?, venue_locked=?
      WHERE id=?`
   ).run(
     b.venue, b.date, b.tickets, Math.max(0, Math.round(Number(b.capacity) || 0)),
     income.pre, income.gross,
     b.receiver, b.invoice, b.has_commission ? 1 : 0, normalizeCommissionPercent(b.commission_percent),
-    b.paid_to_musicians ? 1 : 0, divisionMode,
-    normalizePaymentStatus(b.payment_status) || existing.payment_status || 'waiting_report',
+    b.paid_to_musicians ? 1 : 0, divisionMode, paymentStatus, fundTransfer,
     venueLocked, req.params.id
   );
 

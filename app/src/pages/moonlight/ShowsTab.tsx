@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { del, get, post, nis } from '../../api';
 import { Button, Combobox, Empty, FilterBar, PageHeader, Pill, PeriodSelect, SearchInput, textMatch } from '../../ui';
-import { eventLabel, expenseRowTotal, paymentStatusLabel, type PeriodTabProps } from './shared';
+import { eventLabel, expenseRowTotal, moneyReceived, paymentStatusLabel, type PeriodTabProps } from './shared';
 
 const HEB_MONTHS = ['ינו', 'פבר', 'מרץ', 'אפר', 'מאי', 'יונ', 'יול', 'אוג', 'ספט', 'אוק', 'נוב', 'דצמ'];
 
@@ -14,6 +14,7 @@ const STATUS_TONE: Record<string, [string, string]> = {
   waiting_report: ['bg-soft', 'text-muted'],
   invoice_sent: ['bg-moon-soft', 'text-moon'],
   received: ['bg-pos-soft', 'text-pos'],
+  fund_transferred: ['bg-moon', 'text-white'],
 };
 
 type Filter = 'upcoming' | 'past' | 'all';
@@ -75,7 +76,7 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
     : f === 'upcoming' ? upcomingCount
     : events.length - upcomingCount);
 
-  const unbilled = events.filter((e) => e.payment_status !== 'received' && e.date < now);
+  const unbilled = events.filter((e) => !moneyReceived(e.payment_status) && e.date < now);
   const unbilledTotal = unbilled.reduce((sum, e) => sum + (Number(e.amount_pre_vat) || 0), 0);
 
   return (

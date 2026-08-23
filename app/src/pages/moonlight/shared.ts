@@ -35,17 +35,32 @@ export function eventLabel(event: { venue: string; date: string }): string {
   return y && m && d ? `${event.venue} - ${d}/${m}/${y}` : event.venue;
 }
 
-/** Where a show's money has got to, in the order it moves through. */
+/**
+ * Where a show's money has got to, in the order it moves through. Mirrors PAYMENT_STATUSES
+ * on the server.
+ *
+ * The last two are one payment at two places: the venue pays into the private account, and
+ * what belongs to the band moves on from there into the band's own — a separate transfer,
+ * days or weeks later, and the one this app exists to work out.
+ */
 export const PAYMENT_STATUSES = [
   { value: 'waiting_report', label: 'ממתין לדוח' },
   { value: 'invoice_sent', label: 'חשבונית נשלחה' },
   { value: 'received', label: 'התקבל' },
+  { value: 'fund_transferred', label: 'הכסף הועבר לקופת הלהקה' },
 ];
+
+export const FUND_TRANSFERRED = 'fund_transferred';
+
+/** Whether the venue's money has arrived, at whichever of the two stations the show sits. */
+export const moneyReceived = (status: unknown): boolean =>
+  status === 'received' || status === FUND_TRANSFERRED;
 
 export const PAYMENT_STATUS_STYLES: Record<string, string> = {
   waiting_report: 'text-warn',
   invoice_sent: 'text-accent',
   received: 'text-pos',
+  fund_transferred: 'text-moon',
 };
 
 export const paymentStatusLabel = (value: string) =>
