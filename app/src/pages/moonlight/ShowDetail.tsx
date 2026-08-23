@@ -3,8 +3,11 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
 import { useAuth } from '../../AuthContext';
-import { Button, Empty, Input, Modal, SelectCell, fieldClass } from '../../ui';
-import { PAYMENT_STATUSES, divisionSplitLabel, roleName, useBandMembers } from './shared';
+import { Button, Empty, Input, Modal, MoneyInput, SelectCell, fieldClass } from '../../ui';
+import {
+  FUND_TRANSFERRED, PAYMENT_STATUSES, divisionSplitLabel, moneyReceived, roleName, useBandMembers,
+} from './shared';
+import { fetchTransferRates, splitTransfer } from './transfer';
 
 /**
  * Every cost line of a show, in the order the page lists them.
@@ -28,8 +31,15 @@ const COST_LINES: Array<{ key: string; label: string; role?: string; settles?: b
   { key: 'expense_amount', label: 'הוצאה נוספת' },
 ];
 
-/** The stations a show's money passes through, in order. */
-const TRACK = ['ההופעה התקיימה', 'חשבונית נשלחה', 'התקבל תשלום', 'תשלום לספקים', 'חלוקה לחברים'];
+/**
+ * The stations a show's money passes through, in order.
+ *
+ * «הכסף בקופה» is its own station because it is its own event: the venue pays into the private
+ * account, and only a later transfer moves the band's part of it into the band's account.
+ */
+const TRACK = [
+  'ההופעה התקיימה', 'חשבונית נשלחה', 'התקבל תשלום', 'הכסף בקופה', 'תשלום לספקים', 'חלוקה לחברים',
+];
 
 /**
  * One show, whole: what it earned, what it cost, who worked it, and how the profit divides.
@@ -50,6 +60,10 @@ export function ShowDetail() {
   const [busy, setBusy] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [form, setForm] = useState<any>(null);
+  // Empty while the rates are still on their way — the field is filled in from the same
+  // arithmetic the calculator runs, so the figure offered here is the one it would give.
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferDraft, setTransferDraft] = useState('');
   const { members } = useBandMembers();
 
   const load = () =>
@@ -115,6 +129,28 @@ export function ShowDetail() {
     finally { setBusy(false); }
   };
 
+  /**
+   * What to transfer into the band's account, worked out rather than asked for: the show's
+   * income as it landed, less the מע"מ and the tax provision that have to stay behind. It is
+   * offered as a draft rather than imposed — the sum that actually moved is whatever the bank
+   * says moved, and that is what the balance has to follow.
+   */
+  const openTransfer = async () => {
+    setTransferDraft('');
+    setTransferOpen(true);
+    const { vatPercent, taxRate } = await fetchTransferRates();
+    const vat = Math.max(0, vatPercent) / 100;
+    const split = splitTransfer({
+      // A show whose gross was never typed still has its income, so it is grossed up rather
+      // than read as nothing to transfer.
+      received: gross || income * (1 + vat),
+      lines: [{ amount: spent, deductible: true }],
+      vat,
+      taxRate: Math.max(0, taxRate) / 100,
+    });
+    setTransferDraft(String(split.transfer));
+  };
+
   const removeShow = async () => {
     const suffix = event.calendar_event_id
       ? ' האירוע גם יסומן כלא-הופעה כדי שלא יימשך שוב מהיומן.'
@@ -130,8 +166,9 @@ export function ShowDetail() {
   // is simply whether the date has passed.
   const done = [
     event.date <= new Date().toISOString().slice(0, 10),
-    event.payment_status === 'invoice_sent' || event.payment_status === 'received',
-    event.payment_status === 'received',
+    event.payment_status === 'invoice_sent' || moneyReceived(event.payment_status),
+    moneyReceived(event.payment_status),
+    event.payment_status === FUND_TRANSFERRED,
     spent > 0 && outstanding === 0,
     !!event.paid_to_musicians,
   ];
@@ -225,6 +262,18 @@ export function ShowDetail() {
             </div>
           ))}
         </div>
+        {event.payment_status === FUND_TRANSFERRED && (
+          <div className="text-[12.5px] text-muted mt-3.5 pt-3 border-t border-line">
+            {event.fund_transfer_amount == null
+              ? 'הכסף של ההופעה הזו כבר בקופת הלהקה.'
+              : <>הועבר לקופת הלהקה{' '}
+                  <span className="num font-semibold text-ink">
+                    {nis(Number(event.fund_transfer_amount))}
+                  </span>
+                  {' '}— והיתרה שנרשמה לקופה גדלה בסכום הזה.
+                </>}
+          </div>
+        )}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2 items-start">
@@ -387,7 +436,7 @@ export function ShowDetail() {
       {/* ---- where the show goes next ---- */}
       {isOwner && (
         <div className="flex flex-wrap gap-2.5">
-          {event.payment_status !== 'received' && (
+          {!moneyReceived(event.payment_status) && (
             <button
               disabled={busy}
               onClick={() => act(() => put(`/moonlight/events/${event.id}`, { payment_status: nextStatus(event.payment_status) }))}
@@ -396,6 +445,17 @@ export function ShowDetail() {
               {event.payment_status === 'waiting_report'
                 ? 'סימון «חשבונית נשלחה»'
                 : `סימון «התקבל» · ${nis(income)}`}
+            </button>
+          )}
+          {/* The money is in the private account and has not moved on yet — the one step that
+              changes a figure outside this show, so it asks how much before it does. */}
+          {event.payment_status === 'received' && (
+            <button
+              disabled={busy}
+              onClick={openTransfer}
+              className="flex-1 min-w-[14rem] bg-moon text-white rounded-xl py-3.5 text-[15px] font-bold disabled:opacity-60"
+            >
+              סימון «הכסף הועבר לקופת הלהקה»
             </button>
           )}
           {outstanding > 0 && (
@@ -407,7 +467,7 @@ export function ShowDetail() {
               תשלום לספקים · {nis(outstanding)}
             </button>
           )}
-          {event.payment_status === 'received' && !event.paid_to_musicians && (
+          {moneyReceived(event.payment_status) && !event.paid_to_musicians && (
             <button
               disabled={busy}
               onClick={() => act(() => put(`/moonlight/events/${event.id}`, { paid_to_musicians: 1 }))}
@@ -424,6 +484,38 @@ export function ShowDetail() {
           </button>
         </div>
       )}
+
+      {/* How much actually left the private account. It is a draft of the calculator's answer,
+          because what the balance has to follow is the transfer that was really made. */}
+      <Modal title="הכסף הועבר לקופת הלהקה" open={transferOpen} onClose={() => setTransferOpen(false)}>
+        <div className="space-y-3">
+          <p className="text-sm text-muted">
+            הסכום המוצע הוא מה שנשאר מההכנסה אחרי המע"מ וההפרשה למס — אותו חישוב שבמחשבון.
+            אם הועבר סכום אחר, זה הסכום לרשום: היתרה שנרשמה לקופת הלהקה תגדל בדיוק בו.
+          </p>
+          <label className="block">
+            <span className="block text-[13px] text-muted mb-1.5">הסכום שהועבר</span>
+            <MoneyInput
+              value={transferDraft}
+              onChange={setTransferDraft}
+              placeholder={transferDraft === '' ? 'מחשב…' : '0.00'}
+            />
+          </label>
+          <Button
+            className="w-full"
+            disabled={busy || transferDraft === ''}
+            onClick={async () => {
+              await act(() => put(`/moonlight/events/${event.id}`, {
+                payment_status: FUND_TRANSFERRED,
+                fund_transfer_amount: parseFloat(transferDraft) || 0,
+              }));
+              setTransferOpen(false);
+            }}
+          >
+            סימון כהועבר
+          </Button>
+        </div>
+      </Modal>
 
       {/* Name, date, room size and payment stage — the facts about the show that are not money. */}
       <Modal title="פרטי ההופעה" open={editOpen} onClose={() => setEditOpen(false)}>
@@ -475,6 +567,8 @@ export function ShowDetail() {
 }
 
 /** The next station on the money track — the button always does the one thing that comes next. */
+/** The next station the one-click button advances to. The fund transfer is not among them:
+ *  it asks for its amount first, so it has a button of its own. */
 const nextStatus = (current: string) =>
   current === 'waiting_report' ? 'invoice_sent' : 'received';
 

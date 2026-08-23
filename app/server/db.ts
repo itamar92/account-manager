@@ -425,8 +425,15 @@ addColumnIfMissing('calendar_rules', 'fixed_amount', 'REAL NOT NULL DEFAULT 0');
 addColumnIfMissing('band_events', 'division_mode', "TEXT NOT NULL DEFAULT 'auto'");
 // The link a show's expense row used to express as the free-text label "מקום - DD/MM/YYYY".
 addColumnIfMissing('band_event_expenses', 'event_id', 'TEXT');
-// Where a show's money has got to: waiting for the venue's report, invoiced, or in the bank.
+// Where a show's money has got to: waiting for the venue's report, invoiced, in the private
+// account, or moved on from there into the band's own account.
 addColumnIfMissing('band_events', 'payment_status', "TEXT NOT NULL DEFAULT 'waiting_report'");
+// What was actually moved into the band's account when the show reached «הכסף הועבר לקופה».
+// It is stored rather than recomputed because it is the sum that was added to the recorded
+// balance: only the same sum can be taken out again if the step is undone. NULL means nothing
+// was ever added on this show's account — including the shows the migration marked, whose
+// transfers happened long before the step existed and are already in the balance.
+addColumnIfMissing('band_events', 'fund_transfer_amount', 'REAL');
 addColumnIfMissing('band_general_expenses', 'paid', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('band_general_expenses', 'event_id', 'TEXT');
 // A name typed by hand outranks the calendar. Set the moment someone renames a synced show or

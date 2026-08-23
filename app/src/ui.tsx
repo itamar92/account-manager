@@ -216,6 +216,56 @@ export function Input({ label, ...props }: React.InputHTMLAttributes<HTMLInputEl
   );
 }
 
+/**
+ * A sum of money as it reads on a page: 18,443.71 rather than 18443.71.
+ *
+ * It is a text field rather than a `type="number"` one because a numeric field cannot show a
+ * thousands separator — the browser refuses to render one inside a numeric value, which is how
+ * a five-figure cost ends up scrolled out of sight in a narrow box with no sign that anything
+ * is missing. While the field has focus it shows the bare number: a separator that appears and
+ * moves under the caret is unusable to type through.
+ *
+ * What is handed back is always the plain digits, so a caller stores the same string it always
+ * did and `parseFloat` still reads it.
+ */
+export function MoneyInput({ value, onChange, className, ...props }:
+  Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> & {
+    value: string;
+    onChange: (value: string) => void;
+  }) {
+  const [editing, setEditing] = React.useState(false);
+  return (
+    <input
+      {...props}
+      type="text"
+      inputMode="decimal"
+      dir="ltr"
+      value={editing ? value : moneyText(value)}
+      onFocus={(e) => { setEditing(true); props.onFocus?.(e); }}
+      onBlur={(e) => { setEditing(false); props.onBlur?.(e); }}
+      // Anything that is not part of a number is dropped rather than rejected, so pasting a
+      // figure copied with its separators — or its ₪ — lands as the number it names.
+      onChange={(e) => onChange(e.target.value.replace(/[^\d.-]/g, ''))}
+      className={clsx(fieldClass, 'num text-end', className)}
+    />
+  );
+}
+
+/** The same digits with their separators in — for showing, never for storing. */
+function moneyText(raw: string): string {
+  const value = String(raw ?? '').trim();
+  if (value === '') return '';
+  const amount = Number(value);
+  if (!Number.isFinite(amount)) return value;
+  // Decimals as typed, up to two: a round figure stays round rather than growing a ".00" the
+  // moment the field loses focus.
+  const typed = (value.split('.')[1] ?? '').length;
+  return amount.toLocaleString('he-IL', {
+    minimumFractionDigits: Math.min(typed, 2),
+    maximumFractionDigits: 2,
+  });
+}
+
 export function Textarea({ label, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { label?: string }) {
   return (
     <label className="block">

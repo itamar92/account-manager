@@ -1,18 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Calculator, Plus, X } from 'lucide-react';
 import { get, nisExact } from '../../api';
-import { FloatingWindow, Segmented, fieldClass } from '../../ui';
+import { FloatingWindow, MoneyInput, Segmented, fieldClass } from '../../ui';
 import { useAuth } from '../../AuthContext';
-import { eventLabel, useBandMembers, type BandMember } from './shared';
+import { FUND_TRANSFERRED, eventLabel, useBandMembers, type BandMember } from './shared';
+import { FALLBACK_TAX_RATE, fetchTransferRates, splitTransfer, type InvoiceKind } from './transfer';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const num = (raw: string) => {
   const value = parseFloat(String(raw).replace(/,/g, ''));
   return Number.isFinite(value) ? value : 0;
 };
-
-/** The provision rate to fall back on when the year's own estimate is not available yet. */
-const FALLBACK_TAX_RATE = 25;
 
 type Mode = 'vat' | 'transfer';
 
@@ -33,12 +31,6 @@ const startingLines = (): CostLine[] => [
 
 let lineSeq = 0;
 const newLine = (): CostLine => ({ id: `n${++lineSeq}`, label: '', amount: '', deductible: true });
-
-/**
- * What a member hands back for their share, which is what decides how it is treated:
- * a tax invoice with מע"מ inside it, an exempt dealer's invoice with none, or nothing at all.
- */
-export type InvoiceKind = 'vat' | 'exempt' | 'none';
 
 const INVOICE_KINDS: Array<{ value: InvoiceKind; label: string }> = [
   { value: 'vat', label: 'חשבונית מס' },
@@ -114,7 +106,9 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
   const [taxRate, setTaxRate] = useState(String(FALLBACK_TAX_RATE));
   const [members, setMembers] = useState<MemberSplit[]>(startingMembers);
   const [ownerKey, setOwnerKey] = useState(OWNER_KEY);
-  const [splitToMembers, setSplitToMembers] = useState(true);
+  // Off by default: the ordinary transfer is one figure moved into the band account, and what
+  // each member ends up with is settled later, from the whole period rather than one show.
+  const [splitToMembers, setSplitToMembers] = useState(false);
   const [events, setEvents] = useState<any[]>([]);
   const [showExplainer, setShowExplainer] = useState(false);
 
@@ -123,16 +117,16 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
   // projected effective rate rather than from a guess.
   useEffect(() => {
     if (!open) return;
-    get('/settings')
-      .then((d) => setVatPercent(String(Number(d.settings.vat_percent) || 18)))
+    fetchTransferRates().then(({ vatPercent, taxRate }) => {
+      setVatPercent(String(vatPercent));
+      setTaxRate(String(taxRate));
+    });
+    // Only the shows still to be transferred: once a show's money has moved into the band
+    // account there is nothing left here to work out for it, and a list of every show the band
+    // has ever played is a list you have to remember your way through.
+    get('/moonlight/events')
+      .then((d) => setEvents((d.events || []).filter((e: any) => e.payment_status !== FUND_TRANSFERRED)))
       .catch(() => {});
-    get(`/reports/income-tax?year=${new Date().getFullYear()}`)
-      .then((d) => {
-        const rate = d.report?.projection?.effective_rate ?? d.report?.estimate?.effective_rate;
-        if (Number(rate) > 0) setTaxRate(String(Math.round(Number(rate) * 10) / 10));
-      })
-      .catch(() => {});
-    get('/moonlight/events').then((d) => setEvents(d.events || [])).catch(() => {});
   }, [open]);
 
   // The roster decides who is in the split, what each one's invoice is worth, and which row is
@@ -276,11 +270,7 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
               <span className="block text-[13px] text-muted mb-1.5">
                 התקבל לחשבון הפרטי (כולל מע"מ)
               </span>
-              <input
-                type="number" step="0.01" inputMode="decimal"
-                value={received} onChange={(e) => setReceived(e.target.value)}
-                placeholder="0.00" className={fieldClass}
-              />
+              <MoneyInput value={received} onChange={setReceived} placeholder="0.00" />
             </label>
             {events.length > 0 && (
               <select
@@ -317,11 +307,13 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
                     className={`${fieldClass} text-[13px]`}
                   />
                 </div>
-                <div className="w-[82px] shrink-0">
-                  <input
-                    type="number" step="0.01" inputMode="decimal" placeholder="0"
-                    value={line.amount} onChange={(e) => setLine(line.id, { amount: e.target.value })}
-                    className={`${fieldClass} text-[13px] px-2`}
+                {/* Wide enough for a five-figure cost with its separators — a hall fee scrolled
+                    out of its own box reads as a plausible smaller number, silently. */}
+                <div className="w-[104px] shrink-0">
+                  <MoneyInput
+                    value={line.amount} placeholder="0"
+                    onChange={(value) => setLine(line.id, { amount: value })}
+                    className="text-[13px] px-2"
                   />
                 </div>
                 {/* Whether the VAT inside this line can be reclaimed — which is what decides
@@ -466,6 +458,16 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
             )}
           </div>
 
+          {/* The floor in `splitTransfer` bit: saying so is the whole point of it, otherwise the
+              answer silently stops being «received minus what stays behind». */}
+          {split.capped && (
+            <p className="text-[13px] text-body bg-soft rounded-xl px-3 py-2">
+              העלויות גדולות מההכנסה, ולכן המע"מ שבהן גדול מהמע"מ שנגבה. מועבר כל מה שהתקבל,
+              {' '}{nisExact(num(received))}, ולא יותר — עודף המע"מ חוזר בדוח המע"מ התקופתי,
+              ולא מההופעה הזו.
+            </p>
+          )}
+
           {split.leftover < 0 && (
             <p className="text-[13px] text-neg bg-neg-soft rounded-xl px-3 py-2">
               ההעברה קטנה מהתשלומים ב־{nisExact(-split.leftover)} — ההופעה הזו לא מכסה את
@@ -495,6 +497,11 @@ export function MoneyCalculator({ open, onClose }: { open: boolean; onClose: () 
               </p>
               <p>
                 מה שנשאר עובר ללהקה, משלם את הספקים והקמפיינים, והיתרה מתחלקת בין החברים.
+              </p>
+              <p>
+                כשההופעה הפסידה, המע"מ שבעלויות גדול מזה שבהכנסה, ו«מה שנשאר» יוצא שלילי —
+                כלומר יש להעביר יותר ממה שהתקבל. אי אפשר להעביר כסף שלא נכנס, ולכן במקרה הזה
+                מועבר הסכום שהתקבל במלואו. ההפרש אינו אובד: הוא מתקזז בדוח המע"מ של התקופה.
               </p>
               <p>
                 <b>חשבוניות החברים</b> נכנסות לחישוב עצמו. חלקו של חבר שמוציא לך חשבונית הוא
@@ -539,133 +546,4 @@ function Result({ label, value, strong, muted }: {
       </span>
     </button>
   );
-}
-
-/**
- * How a payment that landed in the private account divides.
- *
- * The identity worth knowing is that the leftover comes out the same whichever way you read it:
- * `transfer − payables` equals `profit − tax`. So the band account, after it has paid everyone
- * it owes, holds exactly the show's profit after tax — which is the sum that gets divided
- * between the members. If that number is negative the show did not pay for itself.
- *
- * The members' own invoices make that circular, and deliberately so: their share is a deductible
- * cost, so it lowers the tax, which raises the transfer, which raises the pool their share is a
- * slice of. Rather than approximate it, `distributionPool` solves the loop outright.
- */
-export function splitTransfer({ received, lines, vat, taxRate, members = [] }: {
-  received: number;
-  lines: Array<{ amount: number; deductible: boolean }>;
-  /** As a fraction — 0.18, not 18. */
-  vat: number;
-  /** As a fraction. */
-  taxRate: number;
-  /**
-   * How what is left over is divided. `share` is a weight rather than a strict percentage —
-   * they are normalised here, so a row entered as 30/30/20/20 and one as 3/3/2/2 mean the same.
-   * An empty list means the leftover is simply reported, not divided.
-   */
-  members?: Array<{ share: number; invoice: InvoiceKind }>;
-}) {
-  const incomePreVat = received / (1 + vat);
-  const outputVat = received - incomePreVat;
-
-  let payables = 0;
-  let inputVat = 0;
-  let costPreVat = 0;
-  for (const line of lines) {
-    const gross = line.amount;
-    // Without a tax invoice there is no VAT to reclaim, so the whole payment is the cost.
-    const net = line.deductible ? gross / (1 + vat) : gross;
-    payables += gross;
-    inputVat += gross - net;
-    costPreVat += net;
-  }
-
-  // The slices of the pool that come back as a bill — with reclaimable מע"מ inside, or without.
-  // Everything else (the owner's own share, a member who hands back nothing) stays profit.
-  const weight = members.reduce((sum, m) => sum + Math.max(0, m.share), 0);
-  const sliceOf = (kind: InvoiceKind) => (weight <= 0 ? 0 : members.reduce(
-    (sum, m) => sum + (m.invoice === kind ? Math.max(0, m.share) / weight : 0), 0
-  ));
-  const billedWithVat = sliceOf('vat');
-  const billedExempt = sliceOf('exempt');
-
-  const pool = distributionPool({
-    incomePreVat, costPreVat, inputVat, payables, vat, taxRate, billedWithVat, billedExempt,
-  });
-
-  // Everything below is read back off the settled pool, so the panel and the arithmetic can
-  // never disagree about which of the branches above was taken.
-  const distributed = Math.max(0, pool);
-  const memberGross = distributed * (billedWithVat + billedExempt);
-  const memberPreVat = distributed * (billedWithVat / (1 + vat) + billedExempt);
-  // Only the מס invoices carry any; an exempt dealer's does not, and is deductible in full.
-  const memberInputVat = memberGross - memberPreVat;
-
-  const vatDue = outputVat - inputVat - memberInputVat;
-  const profit = incomePreVat - costPreVat - memberPreVat;
-  const taxProvision = Math.max(0, profit) * taxRate;
-  const keep = vatDue + taxProvision;
-
-  return {
-    incomePreVat: round2(incomePreVat),
-    outputVat: round2(outputVat),
-    inputVat: round2(inputVat + memberInputVat),
-    supplierInputVat: round2(inputVat),
-    memberInputVat: round2(memberInputVat),
-    memberPreVat: round2(memberPreVat),
-    memberGross: round2(memberGross),
-    vatDue: round2(vatDue),
-    profit: round2(profit),
-    taxProvision: round2(taxProvision),
-    keep: round2(keep),
-    transfer: round2(received - keep),
-    payables: round2(payables),
-    leftover: round2(pool),
-    /** What each member is handed, in the order they were given. */
-    shares: members.map((m) => round2(weight > 0 ? distributed * (Math.max(0, m.share) / weight) : 0)),
-  };
-}
-
-/**
- * The pool left in the band account once the suppliers are paid — the sum the members divide.
- *
- * Writing the loop out: the pool `D` pays the members, a `k` of which comes back as deductible
- * cost and reclaimable מע"מ, and that reduction lands right back in the pool. So
- * `D = base + k·D`, which settles at `base / (1 − k)` rather than needing to be iterated.
- *
- * Two things about the real world make it piecewise rather than one formula. A tax provision is
- * only charged on a profit, so a loss-making show is solved again with the rate at zero; and
- * there is nothing to bill for when there is nothing to divide, so a pool that comes out at or
- * below zero is solved again as though nobody invoiced. Neither branch can bounce back: both
- * re-solves move the pool the same way they were entered from.
- */
-function distributionPool({
-  incomePreVat, costPreVat, inputVat, payables, vat, taxRate, billedWithVat, billedExempt,
-}: {
-  incomePreVat: number; costPreVat: number; inputVat: number; payables: number;
-  vat: number; taxRate: number; billedWithVat: number; billedExempt: number;
-}): number {
-  const solve = (rate: number, billed: boolean) => {
-    const withVat = billed ? billedWithVat : 0;
-    const exempt = billed ? billedExempt : 0;
-    const k = withVat * vat / (1 + vat) + rate * (withVat / (1 + vat) + exempt);
-    const base = incomePreVat + inputVat - rate * (incomePreVat - costPreVat) - payables;
-    // k stays under 1 for any real rate; the floor keeps a nonsense input finite rather than
-    // letting it divide by zero.
-    return base / Math.max(0.01, 1 - k);
-  };
-
-  const billing = billedWithVat + billedExempt > 0;
-  let billed = billing;
-  let pool = solve(taxRate, billed);
-  if (pool <= 0 && billed) { billed = false; pool = solve(taxRate, false); }
-
-  const memberPreVat = billed ? Math.max(0, pool) * (billedWithVat / (1 + vat) + billedExempt) : 0;
-  if (incomePreVat - costPreVat - memberPreVat < 0) {
-    pool = solve(0, billed);
-    if (pool <= 0 && billed) pool = solve(0, false);
-  }
-  return pool;
 }
