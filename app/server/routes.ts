@@ -1196,13 +1196,18 @@ router.get('/moonlight/follow-ups', requireAuth, handle((_req, res) => {
 }));
 
 // ---- moonlight staffing (שיבוצים): suppliers and who works each show ----
-/** Suppliers with what each is still owed, show by show. */
+/**
+ * Suppliers with what each is still owed, show by show — plus what they are booked for on
+ * shows that have not happened yet, which is reported beside the debt rather than inside it.
+ */
 function suppliersWithDebts() {
   const debts = supplierDebts();
   return listSuppliers().map((s) => ({
     ...s,
     owed: debts.get(s.id)?.owed ?? 0,
     owed_shows: debts.get(s.id)?.shows ?? [],
+    upcoming: debts.get(s.id)?.upcoming ?? 0,
+    upcoming_shows: debts.get(s.id)?.upcoming_shows ?? [],
   }));
 }
 
@@ -1314,14 +1319,22 @@ router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
   res.json({ suppliers: suppliersWithDebts() });
 }));
 
+/** A supplier's standing fee. Negative is meaningless, and 0 means "no standing rate". */
+const supplierAmount = (value: unknown): number => round2(Math.max(0, Number(value) || 0));
+
 router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
-  const { name, email, role, phone, notes } = req.body || {};
+  const { name, email, role, phone, notes, default_amount } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
   const id = uuid();
   try {
-    db.prepare('INSERT INTO band_suppliers (id, name, email, role, phone, notes) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, name.trim(), email?.trim() || null, role, phone || null, notes || null);
+    db.prepare(
+      `INSERT INTO band_suppliers (id, name, email, role, phone, notes, default_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id, name.trim(), email?.trim() || null, role, phone || null, notes || null,
+      supplierAmount(default_amount)
+    );
   } catch {
     return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
   }
@@ -1337,8 +1350,14 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(b.role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
   try {
-    db.prepare('UPDATE band_suppliers SET name = ?, email = ?, role = ?, phone = ?, notes = ? WHERE id = ?')
-      .run(String(b.name).trim(), b.email?.trim() || null, b.role, b.phone || null, b.notes || null, req.params.id);
+    db.prepare(
+      `UPDATE band_suppliers
+         SET name = ?, email = ?, role = ?, phone = ?, notes = ?, default_amount = ?
+       WHERE id = ?`
+    ).run(
+      String(b.name).trim(), b.email?.trim() || null, b.role, b.phone || null, b.notes || null,
+      supplierAmount(b.default_amount), req.params.id
+    );
   } catch {
     return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
   }

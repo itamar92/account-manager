@@ -11,7 +11,8 @@ import { MembersPanel } from './MembersPanel';
  * The show-by-show staffing grid this page used to carry moved onto the show itself, where the
  * name and the fee sit on the same line. What is left is the part that is genuinely about the
  * supplier rather than about one gig: their email — which is what turns a calendar guest into
- * a staffed role — and their open debt across every show they worked.
+ * a staffed role — their standing fee, which staffing them writes onto the show, and their
+ * open debt across every show they have already played.
  */
 export function SuppliersTab({ isOwner, onError }: TabProps) {
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -54,7 +55,14 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
     finally { setMatching(false); }
   };
 
+  // The debt is only what past shows left unpaid — see supplierDebts on the server. A fee
+  // sitting on a show next month is money the band will owe, not money it owes, so it is
+  // reported as its own figure instead of being folded into the total.
   const owedTotal = suppliers.reduce((sum, s) => sum + (Number(s.owed) || 0), 0);
+  const upcomingTotal = suppliers.reduce((sum, s) => sum + (Number(s.upcoming) || 0), 0);
+  const upcomingNote = upcomingTotal > 0
+    ? <> · <span className="num">{nis(upcomingTotal)}</span> משובץ בהופעות עתידיות</>
+    : null;
 
   return (
     <div className="space-y-7">
@@ -66,8 +74,8 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
       <PageHeader
         title="ספקים"
         sub={owedTotal > 0
-          ? <>חוב פתוח לספקים <span className="num text-neg">{nis(owedTotal)}</span></>
-          : 'אין חובות פתוחים לספקים'}
+          ? <>חוב פתוח לספקים <span className="num text-neg">{nis(owedTotal)}</span>{upcomingNote}</>
+          : <>אין חובות פתוחים לספקים{upcomingNote}</>}
         actions={isOwner && (
           <>
             <span title="משווה את רשימת האורחים של כל הופעה מהיומן לאימיילים של הספקים">
@@ -75,7 +83,7 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
                 {matching ? 'מתאים…' : 'התאמה מהיומן'}
               </Button>
             </span>
-            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '' })}>
+            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '', default_amount: 0 })}>
               + ספק
             </Button>
           </>
@@ -83,7 +91,8 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
       />
 
       <p className="text-[13px] text-muted">
-        אימייל של ספק הוא מה שהופך אורח ביומן לשיבוץ. השיבוץ עצמו ותשלום החוב נעשים בעמוד ההופעה.
+        אימייל של ספק הוא מה שהופך אורח ביומן לשיבוץ, ותעריף קבוע נכנס לבד לשורת העלות כששיבצתם אותו.
+        השיבוץ עצמו ותשלום החוב נעשים בעמוד ההופעה. החוב נספר רק מהופעות שכבר היו.
       </p>
 
       <DataTable
@@ -99,16 +108,31 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
           },
           { key: 'phone', header: 'טלפון', render: (s) => <span dir="ltr">{s.phone || '—'}</span> },
           {
+            key: 'default_amount', header: 'תעריף קבוע', sortValue: (s) => Number(s.default_amount) || 0,
+            render: (s) => Number(s.default_amount) > 0
+              ? <span className="num">{nis(s.default_amount)}</span>
+              : <span className="text-faint">—</span>,
+          },
+          {
             key: 'owed', header: 'חוב פתוח', sortValue: (s) => Number(s.owed) || 0,
-            render: (s) => s.owed > 0 ? (
-              <button
-                onClick={() => setDebtsFor(s)}
-                title="פירוט החוב לפי הופעה"
-                className="num text-neg font-medium hover:underline"
-              >
-                {nis(s.owed)} · {s.owed_shows.length} הופעות
-              </button>
-            ) : <span className="text-pos">—</span>,
+            render: (s) => (
+              <div className="flex flex-col items-start gap-0.5">
+                {s.owed > 0 ? (
+                  <button
+                    onClick={() => setDebtsFor(s)}
+                    title="פירוט החוב לפי הופעה"
+                    className="num text-neg font-medium hover:underline"
+                  >
+                    {nis(s.owed)} · {s.owed_shows.length} הופעות
+                  </button>
+                ) : <span className="text-pos">—</span>}
+                {Number(s.upcoming) > 0 && (
+                  <span className="text-[11.5px] text-faint whitespace-nowrap">
+                    ועוד <span className="num">{nis(s.upcoming)}</span> ב־{s.upcoming_shows.length} הופעות שטרם היו
+                  </span>
+                )}
+              </div>
+            ),
           },
           isOwner && {
             key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
@@ -139,6 +163,15 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
               onChange={(e) => setSupplierModal({ ...supplierModal, email: e.target.value })} />
             <Input label="טלפון" dir="ltr" value={supplierModal.phone || ''}
               onChange={(e) => setSupplierModal({ ...supplierModal, phone: e.target.value })} />
+            <Input
+              label="תעריף קבוע (נכנס לבד לשורת העלות בשיבוץ)"
+              type="number" min="0" dir="ltr"
+              value={supplierModal.default_amount ?? 0}
+              onChange={(e) => setSupplierModal({ ...supplierModal, default_amount: e.target.value })}
+            />
+            <p className="text-[12px] text-faint -mt-1">
+              0 = אין תעריף קבוע. סכום שהוקלד ידנית בהופעה לא יידרס.
+            </p>
             <Input label="הערות" value={supplierModal.notes || ''}
               onChange={(e) => setSupplierModal({ ...supplierModal, notes: e.target.value })} />
             <Button type="submit" className="w-full">שמירה</Button>
@@ -168,8 +201,29 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
               <span className="num text-neg">{nis(debtsFor.owed)}</span>
             </div>
             <p className="text-xs text-faint">
-              לחיצה על שורה פותחת את ההופעה, ושם מסמנים «שולם».
+              לחיצה על שורה פותחת את ההופעה, ושם מסמנים «שולם». נספרות רק הופעות שכבר היו.
             </p>
+            {debtsFor.upcoming > 0 && (
+              <div className="pt-2 border-t border-line">
+                <div className="text-xs text-faint mb-1.5">
+                  משובץ בהופעות שטרם היו — <span className="num">{nis(debtsFor.upcoming)}</span>, עדיין לא חוב
+                </div>
+                {debtsFor.upcoming_shows.map((row: any) => (
+                  <Link
+                    key={`${row.event_id}-${row.role}`}
+                    to={`/moonlight/shows/${row.event_id}`}
+                    onClick={() => setDebtsFor(null)}
+                    className="flex items-center justify-between text-sm py-1 hover:bg-soft rounded px-1 -mx-1"
+                  >
+                    <div>
+                      <div className="text-muted">{row.venue}</div>
+                      <div className="text-xs text-faint">{row.date} · {roleName(row.role)}</div>
+                    </div>
+                    <span className="num text-muted">{nis(row.amount)}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </Modal>
