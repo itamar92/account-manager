@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { get, post, nis } from '../api';
+import { del, get, post, nis } from '../api';
 import {
   Button, Modal, StatusBadge, DataTable, FilterBar, PageHeader, PeriodSelect, SearchInput,
   filterClass, textMatch, usePeriodFilter,
@@ -43,6 +43,27 @@ export function Invoices() {
     try {
       const d = await post(`/invoices/${id}/status`, { status });
       setDetail(d.invoice);
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
+  /**
+   * Removes an invoice that never became a document.
+   *
+   * Only ever offered for one with no `external_id`: a document Morning issued has a number
+   * in the state's books and can only be credited. What this clears out are the provisional
+   * `AM-*` rows — the ones an abandoned issue used to leave behind — and it puts their works
+   * back in the unpaid pool so they can be billed again.
+   */
+  const removeInvoice = async (invoice: any) => {
+    const works = invoice.works?.length ?? invoice.works_count ?? 0;
+    const worksNote = works ? ` ${works} העבודות שבה יחזרו ל«טרם חויב».` : '';
+    if (!confirm(`למחוק את חשבונית ${invoice.number}? היא קיימת רק באפליקציה.${worksNote}`)) return;
+    setError('');
+    try {
+      const d = await del(`/invoices/${invoice.id}`);
+      setDetail(null);
+      setNotice(`חשבונית ${d.number} נמחקה${d.released ? ` · ${d.released} עבודות חזרו ל«טרם חויב»` : ''}`);
       load();
     } catch (err: any) { setError(err.message); }
   };
@@ -110,13 +131,25 @@ export function Invoices() {
           { key: 'works', header: 'שורות', sortValue: (inv) => inv.works_count || 0, className: 'text-muted', render: (inv) => inv.works_count || '—' },
           {
             key: 'actions', mobile: 'actions', className: 'text-left',
-            render: (inv) => inv.status === 'issued' && (
-              <button
-                onClick={(e) => { e.stopPropagation(); setStatus(inv.id, 'paid'); }}
-                className="text-xs text-pos hover:underline whitespace-nowrap"
-              >
-                סמן כשולם
-              </button>
+            render: (inv) => (
+              <div className="flex gap-3 md:gap-2 justify-end">
+                {inv.status === 'issued' && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setStatus(inv.id, 'paid'); }}
+                    className="text-xs text-pos hover:underline whitespace-nowrap"
+                  >
+                    סמן כשולם
+                  </button>
+                )}
+                {!inv.external_id && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); removeInvoice(inv); }}
+                    className="text-xs text-neg hover:underline whitespace-nowrap"
+                  >
+                    מחיקה
+                  </button>
+                )}
+              </div>
             ),
           },
         ]}
@@ -161,7 +194,7 @@ export function Invoices() {
             <div className="text-xs text-faint">
               {detail.external_id
                 ? <>קיים ב-Morning · <span dir="ltr" className="font-mono">{detail.external_id}</span></>
-                : 'קיים רק באפליקציה — טרם הונפק ב-Morning'}
+                : 'קיים רק באפליקציה — טרם הונפק ב-Morning, וניתן למחוק אותו'}
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -177,6 +210,11 @@ export function Invoices() {
               {!detail.external_id && detail.status !== 'cancelled' && (
                 <Button variant="ghost" onClick={() => { setNotice(''); setIssuing(true); }} className="w-full">
                   הנפקה ב-Morning
+                </Button>
+              )}
+              {!detail.external_id && (
+                <Button variant="danger" onClick={() => removeInvoice(detail)} className="w-full">
+                  מחיקת החשבונית
                 </Button>
               )}
             </div>

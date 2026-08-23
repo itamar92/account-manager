@@ -15,6 +15,8 @@ export interface CreateInvoiceInput {
   dueDate?: string;
   docType?: number;
   externalId?: string;
+  /** The document number to carry. Left out, a provisional `AM-*` one is handed out. */
+  number?: string;
   notes?: string;
   source?: string;
 }
@@ -120,7 +122,7 @@ export function createInvoice(input: CreateInvoiceInput) {
       )
       .get(...workIds) as { subtotal: number; vat: number; total: number };
 
-    const number = nextInvoiceNumber();
+    const number = input.number?.trim() || nextInvoiceNumber();
     db.prepare(
       `INSERT INTO invoices (id, number, doc_type, client_id, date, due_date, subtotal, vat_amount, total, status, external_id, source, notes)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'issued', ?, ?, ?)`
@@ -172,6 +174,36 @@ export function setInvoiceStatus(invoiceId: string, status: 'issued' | 'paid' | 
       db.prepare("UPDATE works SET status = 'invoiced' WHERE invoice_id = ?").run(invoiceId);
     }
     return getInvoice(invoiceId);
+  });
+  return tx();
+}
+
+/**
+ * Removes an invoice that only ever existed here.
+ *
+ * A document issued to Morning has a real, sequential number in the state's books — it can be
+ * credited, never deleted — so deletion is refused the moment `external_id` is set. What is
+ * left are the provisional `AM-*` rows: a selection that turned out wrong, or an issue that
+ * was abandoned half-way. Their works go back to the unpaid pool so they can be billed again,
+ * which is the whole point of getting rid of the invoice.
+ */
+export function deleteInvoice(invoiceId: string) {
+  const tx = db.transaction(() => {
+    const invoice = db.prepare('SELECT id, number, external_id FROM invoices WHERE id = ?').get(invoiceId) as
+      | { id: string; number: string; external_id: string | null }
+      | undefined;
+    if (!invoice) throw Object.assign(new Error('invoice not found'), { status: 404 });
+    if (invoice.external_id)
+      throw Object.assign(
+        new Error(`חשבונית ${invoice.number} הונפקה ב-Morning — אפשר רק להוציא לה זיכוי, לא למחוק אותה`),
+        { status: 409 }
+      );
+
+    const released = db
+      .prepare("UPDATE works SET status = 'unpaid', invoice_id = NULL WHERE invoice_id = ?")
+      .run(invoiceId).changes;
+    db.prepare('DELETE FROM invoices WHERE id = ?').run(invoiceId);
+    return { deleted: invoiceId, number: invoice.number, released };
   });
   return tx();
 }

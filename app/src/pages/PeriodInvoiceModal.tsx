@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { get, post, nis } from '../api';
+import { get, nis } from '../api';
 import { Button, Input, Modal, SearchInput, YearSelect, filterClass, textMatch } from '../ui';
 
 /** The months as a period invoice names them — no "all months" here, a range has two ends. */
@@ -30,11 +30,12 @@ const heDate = (iso: string) => {
  * entered under the wrong date, belongs on the same invoice as the month it is being billed
  * with; the range chooses what is ticked, it does not decide what may be.
  */
-export function PeriodInvoiceModal({ open, onClose, clients, onCreated, initialClientId }: {
+export function PeriodInvoiceModal({ open, onClose, clients, onIssue, initialClientId }: {
   open: boolean;
   onClose: () => void;
   clients: any[];
-  onCreated: (invoice: any) => void;
+  /** Hands the ticked works to the issue dialog — the document is what creates the invoice. */
+  onIssue: (clientId: string, workIds: string[]) => void;
   initialClientId?: string;
 }) {
   const now = new Date();
@@ -48,7 +49,6 @@ export function PeriodInvoiceModal({ open, onClose, clients, onCreated, initialC
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
   // A range that runs backwards is a mis-click on one of the two selects, not a request for
@@ -98,16 +98,6 @@ export function PeriodInvoiceModal({ open, onClose, clients, onCreated, initialC
   const total = selectedWorks.reduce((sum, w) => sum + (Number(w.total) || 0), 0);
   const outsideVisible = outside.filter((w) => textMatch(search, w.description));
   const outsideSelected = outside.filter((w) => selected.has(w.id)).length;
-
-  const create = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const d = await post('/invoices', { client_id: clientId, work_ids: [...selected] });
-      onCreated(d.invoice);
-    } catch (err: any) { setError(err.message); }
-    finally { setBusy(false); }
-  };
 
   return (
     <Modal title="חשבונית תקופתית" open={open} onClose={onClose} size="lg">
@@ -203,8 +193,8 @@ export function PeriodInvoiceModal({ open, onClose, clients, onCreated, initialC
           <div className="text-sm">
             נבחרו <b>{selected.size}</b> עבודות · סה"כ כולל מע"מ <b className="num">{nis(total)}</b>
           </div>
-          <Button onClick={create} disabled={busy || selected.size === 0 || !clientId}>
-            {busy ? 'מפיק…' : 'צור חשבונית'}
+          <Button onClick={() => onIssue(clientId, [...selected])} disabled={selected.size === 0 || !clientId}>
+            המשך להנפקה ←
           </Button>
         </div>
       </div>

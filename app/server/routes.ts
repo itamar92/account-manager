@@ -8,10 +8,13 @@ import {
   createSession, currentSessionToken, destroySession, login, requireAuth, requireOwner,
   requireApiKey, loginRateLimit, clearLoginAttempts,
 } from './auth.js';
-import { createInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
+import { createInvoice, deleteInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
-import { buildMorningDraft, morningStatus, pullFromMorning, pushInvoiceToMorning } from './morningSync.js';
+import {
+  buildMorningDraft, buildPendingMorningDraft, issueWorksToMorning, morningStatus,
+  pullFromMorning, pushInvoiceToMorning,
+} from './morningSync.js';
 import {
   expenseCategories, expensesStatus, expensesSummary, listExpenses, pullExpensesFromMorning,
 } from './morningExpenses.js';
@@ -581,6 +584,14 @@ router.post('/invoices/:id/status', requireOwner, handle((req, res) => {
   const { status, paid_date } = req.body || {};
   if (!['issued', 'paid', 'cancelled'].includes(status)) return res.status(400).json({ error: 'invalid status' });
   res.json({ invoice: setInvoiceStatus(req.params.id, status, paid_date) });
+}));
+
+/**
+ * Deletes an invoice that only ever existed here — one whose issue to Morning was abandoned.
+ * An invoice that reached Morning is refused (409): that document can only be credited.
+ */
+router.delete('/invoices/:id', requireOwner, handle((req, res) => {
+  res.json(deleteInvoice(req.params.id));
 }));
 
 // ============ expenses (owner) ============
@@ -1459,6 +1470,32 @@ router.post('/integrations/morning/expenses-sync', requireOwner, handleAsync(asy
 /** Pre-fills the issue dialog with the document Morning is about to be asked for. */
 router.get('/invoices/:id/morning-draft', requireOwner, handle((req, res) => {
   res.json({ draft: buildMorningDraft(req.params.id) });
+}));
+
+/** The same dialog for works that have no invoice yet — the document is what will create one. */
+router.post('/invoices/morning-draft', requireOwner, handle((req, res) => {
+  const { client_id, work_ids } = req.body || {};
+  res.json({ draft: buildPendingMorningDraft({ clientId: client_id, workIds: work_ids || [] }) });
+}));
+
+/**
+ * Issues selected works as a document in Morning and creates the local invoice from what
+ * Morning returned — the invoice never exists before the document does.
+ */
+router.post('/invoices/issue-to-morning', requireOwner, handleAsync(async (req, res) => {
+  const b = req.body || {};
+  const { result, invoice } = await issueWorksToMorning({
+    clientId: b.client_id,
+    workIds: b.work_ids || [],
+    docType: b.doc_type != null ? parseInt(b.doc_type, 10) : undefined,
+    date: b.date || undefined,
+    dueDate: b.due_date || undefined,
+    description: b.description,
+    remarks: b.remarks,
+    clientEmail: b.client_email,
+    sendEmail: Boolean(b.send_email),
+  });
+  res.json({ result, invoice });
 }));
 
 /** Issues a local invoice as a real document in Morning and adopts its number. */

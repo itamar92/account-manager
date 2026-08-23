@@ -6,6 +6,7 @@ import {
   SearchInput, filterClass, textMatch, usePeriodFilter,
 } from '../ui';
 import { PeriodInvoiceModal } from './PeriodInvoiceModal';
+import { MorningIssueModal } from './MorningIssueModal';
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
@@ -24,6 +25,9 @@ export function Works() {
   const [notice, setNotice] = useState('');
   const [assignTo, setAssignTo] = useState('');
   const [periodOpen, setPeriodOpen] = useState(false);
+  // The works waiting on an issue dialog. There is no invoice behind them — issuing is
+  // what creates one.
+  const [issuing, setIssuing] = useState<{ clientId: string; workIds: string[] } | null>(null);
   const [excludeCalendar, setExcludeCalendar] = useState(true);
   const navigate = useNavigate();
 
@@ -69,14 +73,17 @@ export function Works() {
   const canInvoice = selected.size > 0 && selectedClientIds.size === 1;
   const selectedFromCalendar = selectedWorks.filter((w) => w.calendar_event_id).length;
 
-  const createInvoice = async () => {
-    try {
-      const d = await post('/invoices', {
-        client_id: selectedWorks[0].client_id,
-        work_ids: [...selected],
-      });
-      navigate(`/invoices?open=${d.invoice.id}`);
-    } catch (err: any) { setError(err.message); }
+  /**
+   * Billing the selection opens the issue dialog rather than writing an invoice.
+   *
+   * An invoice created here first was a row that claimed to be a document while being
+   * nothing of the sort — and every abandoned issue left one behind. The invoice is now
+   * created from the document Morning issues, carrying Morning's own number.
+   */
+  const startInvoice = () => {
+    if (!canInvoice) return;
+    setError('');
+    setIssuing({ clientId: selectedWorks[0].client_id, workIds: [...selected] });
   };
 
   /**
@@ -224,7 +231,7 @@ export function Works() {
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
               <Button variant="danger" onClick={deleteSelected}>מחיקת הנבחרות</Button>
-              <Button onClick={createInvoice} disabled={!canInvoice}>צור חשבונית</Button>
+              <Button onClick={startInvoice} disabled={!canInvoice}>צור חשבונית</Button>
             </div>
           </div>
           {selectedFromCalendar > 0 && (
@@ -312,7 +319,14 @@ export function Works() {
         onClose={() => setPeriodOpen(false)}
         clients={clients}
         initialClientId={clientFilter}
-        onCreated={(invoice) => { setPeriodOpen(false); navigate(`/invoices?open=${invoice.id}`); }}
+        onIssue={(clientId, workIds) => { setPeriodOpen(false); setIssuing({ clientId, workIds }); }}
+      />
+
+      <MorningIssueModal
+        pending={issuing}
+        open={!!issuing}
+        onClose={() => setIssuing(null)}
+        onIssued={(invoice) => { setIssuing(null); navigate(`/invoices?open=${invoice.id}`); }}
       />
 
       <Modal title={editing ? 'עריכת עבודה' : 'עבודה חדשה'} open={open} onClose={closeModal}>
