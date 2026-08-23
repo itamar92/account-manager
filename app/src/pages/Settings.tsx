@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { Building2, CalendarCheck, Key, Percent, Plug, Settings2, Users } from 'lucide-react';
+import { Bot, Building2, CalendarCheck, Key, Percent, Plug, Settings2, Users } from 'lucide-react';
 import { get, post, put, del } from '../api';
 import { Button, Card, Input, Modal, Empty, PageHeader } from '../ui';
 import { CalendarRules } from './CalendarRules';
+import { AgentSettings } from './AgentSettings';
 
 /** The drawers of the filing cabinet, in the order they are needed when setting the app up. */
 const SECTIONS = [
   { key: 'general', label: 'כללי', icon: Settings2 },
   { key: 'business', label: 'פרטי העסק', icon: Building2 },
   { key: 'connections', label: 'חיבורים', icon: Plug },
+  { key: 'agent', label: 'סוכן AI', icon: Bot },
   { key: 'calendar', label: 'כללי יומן', icon: CalendarCheck },
   { key: 'vat', label: 'מע"מ ומס', icon: Percent },
   { key: 'users', label: 'משתמשים', icon: Users },
@@ -19,14 +21,15 @@ const SECTIONS = [
 type Section = typeof SECTIONS[number]['key'];
 
 const SECTION_TITLES: Record<Section, string> = {
-  general: 'כללי', business: 'פרטי העסק', connections: 'חיבורים',
+  general: 'כללי', business: 'פרטי העסק', connections: 'חיבורים', agent: 'סוכן AI',
   calendar: 'כללי יומן', vat: 'מע"מ ומס', users: 'משתמשים והרשאות', api: 'מפתחות API',
 };
 
 const SECTION_SUBS: Record<Section, string> = {
   general: 'מע"מ וטווח הסנכרון מ-Morning',
   business: 'פרטי העוסק כפי שהם מופיעים על מסמכים',
-  connections: 'שלושה מקורות נתונים — המפתחות עצמם יושבים ב-.env',
+  connections: 'מקורות הנתונים והסוכן — הרצה ידנית ובדיקת חיבור',
+  agent: 'חיבור ה-SSH ליועץ הקמפיינים — שרת, משתמש ומפתח',
   calendar: 'כללים שקובעים אילו אירועים נמשכים, ולאן',
   vat: 'תדירות דיווח ונקודות זיכוי להערכת המס',
   users: 'מי נכנס לאפליקציה ומה הוא רואה',
@@ -320,7 +323,8 @@ export function Settings() {
       {sec === 'connections' && (
       <Card>
         <p className="text-xs text-faint mb-4">
-          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. ההגדרה עצמה (מפתחות) נמצאת בקובץ <code dir="ltr" className="text-accent">.env</code>
+          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. המפתחות של שלושת המקורות האלה נמצאים בקובץ{' '}
+          <code dir="ltr" className="text-accent">.env</code>; פרטי החיבור של סוכן ה-AI נמצאים בלשונית «סוכן AI».
         </p>
 
         {syncResult && (
@@ -369,7 +373,7 @@ export function Settings() {
           <IntegrationRow
             title="סוכן AI — יועץ קמפיינים (SSH)"
             configured={data.integrations.agent.configured}
-            missingHint="חסרים AGENT_SSH_HOST / AGENT_SSH_USER / AGENT_SSH_KEY"
+            missingHint="חסרים פרטי חיבור — הגדרות → סוכן AI"
             lastSync={data.integrations.agent.last_run}
             detail={
               `${data.integrations.agent.host} · ${data.integrations.agent.command}` +
@@ -412,6 +416,8 @@ export function Settings() {
         </p>
       </Card>
       )}
+
+      {sec === 'agent' && <AgentSettings onSaved={load} onError={setError} />}
 
       {sec === 'calendar' && <CalendarRules onChange={load} onError={setError} />}
 

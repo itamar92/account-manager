@@ -270,7 +270,7 @@ export function Textarea({ label, ...props }: React.TextareaHTMLAttributes<HTMLT
   return (
     <label className="block">
       {label && <span className="block text-[13px] text-muted mb-1.5">{label}</span>}
-      <textarea rows={3} {...props} className={clsx(fieldClass, 'resize-y')} />
+      <textarea rows={3} {...props} className={clsx(fieldClass, 'resize-y', props.className)} />
     </label>
   );
 }

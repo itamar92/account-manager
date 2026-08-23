@@ -42,8 +42,17 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
 | `META_API_VERSION` | `v25.0` | Graph API version |
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
-| `AGENT_SSH_HOST` / `AGENT_SSH_PORT` / `AGENT_SSH_USER` | — / `22` / — | the machine the AI agent runs on; without them the יועץ קמפיינים tab is disabled |
+| `APP_SECRET_KEY` | a generated `secret.key` beside the database | encrypts the secrets saved from the UI (the agent's SSH key). See below |
+
+The `AGENT_SSH_*` variables below are now the **fallback** for **Settings → סוכן AI**, which is
+where the agent's connection details are normally entered. Anything saved in that form wins;
+a field left empty there falls back to these, so an existing deployment keeps working untouched.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `AGENT_SSH_HOST` / `AGENT_SSH_PORT` / `AGENT_SSH_USER` | — / `22` / — | the machine the AI agent runs on; without them (and without the form) the יועץ קמפיינים tab is disabled |
 | `AGENT_SSH_KEY` or `AGENT_SSH_KEY_PATH` | — | the private key, inline (`\n` for newlines) or as a file |
+| `AGENT_SSH_PASSPHRASE` | — | the key's passphrase, if it has one |
 | `AGENT_SSH_HOST_KEY` | — | the agent host's public key, from `ssh-keyscan`. **Required in production** |
 | `AGENT_COMMAND` | `claude -p --output-format json` | the fixed command run on that machine; the prompt goes to its stdin |
 | `AGENT_TIMEOUT_MS` | `120000` | how long a single run may take before the connection is dropped |
@@ -557,11 +566,12 @@ the database, or in any error that reaches a browser.
 
 Three properties are deliberate and worth keeping:
 
-- **The prompt never touches a command line.** The command comes from `AGENT_COMMAND` in the
-  server's environment and is never assembled from a request, so no text — typed, or arriving
-  from Meta — can extend it.
-- **The host key is pinned** (`AGENT_SSH_HOST_KEY`). Without a pin, whoever answers the address
-  gets the key; unset, the app refuses to connect in production.
+- **The prompt never touches a command line.** The command is fixed by the server's
+  configuration and is never assembled from a request, so no text — typed, or arriving from
+  Meta — can extend it. The command is settable in Settings, and the shell metacharacters that
+  would turn one command into two are refused there.
+- **The host key is pinned.** Without a pin, whoever answers the address gets the key; unset,
+  the app refuses to connect in production.
 - **Nothing the agent says takes effect.** It reads a JSON extract — shows, tickets, revenue,
   campaigns, spend curves — and returns text. It gets no database handle, no Meta token and no
   write path, and the member division is deliberately not in the extract it is sent.
@@ -579,6 +589,25 @@ load; a run happens only when the owner presses the button. Band members read al
 | `POST /api/moonlight/campaign-chat` | ask a follow-up `{message}` (owner) |
 | `DELETE /api/moonlight/campaign-chat` | clear the thread (owner) |
 | `POST /api/integrations/agent/ping` | connectivity test: opens the session, asks the agent its version |
+| `GET /api/settings/agent` | the stored connection details, minus the secrets (owner) |
+| `POST /api/settings/agent` | save them (owner) |
+
+### Where the connection details live
+
+**Settings → סוכן AI** holds host, port, user, private key, passphrase, pinned host key, command
+and timeout. Each field falls back to its `AGENT_SSH_*` variable when the form leaves it empty,
+and the form says beside every field when the value it is showing came from the environment —
+so there is one place to look when the two disagree.
+
+The private key and its passphrase are stored **encrypted** (AES-256-GCM, `secrets.ts`) with a
+key held outside the database: `APP_SECRET_KEY` if it is set, otherwise `secret.key` next to the
+SQLite file, generated on first use with mode 600. That file belongs in the same backup as the
+database — restoring one without the other leaves the stored key unreadable, which the settings
+page reports and fixes by pasting the key again.
+
+Neither secret is ever sent back to the browser. The form identifies the stored key by its type
+and SHA256 fingerprint, and a key is validated with ssh2's own parser on save, so a truncated
+paste or a missing passphrase is caught there rather than by a failed analysis a minute later.
 
 Setting the agent host up is in [`../deploy/README.md`](../deploy/README.md).
 

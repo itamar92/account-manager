@@ -44,6 +44,7 @@ import {
 } from './reports.js';
 import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
+import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
 import {
   analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
 } from './campaignAdvisor.js';
@@ -1732,6 +1733,32 @@ router.post('/settings', requireOwner, handle((req, res) => {
     applyCampaignSpend();
   }
   res.json({ ok: true });
+}));
+
+/**
+ * The agent's SSH connection details, as the settings form sees them.
+ *
+ * The private key and its passphrase are not in here — only whether one is stored, what type it
+ * is and its fingerprint. See agentConfig.ts: a browser that never receives the key cannot leak
+ * it, and identifying a stored key is what somebody checking the configuration actually needs.
+ */
+router.get('/settings/agent', requireOwner, handle((_req, res) => {
+  res.json({ agent: agentConfigView(), status: agentStatus() });
+}));
+
+/**
+ * Saves it. Only the fields present in the body are touched, so the form can correct the host
+ * without resending the key — and an empty value is a real instruction to clear that field and
+ * fall back to `AGENT_SSH_*` again, except for the two secrets (an empty box there means
+ * "unchanged", and removing a stored one is asked for with clear_private_key).
+ */
+router.post('/settings/agent', requireOwner, handle((req, res) => {
+  try {
+    res.json({ agent: saveAgentConfig(req.body || {}), status: agentStatus() });
+  } catch (err) {
+    if (err instanceof AgentConfigError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
 }));
 
 /** The letterhead shown in the Morning issue preview. Local only — Morning is not told. */

@@ -155,21 +155,38 @@ sudo -u aiagent chmod 700 /home/aiagent/.ssh
 sudo -u aiagent chmod 600 /home/aiagent/.ssh/authorized_keys
 ```
 
-Then pin the host key and fill in `deploy/.env`:
+Then pin the host key:
 
 ```bash
-ssh-keyscan -t ed25519 <the-agent-host>     # → AGENT_SSH_HOST_KEY
+ssh-keyscan -t ed25519 <the-agent-host>     # → the "מפתח המארח" field
 ```
 
-`AGENT_SSH_HOST=host.docker.internal` reaches the VM from inside the container — the compose file
-already maps that name to the host gateway. `AGENT_SSH_KEY` takes the whole private key with its
-newlines written as `\n`:
+The rest is filled in **in the app**, at **Settings → סוכן AI** — no restart, and no private key
+in a file on the VM:
+
+| Field | Value |
+|-------|-------|
+| שרת | `host.docker.internal` when the agent runs on the VM itself — the compose file maps that name to the host gateway |
+| פורט | `22` |
+| משתמש | `aiagent` |
+| מפתח פרטי | the contents of `~/.ssh/am-agent` (the half **without** `.pub`), pasted whole |
+| מפתח המארח | the `ssh-keyscan` output above, pasted as-is |
+| הפקודה | `claude -p --output-format json` |
+
+The key is stored encrypted with `secret.key` (or `APP_SECRET_KEY`) rather than in the database
+in the clear, and is never sent back to the browser — after saving, the page identifies it by its
+fingerprint. **`secret.key` lives in the `am-data` volume beside the database and is covered by
+the backup in §5**; restoring the database without it means pasting the key in again.
+
+Setting `AGENT_SSH_*` in `deploy/.env` still works and is the fallback for any field left empty
+in that form — useful for provisioning a VM from a script. `AGENT_SSH_KEY` there takes the whole
+private key with its newlines written as `\n`:
 
 ```bash
 awk 'BEGIN{ORS="\\n"} {print}' ~/.ssh/am-agent      # paste the output as AGENT_SSH_KEY=…
 ```
 
-Restart (`docker compose up -d`) and press **בדיקת חיבור** in Settings → חיבורים. It opens the
+Then press **בדיקת חיבור** — on the סוכן AI page itself, or in Settings → חיבורים. It opens the
 session and asks the agent its version, which tells you which half is broken far faster than a
 failed analysis does. A green result and the tab is live.
 
@@ -181,8 +198,9 @@ ssh -i ~/.ssh/am-agent aiagent@<host> 'whoami'   # must NOT print a username —
                                                  # command runs instead, whatever you ask for
 ```
 
-and that `AGENT_SSH_HOST_KEY` is actually set — with it empty the app refuses to connect in
-production rather than trusting whoever answers the address.
+and that the host key is actually pinned — with it empty the app refuses to connect in
+production rather than trusting whoever answers the address. The סוכן AI page says so in as
+many words when it is not.
 
 ## 5. Backups
 

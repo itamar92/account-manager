@@ -9,8 +9,8 @@
  *
  * Two properties matter more than anything else in this file:
  *
- *  1. **The prompt goes down stdin, never into the command line.** The command is fixed by
- *     `AGENT_COMMAND` in the server's environment and is never assembled from a request. The
+ *  1. **The prompt goes down stdin, never into the command line.** The command is fixed by the
+ *     server's configuration and is never assembled from a request. The
  *     n8n templates in `.claude/skills/invoice-expert/` do `echo "{{ text }}" | claude …`,
  *     which hands anything that reaches that text a shell — this must not repeat it.
  *  2. **The host key is pinned.** `deploy/README.md` refuses `StrictHostKeyChecking=no` for the
@@ -22,13 +22,12 @@
 // import is the interop that actually works.
 import ssh2 from 'ssh2';
 import type { ConnectConfig } from 'ssh2';
-import { readFileSync } from 'fs';
 
 const { Client } = ssh2;
 import { getSetting } from './db.js';
+import { agentConfig, isAgentConfigured } from './agentConfig.js';
 
-const DEFAULT_COMMAND = 'claude -p --output-format json';
-const DEFAULT_TIMEOUT_MS = 120_000;
+export { isAgentConfigured };
 
 export class AgentError extends Error {
   status: number;
@@ -38,61 +37,28 @@ export class AgentError extends Error {
   }
 }
 
-function env(name: string): string {
-  return (process.env[name] || '').trim();
-}
-
 /**
- * The private key, from the variable itself or from a file.
+ * The private key, from wherever it is configured.
  *
- * `AGENT_SSH_KEY` in a `.env` arrives with the newlines written as `\n`, since a PEM cannot be
- * put on one line any other way — so they are turned back into real ones. A key that still has
- * no line breaks after that is a truncated paste, and saying so beats an ssh2 parse error.
+ * Which place that is — the settings form or `AGENT_SSH_*` — is agentConfig's problem; what
+ * matters here is that a key which cannot be read is named as such. A stored key that will not
+ * decrypt and a missing one fail very differently to whoever has to fix it.
  */
-function privateKey(): string {
-  const path = env('AGENT_SSH_KEY_PATH');
-  if (path) {
-    try {
-      return readFileSync(path, 'utf8');
-    } catch (err) {
-      throw new AgentError(`לא ניתן לקרוא את מפתח ה-SSH מ-${path}`, 503);
-    }
+function privateKey(config = agentConfig()): string {
+  if (config.privateKey === null) {
+    throw new AgentError(
+      'המפתח הפרטי השמור לא ניתן לקריאה — הזינו אותו מחדש בהגדרות → סוכן AI',
+      503
+    );
   }
-  const raw = env('AGENT_SSH_KEY');
-  if (!raw) throw new AgentError('הסוכן לא מוגדר — חסר AGENT_SSH_KEY', 503);
-  const key = raw.includes('\\n') ? raw.replace(/\\n/g, '\n') : raw;
-  if (!key.includes('\n')) {
-    throw new AgentError('מפתח ה-SSH נראה חסר — הודבק בשורה אחת ללא מעברי שורה', 503);
+  if (!config.privateKey) {
+    throw new AgentError('הסוכן לא מוגדר — חסר מפתח SSH (הגדרות → סוכן AI)', 503);
   }
-  return key;
-}
-
-export function isAgentConfigured(): boolean {
-  return Boolean(env('AGENT_SSH_HOST') && env('AGENT_SSH_USER') && (env('AGENT_SSH_KEY') || env('AGENT_SSH_KEY_PATH')));
+  return config.privateKey;
 }
 
 export function agentCommand(): string {
-  return env('AGENT_COMMAND') || DEFAULT_COMMAND;
-}
-
-function timeoutMs(): number {
-  const parsed = parseInt(env('AGENT_TIMEOUT_MS'), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
-}
-
-/**
- * The base64 bodies of the host keys we are willing to talk to.
- *
- * `ssh-keyscan` prints one line per key as `host ssh-ed25519 AAAA…`, and pasting its whole
- * output into the variable is the obvious thing to do — so every line of it is accepted, and the
- * host part and the algorithm name are dropped. Comparing the bodies rather than the whole line
- * means the same pin works whether it was copied with the host prefix or without.
- */
-function pinnedHostKeys(): string[] {
-  return env('AGENT_SSH_HOST_KEY')
-    .split(/[\n,]/)
-    .flatMap((line) => line.trim().split(/\s+/))
-    .filter((token) => token.length > 20 && /^[A-Za-z0-9+/]+=*$/.test(token));
+  return agentConfig().command;
 }
 
 /**
@@ -102,13 +68,13 @@ function pinnedHostKeys(): string[] {
  * see the plumbing work should not require a keyscan first — but it warns every time, because a
  * dev shortcut that goes quiet is one that ends up in production.
  */
-function hostVerifier(): ((key: Buffer) => boolean) | undefined {
-  const pins = pinnedHostKeys();
+function hostVerifier(config = agentConfig()): ((key: Buffer) => boolean) | undefined {
+  const pins = config.hostKeys;
   if (pins.length === 0) {
     if (process.env.NODE_ENV === 'production') {
-      throw new AgentError('הסוכן לא מוגדר — חסר AGENT_SSH_HOST_KEY (חובה בייצור)', 503);
+      throw new AgentError('הסוכן לא מוגדר — חסר מפתח המארח (חובה בייצור)', 503);
     }
-    console.warn('[agent] AGENT_SSH_HOST_KEY is unset — the host is not verified. Do not ship this.');
+    console.warn('[agent] no pinned host key — the host is not verified. Do not ship this.');
     return undefined;
   }
   return (key: Buffer) => pins.includes(key.toString('base64'));
@@ -143,25 +109,28 @@ export function isAgentBusy(): boolean {
  * means.
  */
 export async function runAgent(prompt: string, options: { command?: string; timeoutMs?: number } = {}): Promise<AgentRun> {
-  if (!isAgentConfigured()) {
-    throw new AgentError('הסוכן לא מוגדר — חסרים פרטי החיבור ב-AGENT_SSH_*', 503);
+  // Read once for the whole run: the settings form can be saved while a run is in flight, and a
+  // connection assembled from two different versions of the configuration is nobody's.
+  const settings = agentConfig();
+  if (!settings.host || !settings.user) {
+    throw new AgentError('הסוכן לא מוגדר — חסרים פרטי החיבור (הגדרות → סוכן AI)', 503);
   }
   if (inFlight) {
     throw new AgentError('הסוכן עסוק בבקשה אחרת — נסו שוב בעוד רגע', 409);
   }
 
-  const command = options.command || agentCommand();
-  const limit = options.timeoutMs ?? timeoutMs();
-  const key = privateKey();
-  const verifier = hostVerifier();
+  const command = options.command || settings.command;
+  const limit = options.timeoutMs ?? settings.timeoutMs;
+  const key = privateKey(settings);
+  const verifier = hostVerifier(settings);
   const started = Date.now();
 
   const config: ConnectConfig = {
-    host: env('AGENT_SSH_HOST'),
-    port: parseInt(env('AGENT_SSH_PORT'), 10) || 22,
-    username: env('AGENT_SSH_USER'),
+    host: settings.host,
+    port: settings.port,
+    username: settings.user,
     privateKey: key,
-    passphrase: env('AGENT_SSH_PASSPHRASE') || undefined,
+    passphrase: settings.passphrase || undefined,
     // The handshake, not the command: a command may legitimately think for a minute, but a host
     // that has not answered in fifteen seconds is not there.
     readyTimeout: 15_000,
@@ -217,7 +186,7 @@ export async function runAgent(prompt: string, options: { command?: string; time
         const mismatch = /handshake|host.?key|verification/i.test(err.message);
         finish(new AgentError(
           mismatch
-            ? `אימות שרת הסוכן נכשל — מפתח המארח אינו תואם ל-AGENT_SSH_HOST_KEY (${err.message})`
+            ? `אימות שרת הסוכן נכשל — מפתח המארח אינו תואם למפתח השמור בהגדרות (${err.message})`
             : `החיבור לשרת הסוכן נכשל: ${err.message}`,
           mismatch ? 502 : 503
         ));
@@ -244,12 +213,13 @@ export async function ping(): Promise<{ version: string; duration_ms: number }> 
 }
 
 export function agentStatus() {
+  const settings = agentConfig();
   return {
-    configured: isAgentConfigured(),
-    host: env('AGENT_SSH_HOST') ? `${env('AGENT_SSH_USER')}@${env('AGENT_SSH_HOST')}` : null,
-    command: agentCommand(),
-    host_key_pinned: pinnedHostKeys().length > 0,
-    timeout_ms: timeoutMs(),
+    configured: Boolean(settings.host && settings.user && settings.privateKey),
+    host: settings.host ? `${settings.user}@${settings.host}${settings.port === 22 ? '' : `:${settings.port}`}` : null,
+    command: settings.command,
+    host_key_pinned: settings.hostKeys.length > 0,
+    timeout_ms: settings.timeoutMs,
     busy: inFlight,
     last_run: getSetting('agent_last_run', '') || null,
     last_error: getSetting('agent_last_error', '') || null,
