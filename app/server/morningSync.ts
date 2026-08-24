@@ -3,7 +3,7 @@ import {
   REVENUE_DOC_TYPES, CREDIT_DOC_TYPES, isRevenueDoc, DOC_TYPE,
   ISSUABLE_DOC_TYPES, issuableDocTypeOptions,
 } from './docTypes.js';
-import { computeDueDate } from './invoiceService.js';
+import { computeDueDate, createInvoice } from './invoiceService.js';
 import { getBusinessDetails, type BusinessDetails } from './business.js';
 import {
   createDocument, documentUrl, isMorningConfigured, MorningError, searchAllDocuments, type MorningDocument,
@@ -256,6 +256,76 @@ function loadWorksForPush(invoiceId: string): WorkRow[] {
   return works;
 }
 
+type ClientRow = {
+  id: string;
+  name: string;
+  email: string | null;
+  tax_id: string | null;
+  phone: string | null;
+  payment_terms_days: number;
+};
+
+function loadClientForIssue(clientId: string): ClientRow {
+  const client = db
+    .prepare('SELECT id, name, email, tax_id, phone, payment_terms_days FROM clients WHERE id = ?')
+    .get(clientId) as ClientRow | undefined;
+  if (!client) throw new MorningError('לקוח לא נמצא', 404);
+  return client;
+}
+
+/**
+ * The works a document is about to be issued for, before any invoice exists to hold them.
+ *
+ * Every one of them is checked here rather than after Morning has been called: a document
+ * Morning has issued cannot be taken back, so a work that is already on another invoice has
+ * to stop the issue while stopping it still costs nothing.
+ */
+function loadWorksForIssue(clientId: string, workIds: string[]): WorkRow[] {
+  const ids = [...new Set((workIds ?? []).filter(Boolean))];
+  if (!ids.length) throw new MorningError('לא נבחרו עבודות למסמך', 400);
+
+  const rows = db
+    .prepare(
+      `SELECT id, date, description, amount, vat_amount, total, client_id, status
+       FROM works WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY date`
+    )
+    .all(...ids) as Array<WorkRow & { client_id: string; status: string }>;
+
+  if (rows.length !== ids.length) throw new MorningError('חלק מהעבודות שנבחרו לא נמצאו', 404);
+  for (const work of rows) {
+    if (work.client_id !== clientId)
+      throw new MorningError(`«${work.description}» שייכת ללקוח אחר`, 400);
+    if (work.status !== 'unpaid')
+      throw new MorningError(`«${work.description}» כבר משויכת לחשבונית`, 409);
+  }
+  return rows.map(({ id, date, description, amount, vat_amount, total }) => ({
+    id, date, description, amount, vat_amount, total,
+  }));
+}
+
+/** 'YYYY-MM-DD' as it is written on an Israeli document. */
+function heDate(iso?: string | null): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec((iso || '').trim());
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : '';
+}
+
+/**
+ * One line as Morning will store it.
+ *
+ * A Morning document line has a description and a price and nothing else — there is no date
+ * column to put a work's date in. A month of gigs listed as bare descriptions loses the one
+ * thing that tells two identical ones apart, so the date is folded into the text itself:
+ * «הופעה בהאנגר (14/03/2026)».
+ */
+export function morningLineDescription(work: { description: string; date?: string | null }): string {
+  const text = (work.description || '').trim();
+  const date = heDate(work.date);
+  if (!date) return text;
+  if (!text) return date;
+  // A description that already ends with its own date is left alone rather than given it twice.
+  return text.endsWith(`(${date})`) ? text : `${text} (${date})`;
+}
+
 /**
  * A sensible "שם המסמך" to start from: one line speaks for itself, several are summarised
  * by the period they cover — which is how a month of gigs reads on a real invoice.
@@ -271,7 +341,8 @@ function defaultDocumentName(works: WorkRow[]): string {
 }
 
 export interface MorningDraft {
-  invoiceId: string;
+  /** `null` while the works have no invoice yet — the document is what will create one. */
+  invoiceId: string | null;
   number: string;
   configured: boolean;
   business: BusinessDetails;
@@ -291,33 +362,45 @@ export interface MorningDraft {
 }
 
 /**
- * Everything the issue dialog needs to open pre-filled — the same values `pushInvoiceToMorning`
- * would use on its own, so confirming the dialog untouched issues exactly what the plain
- * push would have.
+ * The dialog's contents, from whichever side the document is being issued: an invoice that
+ * already exists here, or a set of works that has no invoice yet. Both end up at the same
+ * `createDocument` call, so both are described by the same draft.
+ *
+ * The totals are summed from the works rather than read off an invoice row — the two agree
+ * by construction, and summing is the one form that also works before there is a row.
  */
-export function buildMorningDraft(invoiceId: string): MorningDraft {
-  const invoice = loadInvoiceForPush(invoiceId);
-  const works = loadWorksForPush(invoiceId);
-  const termsDays = invoice.payment_terms_days ?? 30;
+function assembleDraft(base: {
+  invoiceId: string | null;
+  number: string;
+  client: { id: string; name: string; email: string | null; taxId: string | null; phone: string | null };
+  termsDays: number;
+  docType: number;
+  date: string;
+  dueDate: string | null;
+  remarks: string;
+  works: WorkRow[];
+}): MorningDraft {
+  const { works } = base;
+  const sum = (pick: (w: WorkRow) => number) => round2(works.reduce((total, w) => total + (Number(pick(w)) || 0), 0));
 
   return {
-    invoiceId,
-    number: invoice.number,
+    invoiceId: base.invoiceId,
+    number: base.number,
     configured: isMorningConfigured(),
     business: getBusinessDetails(),
-    docType: ISSUABLE_DOC_TYPES.includes(invoice.doc_type) ? invoice.doc_type : DOC_TYPE.TAX_INVOICE,
+    docType: ISSUABLE_DOC_TYPES.includes(base.docType) ? base.docType : DOC_TYPE.TAX_INVOICE,
     docTypes: issuableDocTypeOptions(),
-    date: invoice.date,
-    dueDate: invoice.due_date || computeDueDate(invoice.date, termsDays),
-    paymentTermsDays: termsDays,
+    date: base.date,
+    dueDate: base.dueDate || computeDueDate(base.date, base.termsDays),
+    paymentTermsDays: base.termsDays,
     description: defaultDocumentName(works),
-    remarks: invoice.notes || '',
+    remarks: base.remarks,
     client: {
-      id: invoice.client_id,
-      name: invoice.client_name,
-      email: invoice.client_email || '',
-      taxId: invoice.client_tax_id || '',
-      phone: invoice.client_phone || '',
+      id: base.client.id,
+      name: base.client.name,
+      email: base.client.email || '',
+      taxId: base.client.taxId || '',
+      phone: base.client.phone || '',
     },
     lines: works.map((w) => ({
       id: w.id,
@@ -327,11 +410,60 @@ export function buildMorningDraft(invoiceId: string): MorningDraft {
       vatAmount: w.vat_amount,
       total: w.total,
     })),
-    subtotal: invoice.subtotal,
-    vatAmount: invoice.vat_amount,
-    total: invoice.total,
+    subtotal: sum((w) => w.amount),
+    vatAmount: sum((w) => w.vat_amount),
+    total: sum((w) => w.total),
     vatPercent: getVatPercent(),
   };
+}
+
+/**
+ * Everything the issue dialog needs to open pre-filled — the same values `pushInvoiceToMorning`
+ * would use on its own, so confirming the dialog untouched issues exactly what the plain
+ * push would have.
+ */
+export function buildMorningDraft(invoiceId: string): MorningDraft {
+  const invoice = loadInvoiceForPush(invoiceId);
+  return assembleDraft({
+    invoiceId,
+    number: invoice.number,
+    client: {
+      id: invoice.client_id,
+      name: invoice.client_name,
+      email: invoice.client_email,
+      taxId: invoice.client_tax_id,
+      phone: invoice.client_phone,
+    },
+    termsDays: invoice.payment_terms_days ?? 30,
+    docType: invoice.doc_type,
+    date: invoice.date,
+    dueDate: invoice.due_date,
+    remarks: invoice.notes || '',
+    works: loadWorksForPush(invoiceId),
+  });
+}
+
+/**
+ * The same dialog, for works that have not been invoiced at all.
+ *
+ * There is no local invoice behind this one and no `AM-*` number to show: the document is
+ * what will create the invoice, so the fields are defaulted from the client and today's date
+ * instead of read off a row.
+ */
+export function buildPendingMorningDraft(input: { clientId: string; workIds: string[] }): MorningDraft {
+  const client = loadClientForIssue(input.clientId);
+  const today = new Date().toISOString().slice(0, 10);
+  return assembleDraft({
+    invoiceId: null,
+    number: '',
+    client: { id: client.id, name: client.name, email: client.email, taxId: client.tax_id, phone: client.phone },
+    termsDays: client.payment_terms_days ?? 30,
+    docType: DOC_TYPE.TAX_INVOICE,
+    date: today,
+    dueDate: null,
+    remarks: '',
+    works: loadWorksForIssue(input.clientId, input.workIds),
+  });
 }
 
 /**
@@ -347,47 +479,32 @@ export async function pushInvoiceToMorning(
 ): Promise<PushResult> {
   const invoice = loadInvoiceForPush(invoiceId);
   const works = loadWorksForPush(invoiceId);
+  const fields = resolveDocumentFields(
+    {
+      docType: invoice.doc_type,
+      date: invoice.date,
+      dueDate: invoice.due_date,
+      termsDays: invoice.payment_terms_days ?? 30,
+      clientEmail: invoice.client_email,
+    },
+    options
+  );
 
-  const docType = options.docType ?? invoice.doc_type ?? DOC_TYPE.TAX_INVOICE;
-  if (!ISSUABLE_DOC_TYPES.includes(docType))
-    throw new MorningError(`סוג מסמך ${docType} לא ניתן להנפקה מכאן`, 400);
-
-  const date = options.date || invoice.date;
-  const dueDate = options.dueDate || invoice.due_date || computeDueDate(date, invoice.payment_terms_days ?? 30);
-  if (dueDate < date) throw new MorningError('תאריך התשלום מוקדם מתאריך המסמך', 400);
-
-  const email = (options.clientEmail ?? invoice.client_email ?? '').trim();
-  if (email && !EMAIL_RE.test(email)) throw new MorningError('כתובת המייל של הלקוח לא תקינה', 400);
-  if (options.sendEmail && !email)
-    throw new MorningError('אי אפשר לשלוח את המסמך במייל בלי כתובת מייל ללקוח', 400);
-
-  const doc = await createDocument({
-    type: docType,
-    clientName: invoice.client_name,
-    clientEmails: email ? [email] : [],
-    clientTaxId: invoice.client_tax_id || undefined,
-    date,
-    dueDate,
-    description: (options.description || '').trim() || undefined,
-    remarks: (options.remarks || '').trim() || undefined,
-    sendEmail: Boolean(options.sendEmail),
-    lines: works.map((w) => ({ description: w.description, price: w.amount })),
+  const doc = await issueDocument({
+    client: { name: invoice.client_name, taxId: invoice.client_tax_id },
+    works,
+    fields,
   });
-  if (!doc?.id) throw new MorningError('Morning לא החזיר מזהה מסמך');
 
-  const remarks = (options.remarks || '').trim();
   db.prepare(
     `UPDATE invoices SET external_id = ?, number = ?, doc_type = ?, date = ?, due_date = ?,
        notes = ?, source = ? WHERE id = ?`
   ).run(
-    doc.id, String(doc.number ?? invoice.number), doc.type ?? docType, date, dueDate,
-    remarks || invoice.notes, 'morning', invoiceId
+    doc.id, String(doc.number ?? invoice.number), doc.type ?? fields.docType, fields.date, fields.dueDate,
+    fields.remarks || invoice.notes, 'morning', invoiceId
   );
 
-  // Fills a gap, never overwrites: an address typed into the dialog is what makes the
-  // client's email auto-fill next time round.
-  if (email && !invoice.client_email)
-    db.prepare('UPDATE clients SET email = ? WHERE id = ?').run(email, invoice.client_id);
+  rememberClientEmail(invoice.client_id, invoice.client_email, fields.email);
 
   return {
     invoiceId,
@@ -395,6 +512,138 @@ export async function pushInvoiceToMorning(
     documentNumber: String(doc.number ?? ''),
     url: documentUrl(doc),
   };
+}
+
+/**
+ * Issues a document for works that have no invoice yet, and creates the local invoice from
+ * what Morning returned.
+ *
+ * This is the way round an invoice is meant to be made here. Creating the local row first
+ * left an `AM-*` invoice behind every time an issue was abandoned or refused, and those rows
+ * are indistinguishable in a list from documents that really exist. So nothing is written
+ * until Morning has issued the document, and what is written then carries Morning's own
+ * number rather than a provisional one.
+ */
+export async function issueWorksToMorning(
+  input: { clientId: string; workIds: string[] } & PushInvoiceOptions
+): Promise<{ result: PushResult; invoice: any }> {
+  const client = loadClientForIssue(input.clientId);
+  const works = loadWorksForIssue(input.clientId, input.workIds);
+  const today = new Date().toISOString().slice(0, 10);
+  const fields = resolveDocumentFields(
+    {
+      docType: DOC_TYPE.TAX_INVOICE,
+      date: today,
+      dueDate: null,
+      termsDays: client.payment_terms_days ?? 30,
+      clientEmail: client.email,
+    },
+    input
+  );
+
+  const doc = await issueDocument({
+    client: { name: client.name, taxId: client.tax_id },
+    works,
+    fields,
+  });
+
+  // Past this point the document exists and cannot be withdrawn. A local write that fails
+  // now is reported as exactly that — with the number to look the document up by — rather
+  // than as a failure to issue, which would invite issuing it a second time.
+  let invoice: any;
+  try {
+    invoice = createInvoice({
+      clientId: client.id,
+      workIds: works.map((w) => w.id),
+      date: fields.date,
+      dueDate: fields.dueDate,
+      docType: doc.type ?? fields.docType,
+      externalId: doc.id,
+      number: doc.number != null ? String(doc.number) : undefined,
+      notes: fields.remarks || undefined,
+      source: 'morning',
+    });
+  } catch (err: any) {
+    throw new MorningError(
+      `המסמך הונפק ב-Morning (מספר ${doc.number ?? doc.id}) אבל לא נשמר כאן: ${err.message}. ` +
+        'סנכרון מ-Morning ימשוך אותו.',
+      500
+    );
+  }
+
+  rememberClientEmail(client.id, client.email, fields.email);
+
+  return {
+    result: {
+      invoiceId: invoice.id,
+      documentId: doc.id,
+      documentNumber: String(doc.number ?? ''),
+      url: documentUrl(doc),
+    },
+    invoice,
+  };
+}
+
+/** The document's own fields, validated before anything is sent to Morning. */
+function resolveDocumentFields(
+  base: { docType: number; date: string; dueDate: string | null; termsDays: number; clientEmail: string | null },
+  options: PushInvoiceOptions
+) {
+  const docType = options.docType ?? base.docType ?? DOC_TYPE.TAX_INVOICE;
+  if (!ISSUABLE_DOC_TYPES.includes(docType))
+    throw new MorningError(`סוג מסמך ${docType} לא ניתן להנפקה מכאן`, 400);
+
+  const date = options.date || base.date;
+  const dueDate = options.dueDate || base.dueDate || computeDueDate(date, base.termsDays);
+  if (dueDate < date) throw new MorningError('תאריך התשלום מוקדם מתאריך המסמך', 400);
+
+  const email = (options.clientEmail ?? base.clientEmail ?? '').trim();
+  if (email && !EMAIL_RE.test(email)) throw new MorningError('כתובת המייל של הלקוח לא תקינה', 400);
+  if (options.sendEmail && !email)
+    throw new MorningError('אי אפשר לשלוח את המסמך במייל בלי כתובת מייל ללקוח', 400);
+
+  return {
+    docType,
+    date,
+    dueDate,
+    email,
+    remarks: (options.remarks || '').trim(),
+    description: (options.description || '').trim(),
+    sendEmail: Boolean(options.sendEmail),
+  };
+}
+
+type DocumentFields = ReturnType<typeof resolveDocumentFields>;
+
+/** The one call that actually issues — both paths reach Morning through here. */
+async function issueDocument(input: {
+  client: { name: string; taxId: string | null };
+  works: WorkRow[];
+  fields: DocumentFields;
+}): Promise<MorningDocument> {
+  const { client, works, fields } = input;
+  const doc = await createDocument({
+    type: fields.docType,
+    clientName: client.name,
+    clientEmails: fields.email ? [fields.email] : [],
+    clientTaxId: client.taxId || undefined,
+    date: fields.date,
+    dueDate: fields.dueDate,
+    description: fields.description || undefined,
+    remarks: fields.remarks || undefined,
+    sendEmail: fields.sendEmail,
+    lines: works.map((w) => ({ description: morningLineDescription(w), price: w.amount })),
+  });
+  if (!doc?.id) throw new MorningError('Morning לא החזיר מזהה מסמך');
+  return doc;
+}
+
+/**
+ * Fills a gap, never overwrites: an address typed into the dialog is what makes the client's
+ * email auto-fill next time round.
+ */
+function rememberClientEmail(clientId: string, existing: string | null, email: string) {
+  if (email && !existing) db.prepare('UPDATE clients SET email = ? WHERE id = ?').run(email, clientId);
 }
 
 export function morningStatus() {

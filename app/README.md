@@ -254,12 +254,25 @@ so totalling every document counts the sale twice.
 Non-revenue documents are still imported and listed (flagged in amber in the invoices
 table) but are excluded from every total and never generate works.
 
-### Invoice numbering
+### Invoice numbering, and when an invoice comes into existence
 
-Morning owns the real, sequential document numbers. An invoice created in the app is
-therefore numbered `AM-1`, `AM-2`, … until it is issued to Morning, at which point it
-adopts the number Morning assigns. Numbering locally from `MAX(number)+1` would hand out
-numbers Morning is going to issue itself.
+Morning owns the real, sequential document numbers. Numbering locally from `MAX(number)+1`
+would hand out numbers Morning is going to issue itself, so an invoice that exists only here
+carries a prefixed `AM-1`, `AM-2`, … until it is issued, at which point it adopts the number
+Morning assigns.
+
+**Billing works does not create one of those rows.** Ticking works and pressing
+**צור חשבונית** — from the works list or from the חשבונית תקופתית dialog — opens the issue
+dialog directly, and the invoice is created from the document Morning returns, carrying
+Morning's own number and id from the moment it exists. Creating the local row first meant
+every abandoned or refused issue left behind an `AM-*` invoice that looked, in a list of
+invoices, exactly like a document that had really been issued.
+
+`AM-*` rows still arise — from the API, from a push that has not happened yet, and from the
+one fallback the dialog offers when Morning is unconfigured — and they can be **deleted**
+(`DELETE /api/invoices/:id`), which puts their works back in the unpaid pool to be billed
+again. Deletion is refused the moment `external_id` is set: that document is in the state's
+books and can only be credited.
 
 ## Integrations
 
@@ -324,13 +337,30 @@ a missing credential is visible rather than silent.
   If the expense half of the sync fails — an account whose plan does not expose expenses —
   the documents still land, and the reason is reported next to the result.
 
-- **Push** — `POST /api/invoices/:id/push-to-morning` issues a local invoice as a real
-  document and stores the returned id and number. An invoice that already exists in
-  Morning is rejected with 409 rather than duplicated.
+- **Push** — two endpoints reach the same `createDocument` call, from the two things that
+  can become a document:
+
+  - `POST /api/invoices/issue-to-morning` takes a client and a set of unbilled works, issues
+    the document, and **then** creates the local invoice from what Morning returned. This is
+    the path the צור חשבונית button takes. Every work is validated — it exists, it is the
+    client's, it is unbilled — before Morning is called, since a document Morning has issued
+    cannot be withdrawn. If the local write fails after the document exists, the error says
+    so with the document's number rather than reporting a failure to issue, which would
+    invite issuing it twice.
+  - `POST /api/invoices/:id/push-to-morning` issues an invoice that is already here — an
+    `AM-*` row from the API or the offline fallback — and stores the returned id and number.
+    An invoice that already exists in Morning is rejected with 409 rather than duplicated.
+
+  A Morning document line is a description and a price; there is **no date column**. So each
+  work's date is folded into its own line text — `הופעה בהאנגר (14/03/2026)` — which is the
+  only place the date can survive onto the issued document. The preview renders the joined
+  line rather than a date column of its own, since a column the document does not have is a
+  lie about it.
 
   Issuing goes through a two-step dialog rather than a bare confirm, because the document
-  it produces cannot be deleted — only credited. `GET /api/invoices/:id/morning-draft`
-  pre-fills the first step with the document's own fields, in the order they appear on the
+  it produces cannot be deleted — only credited. `GET /api/invoices/:id/morning-draft` (or
+  `POST /api/invoices/morning-draft` with `client_id` and `work_ids`, for works that have no
+  invoice yet) pre-fills the first step with the document's own fields, in the order they appear on the
   document: type (חשבון עסקה / חשבונית מס / חשבונית מס קבלה), client and email, document
   date, due date, subject (שם המסמך) and remarks. The second step renders the document as
   it will be issued, and only its final button calls the push. Confirming the dialog
@@ -348,6 +378,10 @@ a missing credential is visible rather than silent.
   invoice too, and an email typed for a client that had none is saved to the client card so
   the next document fills it in. The document is only emailed to the client on an explicit
   tick.
+
+  With Morning unconfigured there would otherwise be no way to bill at all, so the dialog
+  offers one way out for works that have no invoice: keep the selection as a local `AM-*`
+  invoice, to be issued once Morning is configured.
 
 ### Google Calendar → shows and personal work
 

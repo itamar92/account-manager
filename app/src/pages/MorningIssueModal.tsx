@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { get, post, nisExact } from '../api';
-import { Button, Input, Modal, Textarea } from '../ui';
+import { Button, Input, Modal, Textarea, fieldClass } from '../ui';
 
 interface DraftLine {
   id: string;
@@ -26,7 +26,7 @@ interface Business {
 }
 
 interface Draft {
-  invoiceId: string;
+  invoiceId: string | null;
   number: string;
   configured: boolean;
   business: Business;
@@ -71,13 +71,40 @@ const he = (date: string) => {
   return Number.isNaN(d.getTime()) ? date : d.toLocaleDateString('he-IL', { timeZone: 'UTC' });
 };
 
+/** 'YYYY-MM-DD' as it is written on a document — mirrors `heDate` on the server. */
+const docDate = (iso: string) => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec((iso || '').trim());
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : iso;
+};
+
+/**
+ * What a line will actually say in Morning — mirrors `morningLineDescription` on the server.
+ *
+ * A Morning document line has a description and a price and no date column, so the work's
+ * date is folded into its text. The preview shows the joined line rather than a date column
+ * of its own, because a column that does not exist on the issued document is a lie about it.
+ */
+const morningLine = (line: { description: string; date: string }) => {
+  const text = (line.description || '').trim();
+  const date = docDate(line.date);
+  if (!date) return text;
+  if (!text) return date;
+  return text.endsWith(`(${date})`) ? text : `${text} (${date})`;
+};
+
 /**
  * The two steps between "הנפקה ב-Morning" and a real document: the document's own fields,
  * then a preview of what issuing them will produce. Nothing reaches Morning until the
  * final button on the preview.
+ *
+ * It opens on either of the two things that can become a document — an invoice that already
+ * exists here (`invoiceId`), or works that have never been invoiced (`pending`). In the
+ * second case there is nothing to fall back to if the issue is abandoned, and nothing left
+ * behind either: the invoice is created from the document Morning returns.
  */
-export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
-  invoiceId: string | null;
+export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued }: {
+  invoiceId?: string | null;
+  pending?: { clientId: string; workIds: string[] } | null;
   open: boolean;
   onClose: () => void;
   onIssued: (invoice: any, result: any) => void;
@@ -89,14 +116,20 @@ export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
 
+  // The works are an array, so identity alone would refetch the draft on every render.
+  const pendingKey = pending ? `${pending.clientId}:${[...pending.workIds].sort().join(',')}` : '';
+
   useEffect(() => {
-    if (!open || !invoiceId) return;
+    if (!open || (!invoiceId && !pending)) return;
     setDraft(null);
     setForm(null);
     setStep('form');
     setDueTouched(false);
     setError('');
-    get(`/invoices/${invoiceId}/morning-draft`)
+    const load = pending
+      ? post('/invoices/morning-draft', { client_id: pending.clientId, work_ids: pending.workIds })
+      : get(`/invoices/${invoiceId}/morning-draft`);
+    load
       .then((d) => {
         const dr: Draft = d.draft;
         setDraft(dr);
@@ -111,7 +144,7 @@ export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
         });
       })
       .catch((e) => setError(e.message));
-  }, [open, invoiceId]);
+  }, [open, invoiceId, pendingKey]);
 
   if (!open) return null;
 
@@ -125,15 +158,46 @@ export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
     );
 
   const issue = async () => {
-    if (!invoiceId || !form) return;
+    if (!form || (!invoiceId && !pending)) return;
     setSending(true);
     setError('');
     try {
-      const d = await post(`/invoices/${invoiceId}/push-to-morning`, form);
+      const d = pending
+        ? await post('/invoices/issue-to-morning', {
+            ...form,
+            client_id: pending.clientId,
+            work_ids: pending.workIds,
+          })
+        : await post(`/invoices/${invoiceId}/push-to-morning`, form);
       onIssued(d.invoice, d.result);
     } catch (err: any) {
       setError(err.message);
       setStep('form');
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /**
+   * The way out when Morning is unreachable or unconfigured: keep the selection as a local
+   * `AM-*` invoice, to be issued once it is. Offered only for works that have no invoice —
+   * an invoice already here has nothing to save.
+   */
+  const saveLocally = async () => {
+    if (!pending || !form) return;
+    setSending(true);
+    setError('');
+    try {
+      const d = await post('/invoices', {
+        client_id: pending.clientId,
+        work_ids: pending.workIds,
+        date: form.date,
+        due_date: form.due_date,
+        notes: form.remarks,
+      });
+      onIssued(d.invoice, {});
+    } catch (err: any) {
+      setError(err.message);
     } finally {
       setSending(false);
     }
@@ -148,9 +212,9 @@ export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
       onClose={onClose}
       size={step === 'form' ? 'lg' : 'xl'}
     >
-      {error && <div className="text-sm text-rose-400 mb-3">{error}</div>}
+      {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5 mb-3">{error}</div>}
       {!draft || !form ? (
-        <div className="text-center text-slate-500 py-10">טוען…</div>
+        <div className="text-center text-muted py-10">טוען…</div>
       ) : step === 'form' ? (
         <IssueForm
           draft={draft}
@@ -165,12 +229,13 @@ export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
         <div className="space-y-4">
           <DocumentPreview draft={draft} form={form} docTypeLabel={docTypeLabel} />
           {!draft.configured && (
-            <div className="text-sm text-amber-400">
+            <div className="text-sm text-warn">
               Morning לא מוגדר — חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET
             </div>
           )}
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-muted">
             הנפקה יוצרת מסמך אמיתי ב-Morning עם מספר רץ. אי אפשר למחוק מסמך שהונפק — רק להוציא לו זיכוי.
+            {pending && ' החשבונית תיווצר כאן רק אחרי שהמסמך הונפק, עם המספר ש-Morning ייתן לו.'}
           </p>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={() => setStep('form')} disabled={sending}>חזרה לעריכה</Button>
@@ -178,6 +243,15 @@ export function MorningIssueModal({ invoiceId, open, onClose, onIssued }: {
               {sending ? 'מנפיק…' : `הנפקת ${docTypeLabel} ב-Morning`}
             </Button>
           </div>
+          {/* Without Morning the work would otherwise be stuck — it can still be kept here. */}
+          {pending && !draft.configured && (
+            <button
+              type="button" onClick={saveLocally} disabled={sending}
+              className="w-full text-xs text-muted hover:text-ink hover:underline disabled:opacity-50"
+            >
+              שמירה כחשבונית באפליקציה בלבד, להנפקה מאוחר יותר
+            </button>
+          )}
         </div>
       )}
     </Modal>
@@ -200,21 +274,21 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
       onSubmit={(e) => { e.preventDefault(); onContinue(); }}
     >
       <label className="block">
-        <span className="block text-sm text-slate-400 mb-1">סוג מסמך *</span>
+        <span className="block text-[13px] text-muted mb-1.5">סוג מסמך *</span>
         <select
           value={form.doc_type}
           onChange={(e) => setField('doc_type', parseInt(e.target.value, 10))}
-          className="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm"
+          className={fieldClass}
         >
           {draft.docTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
         </select>
       </label>
 
-      <div className="bg-slate-800/40 border border-slate-800 rounded-xl p-3 space-y-3">
+      <div className="bg-soft border border-line rounded-xl p-3 space-y-3">
         <div>
-          <div className="text-sm text-slate-400 mb-1">לקוח</div>
+          <div className="text-[13px] text-muted mb-1">לקוח</div>
           <div className="font-medium">{draft.client.name}</div>
-          <div className="text-xs text-slate-500">
+          <div className="text-xs text-faint">
             {draft.client.taxId ? <span dir="ltr">ח.פ / ע.מ {draft.client.taxId}</span> : 'ללא ח.פ / ע.מ בכרטיס הלקוח'}
           </div>
         </div>
@@ -224,7 +298,7 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
           onChange={(e) => setField('client_email', e.target.value)}
         />
         {!draft.client.email && form.client_email && (
-          <p className="text-xs text-slate-500">המייל יישמר גם בכרטיס הלקוח למסמכים הבאים.</p>
+          <p className="text-xs text-faint">המייל יישמר גם בכרטיס הלקוח למסמכים הבאים.</p>
         )}
       </div>
 
@@ -232,7 +306,7 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
         <Input label="תאריך המסמך *" type="date" value={form.date} onChange={(e) => setDate(e.target.value)} required />
         <div>
           <Input label="לתשלום עד *" type="date" value={form.due_date} onChange={(e) => onDueChange(e.target.value)} required />
-          <button type="button" onClick={onResetDue} className="text-xs text-indigo-400 hover:underline mt-1">
+          <button type="button" onClick={onResetDue} className="text-xs text-accent hover:underline mt-1">
             איפוס לשוטף + {draft.paymentTermsDays}
           </button>
         </div>
@@ -247,20 +321,21 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
       />
 
       <div>
-        <div className="text-sm text-slate-400 mb-1">שורות המסמך ({draft.lines.length})</div>
-        <div className="border border-slate-800 rounded-xl divide-y divide-slate-800 max-h-48 overflow-y-auto">
+        <div className="text-[13px] text-muted mb-1.5">שורות המסמך ({draft.lines.length})</div>
+        <div className="border border-line rounded-xl divide-y divide-line max-h-48 overflow-y-auto">
           {draft.lines.map((l) => (
             <div key={l.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-              <div className="min-w-0">
-                <div className="truncate">{l.description}</div>
-                <div className="text-xs text-slate-500">{he(l.date)}</div>
-              </div>
+              <span className="min-w-0 truncate">{morningLine(l)}</span>
               <span className="whitespace-nowrap" dir="ltr">{nisExact(l.amount)}</span>
             </div>
           ))}
         </div>
-        <p className="text-xs text-slate-500 mt-1">
-          לשינוי השורות יש לבטל את החשבונית ולבחור את העבודות מחדש.
+        <p className="text-xs text-faint mt-1">
+          שורה ב-Morning היא תיאור ומחיר בלבד, ולכן התאריך נכתב בתוך התיאור.
+          {' '}
+          {draft.invoiceId
+            ? 'לשינוי השורות יש לבטל את החשבונית ולבחור את העבודות מחדש.'
+            : 'לשינוי השורות אפשר לסגור ולבחור את העבודות מחדש.'}
         </p>
       </div>
 
@@ -271,16 +346,16 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
         placeholder="לדוגמה: פרטי חשבון להעברה בנקאית"
       />
 
-      <label className="flex items-center gap-2 text-sm text-slate-300">
+      <label className="flex items-center gap-2 text-sm text-ink-2">
         <input
-          type="checkbox" className="w-4 h-4 accent-indigo-500"
+          type="checkbox" className="w-4 h-4 accent-accent"
           checked={form.send_email}
           disabled={!form.client_email}
           onChange={(e) => setField('send_email', e.target.checked)}
         />
         <span>
           שליחת המסמך במייל ללקוח עם ההנפקה
-          {!form.client_email && <span className="text-slate-500"> (דורש מייל לקוח)</span>}
+          {!form.client_email && <span className="text-faint"> (דורש מייל לקוח)</span>}
         </span>
       </label>
 
@@ -361,7 +436,6 @@ function DocumentPreview({ draft, form, docTypeLabel }: { draft: Draft; form: Fo
           <thead>
             <tr className="bg-slate-100 text-slate-600 text-right">
               <th className="px-3 py-2 font-medium">תיאור</th>
-              <th className="px-3 py-2 font-medium whitespace-nowrap">תאריך</th>
               <th className="px-3 py-2 font-medium">כמות</th>
               <th className="px-3 py-2 font-medium whitespace-nowrap">מחיר</th>
               <th className="px-3 py-2 font-medium whitespace-nowrap">סה"כ</th>
@@ -370,8 +444,7 @@ function DocumentPreview({ draft, form, docTypeLabel }: { draft: Draft; form: Fo
           <tbody className="divide-y divide-slate-200">
             {draft.lines.map((l) => (
               <tr key={l.id}>
-                <td className="px-3 py-2">{l.description}</td>
-                <td className="px-3 py-2 whitespace-nowrap text-slate-500">{he(l.date)}</td>
+                <td className="px-3 py-2">{morningLine(l)}</td>
                 <td className="px-3 py-2">1</td>
                 <td className="px-3 py-2 whitespace-nowrap" dir="ltr">{nisExact(l.amount)}</td>
                 <td className="px-3 py-2 whitespace-nowrap" dir="ltr">{nisExact(l.amount)}</td>
