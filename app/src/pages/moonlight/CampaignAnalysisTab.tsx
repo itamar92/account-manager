@@ -161,10 +161,9 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
       <Card>
         <h2 className="ser text-lg mb-2">יועץ קמפיינים</h2>
         <p className="text-sm text-muted leading-relaxed">
-          הסוכן לא מוגדר. הניתוח רץ על מכונה אחרת דרך חיבור SSH — יש להגדיר את משתני הסביבה
-          <span dir="ltr" className="mx-1 text-ink-2">AGENT_SSH_HOST / AGENT_SSH_USER / AGENT_SSH_KEY</span>
-          ואת מפתח המארח <span dir="ltr" className="text-ink-2">AGENT_SSH_HOST_KEY</span>.
-          מצב החיבור ובדיקה שלו נמצאים בהגדרות → חיבורים.
+          הסוכן לא מוגדר. הניתוח רץ על מכונה אחרת דרך חיבור SSH — יש למלא את השרת, המשתמש,
+          המפתח הפרטי ומפתח המארח ב<span className="text-ink-2">הגדרות → סוכן AI</span>,
+          ולבדוק את החיבור שם.
         </p>
       </Card>
     );
