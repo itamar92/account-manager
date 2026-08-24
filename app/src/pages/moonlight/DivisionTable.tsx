@@ -2,7 +2,7 @@ import React from 'react';
 import { clsx } from 'clsx';
 import { nis } from '../../api';
 import { Card, Empty } from '../../ui';
-import { eventLabel } from './shared';
+import { eventLabel, type BandMember } from './shared';
 
 /**
  * How much each member is owed, and how that figure was reached — laid out the way the band's
@@ -21,9 +21,12 @@ export function DivisionTable({ division }: { division: any }) {
   if (!division) return <Card><Empty text="טוען…" /></Card>;
 
   const {
-    members, shows, showsTotal, refunds, refundsByMember,
+    shows, showsTotal, refunds, refundsByMember,
     fundExpenses, fundTotal, fundShare, beforeRefund, payout,
   } = division;
+  // Typed rather than read off `division` as `any`: every per-member figure below is looked up
+  // by `member_key`, and the roster's own type is what keeps that the only spelling of it.
+  const members: BandMember[] = division.members ?? [];
   const nothing = shows.length === 0 && refunds.length === 0 && fundExpenses.length === 0;
 
   const cell = 'px-3 py-2 whitespace-nowrap text-center';
@@ -47,7 +50,7 @@ export function DivisionTable({ division }: { division: any }) {
             <thead>
               <tr className="border-b border-line">
                 <th className="px-3 py-2 text-right font-medium text-muted" />
-                {members.map((m: any) => <th key={m.key} className={head}>{m.name}</th>)}
+                {members.map((m) => <th key={m.member_key} className={head}>{m.name}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -57,17 +60,17 @@ export function DivisionTable({ division }: { division: any }) {
                 <td className="px-3 py-2.5 text-right text-ink-2 whitespace-nowrap">
                   חלק ברווח <span className="text-xs text-faint">(לפני החזרי הוצאות)</span>
                 </td>
-                {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-medium text-accent')}>
-                    {nis(beforeRefund[m.key])}
+                {members.map((m) => (
+                  <td key={m.member_key} className={clsx(cell, 'font-medium text-accent')}>
+                    {nis(beforeRefund[m.member_key])}
                   </td>
                 ))}
               </tr>
               <tr className="bg-warn-soft border-t-2 border-warn/25">
                 <td className="px-3 py-2.5 text-right font-bold whitespace-nowrap">סה״כ לתשלום</td>
-                {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-bold text-warn text-base')}>
-                    {nis(payout[m.key])}
+                {members.map((m) => (
+                  <td key={m.member_key} className={clsx(cell, 'font-bold text-warn text-base')}>
+                    {nis(payout[m.member_key])}
                   </td>
                 ))}
               </tr>
@@ -84,7 +87,7 @@ export function DivisionTable({ division }: { division: any }) {
             <thead>
               <tr className="border-b border-line">
                 <th className="px-3 py-2 text-right font-medium text-muted">הופעות שטרם חולקו</th>
-                {members.map((m: any) => <th key={m.key} className={head}>{m.name}</th>)}
+                {members.map((m) => <th key={m.member_key} className={head}>{m.name}</th>)}
                 <th className={head}>סה״כ רווח</th>
               </tr>
             </thead>
@@ -99,7 +102,7 @@ export function DivisionTable({ division }: { division: any }) {
               ) : shows.map((s: any) => (
                 <tr key={s.id} className="hover:bg-soft">
                   <td className="px-3 py-2 text-right">{eventLabel(s)}</td>
-                  {members.map((m: any) => <td key={m.key} className={cell}>{nis(s[m.key])}</td>)}
+                  {members.map((m) => <td key={m.member_key} className={cell}>{nis(s[m.member_key])}</td>)}
                   <td className={clsx(cell, 'font-medium')}>{nis(s.profit)}</td>
                 </tr>
               ))}
@@ -111,8 +114,8 @@ export function DivisionTable({ division }: { division: any }) {
             <tfoot>
               <tr className="bg-soft border-t-2 border-line">
                 <td className="px-3 py-2 text-right font-bold">סה״כ ({showsTotal.count} הופעות)</td>
-                {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-bold')}>{nis(showsTotal[m.key])}</td>
+                {members.map((m) => (
+                  <td key={m.member_key} className={clsx(cell, 'font-bold')}>{nis(showsTotal[m.member_key])}</td>
                 ))}
                 <td className={clsx(cell, 'font-bold')}>{nis(showsTotal.profit)}</td>
               </tr>
@@ -131,9 +134,9 @@ export function DivisionTable({ division }: { division: any }) {
                 <td className="px-3 py-2 text-right font-medium text-ink-2">
                   = חלק ברווח (לפני החזרי הוצאות)
                 </td>
-                {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-medium text-accent')}>
-                    {nis(beforeRefund[m.key])}
+                {members.map((m) => (
+                  <td key={m.member_key} className={clsx(cell, 'font-medium text-accent')}>
+                    {nis(beforeRefund[m.member_key])}
                   </td>
                 ))}
                 <td className={clsx(cell, 'font-medium text-accent')}>
@@ -144,7 +147,7 @@ export function DivisionTable({ division }: { division: any }) {
               <StepRow
                 sign="+"
                 label="החזר למי ששילם מכיסו"
-                values={members.map((m: any) => refundsByMember[m.key])}
+                values={members.map((m) => refundsByMember[m.member_key])}
                 total={division.refundsTotal}
                 accent="text-pos"
                 cell={cell}
@@ -152,9 +155,9 @@ export function DivisionTable({ division }: { division: any }) {
 
               <tr className="bg-warn-soft border-t-2 border-warn/25">
                 <td className="px-3 py-3 text-right font-bold">= סה״כ לתשלום</td>
-                {members.map((m: any) => (
-                  <td key={m.key} className={clsx(cell, 'font-bold text-warn text-base')}>
-                    {nis(payout[m.key])}
+                {members.map((m) => (
+                  <td key={m.member_key} className={clsx(cell, 'font-bold text-warn text-base')}>
+                    {nis(payout[m.member_key])}
                   </td>
                 ))}
                 <td className={clsx(cell, 'font-bold text-warn')}>{nis(division.payoutTotal)}</td>
