@@ -1,5 +1,6 @@
 import React from 'react';
 import { clsx } from 'clsx';
+import { ChevronDown } from 'lucide-react';
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
@@ -684,6 +685,72 @@ export function YearSelect({ value, onChange, label, allowAll = true }: {
         <option key={year} value={year}>{year}</option>
       ))}
     </select>
+  );
+}
+
+/**
+ * A `<select>` with the question it answers written above it, and room for an icon inside.
+ *
+ * A bare dropdown in a row of figures reads as one more figure; the caption is what says it is
+ * a control, which is why the overview panel's two filters wear one and a list's filters do not.
+ */
+export function LabeledSelect<T extends string>({ label, value, options, onChange, icon, className }: {
+  label: string;
+  value: T;
+  options: Array<{ value: T; label: string }>;
+  onChange: (value: T) => void;
+  icon?: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={clsx('block', className)}>
+      <span className="block text-[13px] text-muted mb-1.5">{label}</span>
+      <span className="relative block">
+        {icon && (
+          <span className="absolute inset-y-0 start-3 flex items-center text-faint pointer-events-none">{icon}</span>
+        )}
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value as T)}
+          className={clsx(selectClass, 'appearance-none w-full pe-9 font-semibold text-ink-2', icon && 'ps-9')}
+        >
+          {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        <ChevronDown size={16} className="absolute inset-y-0 end-3 my-auto text-faint pointer-events-none" />
+      </span>
+    </label>
+  );
+}
+
+/** An on/off switch, for a choice that reads as one setting rather than as two alternatives. */
+export function Switch({ checked, onChange, label }: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className="flex items-center gap-2 text-[13px] text-muted hover:text-ink-2 transition-colors"
+    >
+      <span>{label}</span>
+      <span
+        className={clsx(
+          'relative w-9 h-5 rounded-full shrink-0 transition-colors',
+          checked ? 'bg-accent' : 'bg-line-strong'
+        )}
+      >
+        <span
+          className={clsx(
+            'absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all',
+            checked ? 'start-[18px]' : 'start-0.5'
+          )}
+        />
+      </span>
+    </button>
   );
 }
 

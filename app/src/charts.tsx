@@ -1,8 +1,10 @@
 import React from 'react';
+import { clsx } from 'clsx';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
+  PieChart, Pie, Cell,
 } from 'recharts';
-import { monthLabel, monthName, nis } from './api';
+import { monthLabel, monthName, monthSlash, nis, nisExact, plain } from './api';
 import { Empty, Segmented } from './ui';
 
 /**
@@ -139,6 +141,174 @@ export function PerShowChart({ rows, height = 'h-72 md:h-80' }: { rows: any[]; h
           <Bar name="רווח" dataKey="profit" fill="#12805F" radius={[6, 6, 0, 0]} maxBarSize={28} />
         </ComposedChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------------- *
+ * the סקירה panel's two drawings
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The overview's four series. Income and expenses each get a colour and their VAT gets a pale
+ * version of it, because the VAT is not a fifth and sixth quantity — it is the part of the same
+ * bar that was never the business's money, and it should read as that bar's lighter top.
+ */
+export const OVERVIEW_COLORS = {
+  expenses: '#F3C63F',
+  expensesVat: '#FBE6A4',
+  income: '#6C7AE0',
+  incomeVat: '#BCC2F2',
+};
+
+export const OVERVIEW_LABELS = {
+  expenses: 'הוצאות מוכרות למס',
+  expensesVat: 'מע"מ הוצאות מוכר',
+  income: 'הכנסות',
+  incomeVat: 'מע"מ הכנסות',
+};
+
+/** Expenses at full amount are not "recognised for tax" — the two bars say which they are. */
+export const fullBasisLabels = {
+  ...OVERVIEW_LABELS,
+  expenses: 'הוצאות',
+  expensesVat: 'מע"מ הוצאות',
+};
+
+/**
+ * The tooltip both overview drawings share: one line per series, its name over its figure, in
+ * the order the bars are stacked rather than the order recharts happens to hand them over.
+ */
+function OverviewTooltip({ active, payload }: any) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div dir="rtl" style={TOOLTIP_STYLE} className="px-3 py-2 space-y-1.5">
+      {[...payload].reverse().map((entry: any) => (
+        <div key={entry.dataKey}>
+          <div className="text-[11px] text-muted leading-tight">{entry.name}</div>
+          <div className="num text-[13px] font-bold" style={{ color: entry.color }}>{nisExact(entry.value)}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Income against expenses over the period, VAT stacked on each as its own band.
+ *
+ * Two stacks per month rather than four bars: the question the panel is read for is how the
+ * two sides compare, and the VAT is a property of each side, not a competitor to it. `dir="ltr"`
+ * on the frame keeps the months running earliest-first left to right, which is how a time axis
+ * is read whichever way the page around it runs.
+ */
+export function IncomeExpenseVatChart({ rows, labels = OVERVIEW_LABELS, height = 'h-72 md:h-80' }: {
+  rows: any[];
+  labels?: typeof OVERVIEW_LABELS;
+  height?: string;
+}) {
+  if (rows.length === 0) return <Empty text="אין תנועה בתקופה הנבחרת" />;
+  return (
+    <div className={height} dir="ltr">
+      <ResponsiveContainer>
+        <ComposedChart data={rows} margin={{ top: 8, right: 8, left: 8, bottom: 0 }} barGap={2}>
+          <CartesianGrid strokeDasharray="3 3" stroke={GRID} vertical={false} />
+          <XAxis dataKey="month" tickFormatter={monthSlash} stroke={AXIS} fontSize={11} tickLine={false} axisLine={false} />
+          <YAxis stroke={AXIS} fontSize={11} width={56} tickLine={false} axisLine={false} tickFormatter={plain} />
+          <Tooltip cursor={{ fill: 'rgba(20,22,26,.04)' }} content={<OverviewTooltip />} />
+          <Legend wrapperStyle={{ fontSize: 12 }} iconType="circle" iconSize={8} />
+          <Bar name={labels.expenses} dataKey="expenses" stackId="out" fill={OVERVIEW_COLORS.expenses} maxBarSize={26} />
+          <Bar name={labels.expensesVat} dataKey="expensesVat" stackId="out" fill={OVERVIEW_COLORS.expensesVat} radius={[5, 5, 0, 0]} maxBarSize={26} />
+          <Bar name={labels.income} dataKey="income" stackId="in" fill={OVERVIEW_COLORS.income} maxBarSize={26} />
+          <Bar name={labels.incomeVat} dataKey="incomeVat" stackId="in" fill={OVERVIEW_COLORS.incomeVat} radius={[5, 5, 0, 0]} maxBarSize={26} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+/**
+ * The slice colours, ordered so neighbours on the ring are never the same hue at two
+ * lightnesses — the ring is read by telling one slice from the one beside it.
+ */
+const DONUT_COLORS = [
+  '#7C86E8', '#5BD3D0', '#7BE0A0', '#3FA98C', '#2E7FD6',
+  '#3B4EC0', '#9BE7B8', '#8FD8F5', '#12805F', '#B7BEF2', '#C9CED6',
+];
+
+/** A slice is labelled only when there is room on it for the number to be legible. */
+const LABEL_FLOOR = 0.07;
+
+/**
+ * The share written across the middle of its own slice, as the panel this follows writes it.
+ *
+ * Inside rather than outside: a ring with ten slices has labels on every side of it, and hung
+ * outside they collide with each other and with the card's edge. On the band they cannot.
+ */
+function sliceLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }: any) {
+  if (!(percent >= LABEL_FLOOR)) return null;
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
+  const rad = -midAngle * (Math.PI / 180);
+  return (
+    <text
+      x={cx + radius * Math.cos(rad)}
+      y={cy + radius * Math.sin(rad)}
+      textAnchor="middle"
+      dominantBaseline="central"
+      fontSize={12}
+      fontWeight={700}
+      fill="#14161a"
+    >
+      {(percent * 100).toFixed(1)}%
+    </text>
+  );
+}
+
+/**
+ * Where the period's receipts came from: one ring, the largest clients named beside it.
+ *
+ * The legend is written out rather than left to recharts because client names are long and a
+ * built-in legend either truncates them all to nothing or pushes the ring off the card. Here
+ * the names take a fixed column and the ring keeps the rest.
+ */
+export function ClientDonut({ rows, height = 'h-72 md:h-80' }: { rows: any[]; height?: string }) {
+  if (rows.length === 0) return <Empty text="לא התקבלו תקבולים בתקופה הנבחרת" />;
+  const color = (i: number) => DONUT_COLORS[i % DONUT_COLORS.length];
+  return (
+    <div className={clsx('flex items-center gap-2', height)}>
+      <div className="flex-1 min-w-0 h-full" dir="ltr">
+        <ResponsiveContainer>
+          <PieChart margin={{ top: 8, right: 8, bottom: 8, left: 8 }}>
+            <Pie
+              data={rows}
+              dataKey="total"
+              nameKey="name"
+              innerRadius="46%"
+              outerRadius="92%"
+              paddingAngle={1}
+              stroke="#fff"
+              strokeWidth={2}
+              labelLine={false}
+              isAnimationActive={false}
+              label={sliceLabel}
+            >
+              {rows.map((row, i) => <Cell key={row.name} fill={color(i)} />)}
+            </Pie>
+            <Tooltip
+              contentStyle={TOOLTIP_STYLE}
+              formatter={(v: any, name: any) => [nisExact(v), name]}
+            />
+          </PieChart>
+        </ResponsiveContainer>
+      </div>
+      {/* The names sit on the far side of the ring, as they do on the panel this follows. */}
+      <ul className="w-28 md:w-36 shrink-0 space-y-1.5 text-[12px] text-ink-2">
+        {rows.map((row, i) => (
+          <li key={row.name} className="flex items-center justify-end gap-1.5" title={`${row.name} · ${nisExact(row.total)}`}>
+            <span className="truncate">{row.name}</span>
+            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: color(i) }} />
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

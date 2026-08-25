@@ -45,6 +45,9 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
+import {
+  isExpenseBasis, isPeriodKey, overview, recognitionRates, setRecognitionRates,
+} from './overview.js';
 import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
@@ -235,6 +238,29 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
     recentInvoices,
     band,
   });
+}));
+
+/**
+ * The סקירה panel: the period's income against its recognised expenses, the VAT the two leave
+ * owing, and where the money that came in came from.
+ *
+ * It is a separate read from `/dashboard` because it answers for a period rather than a year,
+ * and because the expense side is weighted by what the tax return recognises — two questions
+ * the year cards below it do not ask.
+ */
+router.get('/dashboard/overview', requireOwner, handle((req, res) => {
+  const period = isPeriodKey(req.query.period) ? req.query.period : 'current_year';
+  const basis = isExpenseBasis(req.query.basis) ? req.query.basis : 'recognized';
+  res.json(overview(period, basis));
+}));
+
+/** The deduction ratios the panel weights by, so an accountant's own numbers can replace them. */
+router.get('/settings/expense-recognition', requireOwner, handle((_req, res) => {
+  res.json({ rates: recognitionRates() });
+}));
+
+router.put('/settings/expense-recognition', requireOwner, handle((req, res) => {
+  res.json({ rates: setRecognitionRates(req.body?.rates ?? {}) });
 }));
 
 // ============ inbox — מה דורש טיפול ============

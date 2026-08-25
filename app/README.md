@@ -146,17 +146,37 @@ one click over, to **סקירה** (`/overview`).
 
 ### Dashboard (סקירה)
 
-The overview chart is income **and** expenses month by month, with profit drawn over them as
-a line — it is the difference between the two, not a third quantity competing for the same
-space. A year picker scopes the whole page, and a לפני מע"מ / כולל מע"מ switch decides
-whether the figures count VAT: profit before VAT is the real one, since neither VAT figure is
-the business's money, while the totals with VAT are what actually moved through the bank.
+The page opens on one panel (`GET /api/dashboard/overview`, `app/server/overview.ts`) holding
+three figures — **סה"כ הכנסות**, **סה"כ הוצאות מוכרות**, **סה"כ מע"מ לתשלום** — the months
+behind them, and where the money that came in came from. Each figure carries a badge saying
+how it moved against the same window one unit earlier, so "this year to 25 August" is measured
+against last year to 25 August rather than against a full twelve months it was never going to
+match.
 
-The money row above it — הכנסות, הוצאות, רווח for the year and רווח for the current month —
-and the מע"מ card below both read the same monthly series the דוחות page reports, so the
-dashboard and the reports can never tell different stories. The two outstanding-balance cards
+Two controls decide what the panel counts:
+
+- **לתקופה** — שנה נוכחית, שנה קודמת, רבעון נוכחי, חודש נוכחי, חודש קודם, or 12 החודשים
+  האחרונים. A period still running ends *today* rather than at its calendar end: drawing this
+  year to December would put four empty months on the chart and make every comparison look
+  like a collapse. The chosen window's year also scopes the cards below the panel, so the page
+  never asks the same question twice in two places.
+- **חישוב הוצאות** — `מוכר למס הכנסה` weights every expense by the share its category is
+  deductible at (45% on the car, 15% on the household bills a home office sits behind, 80% on
+  communications — the ratios `expense-inventory-2026.md` already books by), and scales the
+  input VAT on it the same way. `סכום מלא` turns that off and shows the money as it actually
+  left the bank. The ratios are defaults, not a rule: `expense_recognition_rates` in settings
+  overrides any of them by category name (`GET`/`PUT /api/settings/expense-recognition`).
+
+The chart stacks each side's VAT on top of it rather than drawing four competing bars — the
+VAT is the part of that bar that was never the business's money, not a quantity of its own.
+Beside it, **פילוח תקבולים לפי לקוחות עיקריים** rings the period's *receipts* by client: money
+that has actually come in, so a large invoice still sitting open does not colour a slice it has
+not paid for yet.
+
+Income comes from the same monthly series the דוחות page reports, so the dashboard and the
+reports can never tell different stories. The two outstanding-balance cards below the panel
 (open invoices, uninvoiced works) are deliberately *not* year-scoped: an invoice issued last
-December and still unpaid is money owed now, whichever year is on screen.
+December and still unpaid is money owed now, whichever period is on screen.
 
 ## Reports (דוחות)
 
