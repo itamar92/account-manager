@@ -29,7 +29,8 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
-  BUSINESS_TYPES, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, activeBandMembers, bandMemberByKey,
+  BUSINESS_TYPES, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, FUND_TRANSFERRED,
+  activeBandMembers, bandMemberByKey,
   deleteEventCascade, deleteExpenseRow, eventShares, eventSharesTotal, listBandMembers,
   setEventShares, withShares,
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
@@ -877,6 +878,118 @@ export function bandFund() {
     gap: actual === null ? null : round2(actual - computed),
   };
 }
+
+/**
+ * The same four lines, with the rows behind each one — and, more to the point, where the gap
+ * against the bank comes from.
+ *
+ * `bandFund` answers "what should be in the account"; it cannot say why that disagrees with
+ * what is. This does, by naming the four things that make the books and the bank diverge and
+ * pricing each of them, so a gap of thousands stops being a mystery and becomes a list.
+ *
+ * The signs are all in terms of the gap itself — `actual − computed` — so a suspect's `effect`
+ * is how much of that gap it accounts for, and what is left over after all four is genuinely
+ * unexplained: a receipt or a payment nobody entered.
+ */
+export function bandFundExplain() {
+  const events = db.prepare('SELECT * FROM band_events ORDER BY date').all() as any[];
+  const general = db.prepare('SELECT * FROM band_general_expenses ORDER BY date').all() as any[];
+  const expenseRows = db.prepare('SELECT * FROM band_event_expenses').all() as any[];
+  const fund = bandFund();
+
+  const num = (value: unknown) => round2(Number(value) || 0);
+  const showRow = (event: any, amount: number) => ({
+    id: event.id, venue: event.venue, date: event.date,
+    status: event.payment_status, amount,
+  });
+  const generalRow = (row: any, amount: number) => ({
+    id: row.id, description: row.description, date: row.date, paid_by: row.paid_by, amount,
+  });
+  const total = (rows: Array<{ amount: number }>) =>
+    round2(rows.reduce((sum, r) => sum + r.amount, 0));
+  const line = (rows: Array<{ amount: number }>) => ({ rows, total: total(rows), count: rows.length });
+
+  // ---- the four lines of the sum, itemised ----
+  const received = line(events
+    .filter((e) => moneyReceived(e.payment_status) && num(e.amount_pre_vat) !== 0)
+    .map((e) => showRow(e, num(e.amount_pre_vat))));
+  const toSuppliers = line(events
+    .filter((e) => num(e.expenses_paid) !== 0)
+    .map((e) => showRow(e, num(e.expenses_paid))));
+  const toMembers = line(events
+    .filter((e) => e.paid_to_musicians && num(e.profit) !== 0)
+    .map((e) => showRow(e, num(e.profit))));
+  const fromFund = line(general
+    .filter((g) => String(g.paid_by ?? '').trim() === FUND_PAYER && num(g.amount) !== 0)
+    .map((g) => generalRow(g, num(g.amount))));
+
+  // ---- the gap, itemised ----
+
+  // A show at «התקבל» has been paid, so the sum counts its income — but the payment landed in
+  // the private account and the transfer into the band's has not happened. Every shekel of this
+  // is money the calculation holds and the bank has never seen.
+  const awaitingTransfer = line(events
+    .filter((e) => e.payment_status === 'received' && num(e.amount_pre_vat) !== 0)
+    .map((e) => showRow(e, num(e.amount_pre_vat))));
+
+  // A transfer that did happen rarely moves the whole of the show's income: מע"מ belongs to the
+  // state and a provision for מס הכנסה stays behind for it. The sum counts the income; the
+  // account got the transfer. The difference between the two is recorded per show, so this is
+  // arithmetic rather than an estimate.
+  const withheld = line(events
+    .filter((e) => e.payment_status === FUND_TRANSFERRED && e.fund_transfer_amount != null)
+    .map((e) => ({
+      ...showRow(e, round2(num(e.amount_pre_vat) - num(e.fund_transfer_amount))),
+      income: num(e.amount_pre_vat),
+      transferred: num(e.fund_transfer_amount),
+    }))
+    .filter((r) => Math.abs(r.amount) >= 0.5));
+
+  // Costs the sum takes off the float although the float did not pay them: the cost row names a
+  // member, so that money came out of somebody's own pocket.
+  const rowByEvent = new Map<string, any>();
+  for (const row of expenseRows) if (row.event_id) rowByEvent.set(row.event_id, row);
+  const memberPaidCosts = line(events
+    .filter((e) => {
+      const row = rowByEvent.get(e.id);
+      return !!row && !!memberByName(row.paid_by) && num(e.expenses_paid) !== 0;
+    })
+    .map((e) => ({ ...showRow(e, num(e.expenses_paid)), paid_by: rowByEvent.get(e.id).paid_by })));
+
+  // The other direction: a cost a member fronted and has since been squared up for. The money
+  // left the float when they were paid back, but the sum only subtracts what the float paid
+  // directly, so it is still counted as being there.
+  const refundedToMembers = line(general
+    .filter((g) => g.paid && !!memberByName(g.paid_by) && num(g.amount) !== 0)
+    .map((g) => generalRow(g, num(g.amount))));
+
+  const suspects = [
+    { key: 'awaitingTransfer', effect: -awaitingTransfer.total, ...awaitingTransfer },
+    { key: 'withheld', effect: -withheld.total, ...withheld },
+    { key: 'memberPaidCosts', effect: memberPaidCosts.total, ...memberPaidCosts },
+    { key: 'refundedToMembers', effect: -refundedToMembers.total, ...refundedToMembers },
+  ].filter((s) => s.count > 0);
+
+  const explained = round2(suspects.reduce((sum, s) => sum + s.effect, 0));
+
+  // What the suppliers are still owed is not a gap — that money is genuinely in the account,
+  // and correctly counted. It is here because it is the next question anybody asks of a float
+  // that looks healthier than it is.
+  const owedToSuppliers = round2(expenseRows.reduce((sum, r) => sum + expenseOutstanding(r), 0));
+
+  return {
+    fund,
+    lines: { received, toSuppliers, toMembers, fromFund },
+    suspects,
+    explained,
+    unexplained: fund.gap === null ? null : round2(fund.gap - explained),
+    owedToSuppliers,
+  };
+}
+
+router.get('/moonlight/fund/explain', requireAuth, handle((_req, res) => {
+  res.json({ explain: bandFundExplain() });
+}));
 
 /** Records what the account actually holds. Empty clears it back to "nobody has said". */
 router.post('/moonlight/fund', requireOwner, handle((req, res) => {

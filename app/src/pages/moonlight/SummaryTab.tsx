@@ -1,13 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { get, post, put, nis } from '../../api';
 import { PerShowChart } from '../../charts';
 import { Button, Card, Empty, FilterBar, Input, Modal, MonthSelect, PageHeader, YearSelect } from '../../ui';
-import { paymentStatusLabel, roleName } from './shared';
+import { paymentStatusLabel, roleName, showHref } from './shared';
 import { DivisionTable } from './DivisionTable';
+import { FundExplainer } from './FundExplainer';
 
 const yearBounds = (year: number) => ({ from: `${year}-01-01`, to: `${year}-12-31` });
+
+/** Wide enough to hold every year the band has ever played, for «כל השנים». */
+const ALL_YEARS = { from: '2000-01-01', to: '2099-12-31' };
 
 /** The bounds of one month, for narrowing the summary to a single period. */
 const monthBounds = (year: number, month: number) => {
@@ -28,15 +32,31 @@ const SEGMENTS = ['#9A7CF0', '#BE9520', '#4A4170', '#6B45D6', '#C9A227'];
  */
 export function SummaryTab({ onError, isOwner }: { onError: (message: string) => void; isOwner: boolean }) {
   const thisYear = new Date().getFullYear();
-  const [range, setRange] = useState(yearBounds(thisYear));
-  const [month, setMonth] = useState<number | ''>('');
-  const [custom, setCustom] = useState(false);
+  const location = useLocation();
+  // The range lives in the URL, so a show opened from one of the lists below and then closed
+  // comes back to the year that was on screen rather than to the year the page opens on. The
+  // keys are the summary's own: the tables' period selects share the page and must not collide.
+  const [params, setParams] = useSearchParams();
+  const rawYear = params.get('sumYear');
+  const year: number | '' = rawYear === null ? thisYear
+    : rawYear === 'all' ? ''
+    : (parseInt(rawYear, 10) || '');
+  const rawMonth = params.get('sumMonth');
+  const month: number | '' = year === '' || rawMonth === null ? '' : (parseInt(rawMonth, 10) || '');
+  const customFrom = params.get('sumFrom');
+  const customTo = params.get('sumTo');
+  const custom = !!(customFrom && customTo);
+  const range = custom ? { from: customFrom as string, to: customTo as string }
+    : year === '' ? ALL_YEARS
+    : month === '' ? yearBounds(year)
+    : monthBounds(year, month);
   const [summary, setSummary] = useState<any>(null);
   const [fund, setFund] = useState<any>(null);
   const [division, setDivision] = useState<any>(null);
   const [followUps, setFollowUps] = useState<any>(null);
   const [howOpen, setHowOpen] = useState(false);
   const [fundOpen, setFundOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
   const [fundDraft, setFundDraft] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -55,19 +75,34 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
   useEffect(() => { loadFollowUps(); }, []);
 
   // Which year the range is showing, or '' when it spans more than one.
-  const selectedYear = !custom && range.from.slice(0, 4) === range.to.slice(0, 4)
-    ? parseInt(range.from.slice(0, 4), 10)
-    : '';
+  const selectedYear = custom ? '' : year;
 
-  const setPeriod = (year: number | '', nextMonth: number | '') => {
-    setCustom(false);
-    setMonth(year === '' ? '' : nextMonth);
-    setRange(
-      year === '' ? { from: '2000-01-01', to: '2099-12-31' }
-        : nextMonth === '' ? yearBounds(year)
-        : monthBounds(year, nextMonth)
-    );
+  /**
+   * One write for the whole range, whichever way it was chosen.
+   *
+   * A year and a custom range are two ways of saying the same thing, so they are set together:
+   * writing them separately would leave a stale pair of dates in the URL long enough for the
+   * summary to load the wrong range.
+   */
+  const writeRange = (next:
+    | { custom: true; from: string; to: string }
+    | { custom: false; year: number | ''; month: number | '' }) => {
+    const p = new URLSearchParams(params);
+    if (next.custom) {
+      p.set('sumFrom', next.from);
+      p.set('sumTo', next.to);
+    } else {
+      p.delete('sumFrom');
+      p.delete('sumTo');
+      p.set('sumYear', next.year === '' ? 'all' : String(next.year));
+      if (next.year === '' || next.month === '') p.delete('sumMonth');
+      else p.set('sumMonth', String(next.month));
+    }
+    setParams(p, { replace: true });
   };
+
+  const setPeriod = (nextYear: number | '', nextMonth: number | '') =>
+    writeRange({ custom: false, year: nextYear, month: nextYear === '' ? '' : nextMonth });
 
   /** Hands out every show whose money has arrived and whose profit has not been shared yet. */
   const payMembers = async () => {
@@ -115,19 +150,26 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
       />
 
       <FilterBar>
-        <YearSelect value={selectedYear} onChange={(year) => setPeriod(year, month)} />
+        <YearSelect value={selectedYear} onChange={(next) => setPeriod(next, month)} />
         <MonthSelect
           value={selectedYear === '' ? '' : month}
           disabled={selectedYear === ''}
           onChange={(next) => setPeriod(selectedYear, next)}
         />
-        <Button variant="ghost" onClick={() => setCustom(!custom)}>
+        <Button
+          variant="ghost"
+          onClick={() => (custom
+            ? setPeriod(thisYear, '')
+            : writeRange({ custom: true, from: range.from, to: range.to }))}
+        >
           {custom ? 'לפי שנה' : 'טווח מותאם'}
         </Button>
         {custom && (
           <>
-            <Input type="date" value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
-            <Input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
+            <Input type="date" value={range.from}
+              onChange={(e) => writeRange({ custom: true, from: e.target.value, to: range.to })} />
+            <Input type="date" value={range.to}
+              onChange={(e) => writeRange({ custom: true, from: range.from, to: e.target.value })} />
           </>
         )}
       </FilterBar>
@@ -159,7 +201,7 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
                     {awaiting.slice(0, 5).map((row: any, i: number) => (
                       <Link
                         key={row.id}
-                        to={`/moonlight/shows/${row.id}`}
+                        to={showHref(row.id, location)}
                         className="flex items-center justify-between gap-3 text-[14.5px] hover:opacity-80"
                       >
                         <span className="flex items-center gap-2 min-w-0">
@@ -248,11 +290,19 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
                   is — the computed figure drops to a line of the working beside the gap, so
                   updating the balance moves the number the band reads. */}
               <div className="flex-1 min-w-[17rem]">
-                <div className="flex items-center justify-between gap-3 mb-1">
+                <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
                   <h2 className="ser text-lg">קופת הלהקה</h2>
-                  <span className="text-[12.5px] text-muted">
-                    {fund.actual === null ? 'מחושב מהתקבולים והתשלומים' : 'לפי היתרה שנמסרה בחשבון'}
-                  </span>
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-[12.5px] text-muted">
+                      {fund.actual === null ? 'מחושב מהתקבולים והתשלומים' : 'לפי היתרה שנמסרה בחשבון'}
+                    </span>
+                    <button
+                      onClick={() => setExplainOpen(true)}
+                      className="text-[13px] font-semibold text-moon border border-line rounded-full px-3 py-1.5 hover:bg-soft"
+                    >
+                      איך זה מחושב?
+                    </button>
+                  </div>
                 </div>
                 <div className="num ser text-4xl text-moon leading-tight">
                   {nis(fund.actual === null ? fund.computed : fund.actual)}
@@ -276,12 +326,15 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
                 <div className="num text-2xl font-extrabold tracking-[-0.03em]">
                   {fund.actual === null ? '—' : nis(fund.actual)}
                 </div>
-                <div className="flex items-center justify-between text-[13.5px]">
-                  <span className="text-muted">פער מהחישוב</span>
+                <button
+                  onClick={() => setExplainOpen(true)}
+                  className="flex items-center justify-between text-[13.5px] w-full text-start hover:text-ink"
+                >
+                  <span className="text-muted underline decoration-dotted underline-offset-4">פער מהחישוב</span>
                   <span className={clsx('num font-bold', fund.gap === null ? 'text-faint' : fund.gap === 0 ? 'text-pos' : 'text-neg')}>
                     {fund.gap === null ? 'לא נבדק' : nis(fund.gap)}
                   </span>
-                </div>
+                </button>
                 {isOwner && (
                   <Button
                     className="mt-auto"
@@ -309,7 +362,7 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
                 {followUps.missingAssignments.slice(0, 6).map((row: any) => (
                   <Link
                     key={row.id}
-                    to={`/moonlight/shows/${row.id}`}
+                    to={showHref(row.id, location)}
                     className="flex items-center justify-between gap-3 text-sm border-b border-soft pb-2 last:border-0 hover:text-moon"
                   >
                     <span>
@@ -332,6 +385,9 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
       <Modal title="איך חושב מה שמגיע לכל אחד" open={howOpen} onClose={() => setHowOpen(false)} size="xl">
         <DivisionTable division={division} />
       </Modal>
+
+      {/* Why the number is what it is, and why the bank says something else. */}
+      <FundExplainer open={explainOpen} onClose={() => setExplainOpen(false)} />
 
       <Modal title="עדכון יתרת הקופה" open={fundOpen} onClose={() => setFundOpen(false)}>
         <div className="space-y-3">
@@ -364,7 +420,8 @@ function FundLine({ label, value, tone, sign }: { label: string; value: number; 
   return (
     <div className="flex justify-between border-b border-soft pb-2">
       <span className="text-body">{label}</span>
-      <span className={clsx('num font-semibold', tone)}>{sign}{nis(value)}</span>
+      {/* Left-to-right, so a leading «+» stays on the number rather than drifting to its end. */}
+      <span dir="ltr" className={clsx('num font-semibold', tone)}>{sign}{nis(value)}</span>
     </div>
   );
 }

@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Empty, Input, Modal, MoneyInput, SelectCell, fieldClass } from '../../ui';
 import {
-  FUND_TRANSFERRED, PAYMENT_STATUSES, divisionSplitLabel, moneyReceived, roleName, useBandMembers,
+  FUND_TRANSFERRED, PAYMENT_STATUSES, RETURN_PARAM, divisionSplitLabel, moneyReceived, roleName,
+  showReturn, useBandMembers,
 } from './shared';
 import { fetchTransferRates, splitTransfer } from './transfer';
 
@@ -52,7 +53,11 @@ const TRACK = [
 export function ShowDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  // The list this show was opened from, filters and all. Absent — a bookmark, a link somebody
+  // was sent — the shows list is the sensible place to be put down.
+  const back = showReturn(searchParams.get(RETURN_PARAM));
   const isOwner = user?.role === 'owner';
 
   const [data, setData] = useState<any>(null);
@@ -158,7 +163,7 @@ export function ShowDetail() {
     if (!confirm(`למחוק את «${event.venue}»?${suffix}`)) return;
     try {
       await del(`/moonlight/events/${event.id}?exclude_from_calendar=1`);
-      navigate('/moonlight/shows');
+      navigate(back.to);
     } catch (err: any) { setError(err.message); }
   };
 
@@ -178,7 +183,7 @@ export function ShowDetail() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-[13.5px] text-muted">
-        <Link to="/moonlight/shows" className="hover:text-ink">הופעות</Link>
+        <Link to={back.to} className="hover:text-ink">{back.label}</Link>
         <span>›</span>
         <span className="text-ink font-semibold">{event.venue}</span>
       </div>

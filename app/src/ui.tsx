@@ -1,6 +1,7 @@
 import React from 'react';
 import { clsx } from 'clsx';
 import { ChevronDown } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 
 export function Card({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
@@ -790,7 +791,7 @@ export function MonthSelect({ value, onChange, disabled, label }: {
  * The year+month pair the lists filter by, and the query string they send. Kept here so every
  * table filters the same way and the server sees one shape.
  */
-export function usePeriodFilter(initialYear: number | '' = new Date().getFullYear()) {
+export function usePeriodFilter(initialYear: number | '' = new Date().getFullYear()): PeriodFilter {
   const [year, setYear] = React.useState<number | ''>(initialYear);
   const [month, setMonth] = React.useState<number | ''>('');
 
@@ -811,7 +812,81 @@ export function usePeriodFilter(initialYear: number | '' = new Date().getFullYea
 }
 
 /** What a page holding a period filter passes down to the tables that share it. */
-export type PeriodFilter = ReturnType<typeof usePeriodFilter>;
+export interface PeriodFilter {
+  year: number | '';
+  month: number | '';
+  setYear: (value: number | '') => void;
+  setMonth: (value: number | '') => void;
+  /** The year/month pair as the server expects to receive it. */
+  params: () => URLSearchParams;
+}
+
+/**
+ * The last period actually chosen, keyed by the parameter it is written under.
+ *
+ * The URL is where a period lives, but the sidebar's links carry no query string — so without
+ * this, walking from one tab to the next would drop the year every time. It is deliberately
+ * module-level and deliberately not persisted: it is the memory of this visit, nothing more.
+ */
+const LAST_PERIOD = new Map<string, { year: number | ''; month: number | '' }>();
+
+/**
+ * The same filter, kept in the address bar instead of in component state.
+ *
+ * A list you leave and come back to — a show opened out of it, and then the way back — is the
+ * list you left, because the year and month you chose travelled in the URL and are still there
+ * when the page mounts again. It is also what makes a filtered list something you can send
+ * somebody, which the state version never was.
+ *
+ * `keys` names the two parameters, so two filters on one page do not overwrite each other.
+ * Every write replaces the entry rather than pushing one, so «back» leaves the page instead of
+ * stepping through every year you tried on the way.
+ */
+export function useUrlPeriodFilter(
+  initialYear: number | '' = new Date().getFullYear(),
+  keys: { year: string; month: string } = { year: 'year', month: 'month' }
+): PeriodFilter {
+  const [params, setParams] = useSearchParams();
+
+  // Absent means nobody has chosen, which is not the same as choosing "all years" — that is
+  // written out as `all`, so it survives a reload like any other choice. With nothing in the
+  // URL at all we fall back to the last period actually chosen, which is what keeps the year
+  // you are working in from resetting every time the sidebar moves you to another tab.
+  const raw = params.get(keys.year);
+  const chosen = LAST_PERIOD.get(keys.year);
+  const year: number | '' = raw === null ? (chosen ? chosen.year : initialYear)
+    : raw === 'all' ? ''
+    : (parseInt(raw, 10) || '');
+  const rawMonth = params.get(keys.month);
+  const month: number | '' = year === ''
+    ? ''
+    : rawMonth !== null ? (parseInt(rawMonth, 10) || '')
+    : raw === null && chosen ? chosen.month
+    : '';
+
+  const write = (nextYear: number | '', nextMonth: number | '') => {
+    LAST_PERIOD.set(keys.year, { year: nextYear, month: nextYear === '' ? '' : nextMonth });
+    const next = new URLSearchParams(params);
+    next.set(keys.year, nextYear === '' ? 'all' : String(nextYear));
+    if (nextYear === '' || nextMonth === '') next.delete(keys.month);
+    else next.set(keys.month, String(nextMonth));
+    setParams(next, { replace: true });
+  };
+
+  return {
+    year,
+    month,
+    // A month belongs to a year; dropping to "all years" leaves it pointing at nothing.
+    setYear: (next: number | '') => write(next, next === '' ? '' : month),
+    setMonth: (next: number | '') => write(year, next),
+    params: () => {
+      const qs = new URLSearchParams();
+      if (year !== '') qs.set('year', String(year));
+      if (year !== '' && month !== '') qs.set('month', String(month));
+      return qs;
+    },
+  };
+}
 
 /** The two selects together, in the order every filter bar shows them. */
 export function PeriodSelect({ year, month, onYearChange, onMonthChange, allowAll = true }: {
