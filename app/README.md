@@ -120,10 +120,15 @@ cannot demote yourself.
   carried no field this app recognises as saying which. It is a real third state rather than a
   tidier default, because the alternative is what the list used to do: read a payload it could
   not understand and show the account's every filed expense as טרם דווח, which is both wrong
-  and invisible. `npm run expenses:probe` prints, from the payloads the sync kept in
-  `expenses.raw` and from one expense fetched in full, which keys Morning actually sends and
-  what they hold — the way to settle which field carries the fact for a given account, instead
-  of guessing at a name that sounds right.
+  and invisible. `GET /api/expenses/status-audit` (owner) and `npm run expenses:probe` both
+  report, from the payloads the sync kept in `expenses.raw`, which keys Morning actually sends
+  and what the ones carrying a code hold — the way to settle which field carries the fact for a
+  given account, instead of guessing at a name that sounds right. They look for the shape of an
+  enum rather than for a promising name, because the names have already misled: the same
+  payloads put values outside the issued-document enum (405, 20) in the key read as
+  `documentType`, so the מסמך column is blank for them and an expense evidently does not use an
+  issued document's fields or codes. The probe additionally fetches one expense in full, since
+  Morning's search returns a lighter row than the record behind it.
 
 - **דוחות** (`/reports`) turns the same books into the two filings they have to produce —
   see [Reports](#reports-דוחות) below.

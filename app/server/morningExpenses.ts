@@ -333,8 +333,17 @@ export function expenseCategories(): string[] {
   ).map((row) => row.category);
 }
 
-/** Keys worth looking at when the reported/open mapping is the thing in question. */
+/** Names that say outright that a key carries the reported/open fact. */
 const STATUS_LIKE = /report|status|closed|lock|period|approv/i;
+
+/**
+ * How many distinct values a key may take and still be reporting a code rather than a
+ * quantity. A document number or an amount is different in every payload; an enum is not.
+ */
+const ENUM_MAX_VALUES = 12;
+
+/** Payloads below which "few distinct values" means nothing, so every scalar key is shown. */
+const ENUM_MIN_PAYLOADS = 8;
 
 export interface ExpenseStatusAudit {
   counts: Record<ExpenseStatus | string, number>;
@@ -342,10 +351,19 @@ export interface ExpenseStatusAudit {
   withRaw: number;
   /** Every top-level key Morning's expense payloads carry, and how many carry it. */
   keys: Array<{ key: string; count: number }>;
-  /** Of those, the ones whose name suggests they carry the reported/open fact, with values. */
-  statusKeys: Array<{ key: string; values: Array<{ value: string; count: number }> }>;
+  /**
+   * The keys that carry a code: named after a status, or taking too few distinct values
+   * across the payloads to be anything else. Listed with the values they hold and how often.
+   */
+  codeKeys: Array<{ key: string; values: Array<{ value: string; count: number }> }>;
   /** A Morning id to fetch in full, in case the search payload is lighter than the record. */
   sampleId: string | null;
+  /**
+   * One payload as Morning sent it. The key list above finds a field that names itself; this
+   * is for when the fact is carried by one that does not. It is the only part of the audit
+   * holding a supplier name and an amount.
+   */
+  sample: unknown;
 }
 
 /**
@@ -353,9 +371,14 @@ export interface ExpenseStatusAudit {
  *
  * This exists because the field carrying דווח/טרם דווח has been guessed at twice, and a
  * guess is not checkable: it either works or it silently marks the whole list open. The
- * audit answers it from the account's own data — which keys Morning really sends, and what
- * values they hold — so the mapper can be pointed at the right one instead of at another
- * plausible name. `bin/expense-status-probe.ts` prints it.
+ * audit answers it from the account's own data instead.
+ *
+ * It looks for enums rather than for names, because the names have already proved
+ * unreliable — the same payloads put values outside the issued-document enum in the key
+ * this app reads as `documentType`, so an expense evidently does not use the field names or
+ * the codes an issued document does. A key holding one of a handful of values across
+ * hundreds of expenses is carrying a code whatever it is called, and comparing those values
+ * against what Morning itself shows for the same expense is what identifies the right one.
  */
 export function expenseStatusAudit(limit = 500): ExpenseStatusAudit {
   const counts: Record<string, number> = {};
@@ -371,6 +394,9 @@ export function expenseStatusAudit(limit = 500): ExpenseStatusAudit {
 
   const keyCounts = new Map<string, number>();
   const values = new Map<string, Map<string, number>>();
+  /** Keys seen holding an object or an array — a shape, not a code. */
+  const nested = new Set<string>();
+  const parsed: any[] = [];
 
   for (const row of rows) {
     let payload: any;
@@ -378,32 +404,43 @@ export function expenseStatusAudit(limit = 500): ExpenseStatusAudit {
     // worth of evidence out of hundreds.
     try { payload = JSON.parse(row.raw); } catch { continue; }
     if (!payload || typeof payload !== 'object') continue;
+    parsed.push(payload);
 
     for (const [key, value] of Object.entries(payload)) {
       keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
-      if (!STATUS_LIKE.test(key)) continue;
-      // Objects are summarised rather than printed: what matters here is which key holds the
-      // fact and how many distinct values it takes, not a wall of nested JSON.
+      if (value !== null && typeof value === 'object') nested.add(key);
+
       const shown = value === null ? 'null'
         : typeof value === 'object' ? JSON.stringify(value).slice(0, 120)
         : String(value);
       const seen = values.get(key) ?? new Map<string, number>();
-      seen.set(shown, (seen.get(shown) ?? 0) + 1);
+      // The map is capped: a key with hundreds of distinct values has already disqualified
+      // itself as an enum, and there is nothing to learn from collecting the rest.
+      if (seen.has(shown) || seen.size <= ENUM_MAX_VALUES * 4) {
+        seen.set(shown, (seen.get(shown) ?? 0) + 1);
+      }
       values.set(key, seen);
     }
   }
 
   const byCountDesc = <T extends { count: number }>(a: T, b: T) => b.count - a.count;
+  const enough = parsed.length >= ENUM_MIN_PAYLOADS;
+
+  const codeKeys = [...values]
+    .filter(([key, seen]) =>
+      STATUS_LIKE.test(key) || (!nested.has(key) && (!enough || seen.size <= ENUM_MAX_VALUES)))
+    .map(([key, seen]) => ({
+      key,
+      values: [...seen].map(([value, count]) => ({ value, count })).sort(byCountDesc),
+    }));
 
   return {
     counts,
     withRaw: rows.length,
     keys: [...keyCounts].map(([key, count]) => ({ key, count })).sort(byCountDesc),
-    statusKeys: [...values].map(([key, seen]) => ({
-      key,
-      values: [...seen].map(([value, count]) => ({ value, count })).sort(byCountDesc),
-    })),
+    codeKeys,
     sampleId: rows.find((row) => row.external_id)?.external_id ?? null,
+    sample: parsed[0] ?? null,
   };
 }
 

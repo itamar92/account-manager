@@ -16,7 +16,8 @@ import {
   pullFromMorning, pushInvoiceToMorning,
 } from './morningSync.js';
 import {
-  expenseCategories, expensesStatus, expensesSummary, listExpenses, pullExpensesFromMorning,
+  expenseCategories, expenseStatusAudit, expensesStatus, expensesSummary, listExpenses,
+  pullExpensesFromMorning,
 } from './morningExpenses.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
@@ -613,6 +614,23 @@ router.get('/expenses', requireOwner, handle((req, res) => {
     categories: expenseCategories(),
     status: expensesStatus(),
   });
+}));
+
+/**
+ * What Morning's expense payloads actually say — the same audit `bin/expense-status-probe.ts`
+ * prints, over HTTP.
+ *
+ * It is a route and not only a script because the question it answers ("which field carries
+ * דווח in this account?") comes up while looking at the הוצאות page, and opening a URL is
+ * something that can be done from there. It reads the payloads the sync kept in
+ * `expenses.raw` and reports the keys Morning sends and what the status-like ones hold.
+ *
+ * `sample` is one payload in full, so a field that does not announce itself in its name can
+ * still be found. That one carries a supplier name and an amount — everything else in the
+ * response is field names and enum values.
+ */
+router.get('/expenses/status-audit', requireOwner, handle((_req, res) => {
+  res.json(expenseStatusAudit());
 }));
 
 // ============ moonlight (owner + band members) ============

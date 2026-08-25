@@ -13,7 +13,9 @@
  *  1. how the stored rows are split between דווח / טרם דווח / לא ידוע;
  *  2. every top-level key Morning's expense payloads carry — the field being looked for is
  *     in this list, under whatever name it really has;
- *  3. the values held by the keys whose names suggest they carry it.
+ *  3. the keys that carry a code — named after a status, or holding too few distinct values
+ *     across the payloads to be anything but an enum. Names have already misled this app
+ *     once, so this looks for the shape of a code rather than for a promising word.
  *
  * Then, if credentials are set, it fetches one expense in full: Morning's search returns a
  * lighter row than the record behind it, so a field absent from the list may still be there.
@@ -52,14 +54,13 @@ if (!audit.withRaw) {
 console.log('\n=== keys Morning sends on an expense (key × how many payloads have it) ===');
 for (const { key, count } of audit.keys) console.log(`  ${key.padEnd(28)} ${count}`);
 
-console.log('\n=== the status-like keys, and the values they hold ===');
-if (!audit.statusKeys.length) {
-  console.log('  — none. No key in these payloads is named after a status or a report at all,');
+console.log('\n=== the keys carrying a code, and the values they hold ===');
+if (!audit.codeKeys.length) {
+  console.log('  — none. Nothing in these payloads looks like a status or an enum at all,');
   console.log('    which is why every row reads לא ידוע. The answer is either in the full');
-  console.log('    record fetched below, or in a key from the list above that does not say so');
-  console.log('    in its name.');
+  console.log('    record fetched below, or in the sample payload.');
 }
-for (const { key, values } of audit.statusKeys) {
+for (const { key, values } of audit.codeKeys) {
   console.log(`  ${key}:`);
   for (const { value, count } of values.slice(0, 12)) console.log(`      ${String(value).padEnd(24)} × ${count}`);
 }
