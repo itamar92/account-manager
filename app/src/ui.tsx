@@ -126,9 +126,12 @@ const badgeStyles: Record<string, [string, string]> = {
   issued: ['bg-warn-soft', 'text-warn-ink'],
   cancelled: ['bg-soft', 'text-muted'],
   draft: ['bg-soft', 'text-muted'],
-  // Expenses: an open one is still editable in Morning, a reported one is with the accountant.
+  // Expenses: an open one is still editable in Morning, a reported one is with the accountant,
+  // and an unknown one is Morning not having said which — muted, since it is a gap in what was
+  // synced rather than a state of the expense.
   open: ['bg-warn-soft', 'text-warn-ink'],
   reported: ['bg-pos-soft', 'text-pos'],
+  unknown: ['bg-soft', 'text-muted'],
 };
 
 const badgeLabels: Record<string, string> = {
@@ -140,6 +143,7 @@ const badgeLabels: Record<string, string> = {
   draft: 'טיוטה',
   open: 'טרם דווח',
   reported: 'דווח',
+  unknown: 'סטטוס לא ידוע',
 };
 
 export function StatusBadge({ status }: { status: string }) {

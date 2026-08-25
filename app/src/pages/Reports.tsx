@@ -86,7 +86,9 @@ function VatReport({ report, onToggle }: { report: any; onToggle: ToggleFn }) {
     <div className="space-y-6">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatCard label='מע"מ עסקאות' value={nis(totals.incomeVat)} sub={`על ${nis(totals.income)} מחזור`} accent="text-warn" />
-        <StatCard label='מע"מ תשומות' value={nis(totals.expensesVat)} sub={`על ${nis(totals.expenses)} הוצאות`} accent="text-pos" />
+        {/* Both figures here are the deductible ones — what the filing may claim, not what was
+            paid out. An expense deducted at 80% contributes 80% of itself to each. */}
+        <StatCard label='מע"מ תשומות' value={nis(totals.expensesVat)} sub={`על ${nis(totals.expenses)} הוצאות מוכרות`} accent="text-pos" />
         <StatCard
           label={totals.vatDue >= 0 ? 'סה"כ לתשלום השנה' : 'סה"כ להחזר השנה'}
           value={nis(Math.abs(totals.vatDue))}
@@ -99,6 +101,14 @@ function VatReport({ report, onToggle }: { report: any; onToggle: ToggleFn }) {
           sub="ניתן לשינוי בהגדרות"
         />
       </div>
+
+      {report.shifted_expenses > 0 && (
+        <div className="text-sm text-muted">
+          {report.shifted_expenses} הוצאות מדווחות ב-Morning בחודש שונה מזה שבו הן מתוארכות. הן נספרות
+          כאן בתקופה שמדווחת אותן, כפי ש-Morning מדווח אותן — ולכן תקופה כאן יכולה שלא להתאים לאותו
+          חודש בעמוד הוצאות, שמציג לפי תאריך המסמך.
+        </div>
+      )}
 
       {openExpenses > 0 && (
         <div className="text-sm text-warn">

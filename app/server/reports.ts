@@ -64,12 +64,34 @@ const emptyRow = (month: string): PnlRow => ({
 });
 
 /**
+ * Which date decides the month an expense falls in.
+ *
+ * `document` is the date on the supplier's document — when the expense was incurred, which is
+ * the year a P&L and an income-tax return belong to.
+ *
+ * `reporting` is `reportingDate`: the מע"מ period Morning files the expense under, which it
+ * lets you set apart from the document date. A מע"מ filing has to agree with Morning about
+ * which period reports which expense, or the input VAT claimed for a period is not the input
+ * VAT Morning reported for it — so that report, and only that report, counts on this basis.
+ * An expense with no reporting date falls back to its document date.
+ */
+export type ExpenseBasis = 'document' | 'reporting';
+
+/** The column an expense's month and range are read from, per basis. */
+const expenseDateSql = (basis: ExpenseBasis) =>
+  basis === 'reporting' ? "COALESCE(NULLIF(reporting_date, ''), date)" : 'date';
+
+/**
  * Income and expenses month by month over the range.
  *
  * Cancelled and draft documents are left out — a cancelled invoice was never revenue, and a
  * draft is not a document yet. Credit invoices are in, and offset, per ACCOUNTING_DOC_TYPES.
+ *
+ * `basis` moves the expense side between the two dates above; income is unaffected, since an
+ * issued document is reported in the period it was issued in and Morning offers no second
+ * date for it.
  */
-export function monthlyPnl(from: string, to: string): PnlRow[] {
+export function monthlyPnl(from: string, to: string, basis: ExpenseBasis = 'document'): PnlRow[] {
   const rows = new Map(monthsInRange(from, to).map((m) => [m, emptyRow(m)]));
 
   const income = db.prepare(
@@ -85,12 +107,22 @@ export function monthlyPnl(from: string, to: string): PnlRow[] {
      GROUP BY month`
   ).all(from, to) as any[];
 
+  // Both reports built from this are about what the books may claim, not about what left the
+  // bank: the מע"מ filing reclaims deductible input VAT, and the P&L deducts the recognised
+  // part of an expense. So the two figures that feed them are the deductible ones, falling
+  // back to the full amounts where Morning states no deduction. `expenses_total` stays the
+  // whole sum including VAT — that one is the cash figure, and the dashboard's כולל מע"מ view
+  // is the one place the money actually paid out belongs.
+  // The range is filtered on the same date the month is grouped by, so an expense reported in
+  // a period its document date falls outside of is counted in the period that reports it —
+  // counting it in one and selecting it by the other would drop it from both.
+  const expenseDate = expenseDateSql(basis);
   const expenses = db.prepare(
-    `SELECT substr(date, 1, 7) AS month,
-            COALESCE(SUM(amount),0) AS expenses,
-            COALESCE(SUM(vat_amount),0) AS expenses_vat,
+    `SELECT substr(${expenseDate}, 1, 7) AS month,
+            COALESCE(SUM(COALESCE(deductible_amount, amount)),0) AS expenses,
+            COALESCE(SUM(COALESCE(deductible_vat, vat_amount)),0) AS expenses_vat,
             COALESCE(SUM(total),0) AS expenses_total
-     FROM expenses WHERE date >= ? AND date <= ?
+     FROM expenses WHERE ${expenseDate} >= ? AND ${expenseDate} <= ?
      GROUP BY month`
   ).all(from, to) as any[];
 
@@ -295,23 +327,44 @@ export interface VatReport {
     open_expenses: number;
   }>;
   totals: PnlTotals;
+  /**
+   * Expenses in the year Morning reports in a month other than the one they are dated in.
+   * Nothing to fix — it is a choice made on the expense in Morning — but it explains why a
+   * period's תשומות here need not match the same period on the הוצאות page, which lists by
+   * document date.
+   */
+  shifted_expenses: number;
 }
 
 export function vatReport(year: number): VatReport {
   const frequency = getVatFrequency();
-  const rows = monthlyPnl(`${year}-01-01`, `${year}-12-31`);
+  // The one report that counts an expense in the period Morning reports it in, rather than the
+  // period it is dated in. See `ExpenseBasis`.
+  const rows = monthlyPnl(`${year}-01-01`, `${year}-12-31`, 'reporting');
   const byMonth = new Map(rows.map((r) => [r.month, r]));
   const filings = listFilings('vat', year);
   const today = new Date().toISOString().slice(0, 10);
 
   // One query for the whole year rather than one per period — the count is a nudge about
   // documents still open in Morning, not a figure the filing is built from.
+  // Grouped by the reporting date too, so the nudge lands on the period whose figures the
+  // documents in question are part of.
   const openByMonth = new Map(
     (db.prepare(
-      `SELECT substr(date, 1, 7) AS month, COUNT(*) AS n FROM expenses
-       WHERE status = 'open' AND date >= ? AND date <= ? GROUP BY month`
+      `SELECT substr(COALESCE(NULLIF(reporting_date, ''), date), 1, 7) AS month, COUNT(*) AS n
+       FROM expenses
+       WHERE status = 'open' AND COALESCE(NULLIF(reporting_date, ''), date) >= ?
+         AND COALESCE(NULLIF(reporting_date, ''), date) <= ? GROUP BY month`
     ).all(`${year}-01-01`, `${year}-12-31`) as any[]).map((r) => [r.month, r.n as number])
   );
+
+  const shifted = (db.prepare(
+    `SELECT COUNT(*) AS n FROM expenses
+     WHERE reporting_date IS NOT NULL AND reporting_date != ''
+       AND substr(reporting_date, 1, 7) != substr(date, 1, 7)
+       AND COALESCE(NULLIF(reporting_date, ''), date) >= ?
+       AND COALESCE(NULLIF(reporting_date, ''), date) <= ?`
+  ).get(`${year}-01-01`, `${year}-12-31`) as { n: number }).n;
 
   const periods = vatPeriods(year, frequency).map((period) => {
     const totals = pnlTotals(period.months.map((m) => byMonth.get(m) ?? emptyRow(m)));
@@ -329,7 +382,7 @@ export function vatReport(year: number): VatReport {
     };
   });
 
-  return { year, frequency, periods, totals: pnlTotals(rows) };
+  return { year, frequency, periods, totals: pnlTotals(rows), shifted_expenses: shifted };
 }
 
 // ---------------------------------------------------------------------------

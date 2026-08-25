@@ -149,9 +149,19 @@ export interface MorningClassification {
  * Two fields differ from an issued document's and are easy to get wrong:
  * - the document type is `documentType`, not `type` (it carries the same 300/305/320/400
  *   codes as issued documents, not a status-style enum);
- * - `status` is 10 = open, 20 = reported to the accountant and locked in Morning. Some
- *   payloads express the same fact as a `reported` boolean, which is why the search filter
- *   is spelled that way, so both are read.
+ * - whether the expense has been reported (דווח) is **not** confirmed to live in any one
+ *   field. A live account sends `status: 10` on every expense and no `reported` flag at
+ *   all, so 10/20 is either an enum this app has the wrong labels for or a state that has
+ *   nothing to do with reporting — the payload also carries `paymentAmountLocal: 0` and no
+ *   `paymentDate` alongside it, which would fit an unpaid/paid pair just as well. Every
+ *   spelling below is therefore optional and read only when present, and `mapStatus`
+ *   asserts nothing from a payload carrying none of them rather than calling the expense
+ *   open. `bin/expense-status-probe.ts` prints what an account actually sends.
+ *
+ * `reportingDate` is the one field here that is unambiguously about reporting: the first of
+ * the month of the מע"מ period the expense is filed under, which Morning lets you set apart
+ * from the document's own date. It says which period will report the expense, not that any
+ * period has.
  */
 export interface MorningExpense {
   id: string;
@@ -162,12 +172,29 @@ export interface MorningExpense {
   documentDate?: string; // YYYY-MM-DD
   date?: string;
   paymentDate?: string | null;
-  /** 10 = open, 20 = reported. Sent as a number, but tolerated as a numeric string. */
+  /** First of the month of the מע"מ period the expense is filed under. */
+  reportingDate?: string | null;
+  /** Believed to be 10 = open, 20 = reported. Sent as a number, but tolerated as a string. */
   status?: number | string;
-  reported?: boolean;
+  /** The same fact as a flag: true = reported. Also accepted as 0/1 or "true"/"false". */
+  reported?: boolean | number | string;
+  isReported?: boolean | number | string;
+  /** A report the expense was filed in. An id or a date present at all means reported. */
+  reportId?: string | number | null;
+  vatReportId?: string | number | null;
+  reportedAt?: string | null;
+  reportDate?: string | null;
   amount?: number;
   vat?: number;
   amountTotal?: number;
+  /** The total before VAT, stated rather than left to be worked out from `amount` - `vat`. */
+  amountExcludeVat?: number;
+  /**
+   * What of the expense may actually be set against the business's books, after the
+   * classification's deduction percentage. Not read yet — see the note in `money`.
+   */
+  deductibleAmount?: number;
+  deductibleVat?: number;
   currency?: string;
   currencyRate?: number;
   supplier?: { id?: string; name?: string; taxId?: string };
@@ -193,6 +220,17 @@ export async function searchExpenses(opts: SearchExpensesOptions = {}) {
     ...(opts.fromDate ? { fromDate: opts.fromDate } : {}),
     ...(opts.toDate ? { toDate: opts.toDate } : {}),
   });
+}
+
+/**
+ * One expense in full.
+ *
+ * Morning's search returns a lighter row than the record it lists, so a field missing from
+ * a search result — the reported flag among them — is worth looking for here before
+ * concluding the account does not send it at all.
+ */
+export async function getExpense(id: string): Promise<MorningExpense> {
+  return request<MorningExpense>('GET', `/expenses/${encodeURIComponent(id)}`);
 }
 
 /** Walks every page of the expense search, with the same runaway guard as documents. */

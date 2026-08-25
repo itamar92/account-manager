@@ -116,6 +116,37 @@ cannot demote yourself.
   against. Rows Morning has not classified are filterable in their own right (ללא סיווג),
   since those are the ones a filing has to chase.
 
+  A row's status is דווח, טרם דווח, or **סטטוס לא ידוע** — the last meaning Morning's payload
+  carried no field this app recognises as saying which. Note that a live account sends
+  `status: 10` on every expense and no reported flag at all, so what 10 and 20 mean is still
+  unconfirmed and the דווח/טרם דווח label on them is not yet something to trust.
+  `reportingDate`, stored as `reporting_date` and shown under the date when it falls in another
+  month, is the one field in the payload unambiguously about reporting: the מע"מ period Morning
+  files the expense under. The מע"מ report still groups expenses by their document date, so an
+  expense Morning reports in another period is counted here in a different one than in Morning.
+
+  **Spent and deductible are two different figures**, and both are kept. Morning applies the
+  deduction percentage on an expense's classification and states what is left as
+  `deductibleAmount` / `deductibleVat` — for a phone bill at 66% they are two thirds of the
+  document's. Anything that claims money back counts the deductible ones: מע"מ תשומות here and
+  on דוחות, and the expenses the P&L deducts. Anything about money that actually left the
+  business counts the full ones: the סה"כ הוצאות card and the dashboard's כולל מע"מ view. Where
+  the two differ the page shows both, since the gap is real money that cannot be reclaimed. An
+  expense whose payload states no deduction is stored null and counts in full, which is what
+  this app did before it read the field; rows synced before the columns existed are backfilled
+  on boot from the payload in `raw` rather than left half-corrected until the next sync. It is a real third state rather than a
+  tidier default, because the alternative is what the list used to do: read a payload it could
+  not understand and show the account's every filed expense as טרם דווח, which is both wrong
+  and invisible. `GET /api/expenses/status-audit` (owner) and `npm run expenses:probe` both
+  report, from the payloads the sync kept in `expenses.raw`, which keys Morning actually sends
+  and what the ones carrying a code hold — the way to settle which field carries the fact for a
+  given account, instead of guessing at a name that sounds right. They look for the shape of an
+  enum rather than for a promising name, because the names have already misled: the same
+  payloads put values outside the issued-document enum (405, 20) in the key read as
+  `documentType`, so the מסמך column is blank for them and an expense evidently does not use an
+  issued document's fields or codes. The probe additionally fetches one expense in full, since
+  Morning's search returns a lighter row than the record behind it.
+
 - **דוחות** (`/reports`) turns the same books into the two filings they have to produce —
   see [Reports](#reports-דוחות) below.
 
@@ -185,6 +216,18 @@ opened, from the documents Morning syncs in on the income side and the supplier 
 syncs in on the outgoing one, so a report cannot drift from the lists it was built from.
 Everything is on an **accrual basis** (מצטבר), which is what an Israeli מע"מ filing reports: a
 document belongs to the period it was issued in, whether or not the money has arrived.
+
+The two reports differ on one point, deliberately. **מע"מ counts an expense in the period
+Morning reports it in** (`reporting_date`, falling back to the document date) — a filing has to
+agree with Morning about which period reports which expense, or the input VAT claimed for a
+period is not the input VAT Morning reported for it, and an expense dated in December but
+reported in January belongs to January's filing. **מס הכנסה and the dashboard count it in the
+month it is dated**, which is the year the expense was incurred and the year a return covers.
+So a period on דוחות need not match the same months on הוצאות, which lists by document date;
+the מע"מ page says how many expenses in the year are shifted that way.
+
+`monthlyPnl(from, to, basis)` is where this lives — one query, one `ExpenseBasis` argument, so
+neither report can drift from the other on anything except the date it is asked to use.
 Credit invoices (330) are counted here and offset, since a period's turnover has to be net of
 what was credited back — they arrive from Morning with negative amounts, so summing the set
 does that netting for free.

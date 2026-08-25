@@ -116,6 +116,9 @@ CREATE TABLE IF NOT EXISTS expenses (
   doc_type INTEGER,
   date TEXT NOT NULL,
   payment_date TEXT,
+  -- The מע"מ period Morning files the expense under. Set on the expense in Morning and not
+  -- derived from the document date: an invoice dated the 20th of August can be reported in July.
+  reporting_date TEXT,
   supplier_name TEXT NOT NULL DEFAULT '',
   supplier_tax_id TEXT,
   external_supplier_id TEXT,
@@ -124,8 +127,18 @@ CREATE TABLE IF NOT EXISTS expenses (
   amount REAL NOT NULL DEFAULT 0,
   vat_amount REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL DEFAULT 0,
+  -- What Morning says may actually be set against the books, after the deduction percentage
+  -- on the expense's classification. Equal to amount/vat_amount for an expense deducted in
+  -- full, smaller for a phone bill at 80% or a car. NULL means Morning did not state it, and
+  -- every sum COALESCEs back to the full figure — which is what this app did before it read
+  -- these at all, so a payload without them keeps behaving as it used to.
+  deductible_amount REAL,
+  deductible_vat REAL,
   currency TEXT NOT NULL DEFAULT 'ILS',
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reported')),
+  -- 'unknown' is Morning not having said: a payload carrying no reported/status field this
+  -- app recognises is left undetermined rather than called open, which is what once showed
+  -- an account's every filed expense as טרם דווח.
+  status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('open','reported','unknown')),
   source TEXT NOT NULL DEFAULT 'morning',
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -460,6 +473,12 @@ addColumnIfMissing('invoices', 'open_amount', 'REAL');
 // classification object as a scalar once wrote "[object Object]" into every category, and
 // there was nothing stored to diagnose it from.
 addColumnIfMissing('expenses', 'raw', 'TEXT');
+// Morning's `reportingDate` — see the column comment above.
+addColumnIfMissing('expenses', 'reporting_date', 'TEXT');
+// What of an expense is deductible — see the column comments above. Nullable on purpose:
+// NULL is "Morning did not say", which is not the same as nothing being deductible.
+addColumnIfMissing('expenses', 'deductible_amount', 'REAL');
+addColumnIfMissing('expenses', 'deductible_vat', 'REAL');
 // A קמפיין figure typed by hand outranks the Meta sync, the same way a renamed show outranks
 // the calendar. Set the moment someone edits the cell; from then on the sync reports the row
 // as held back rather than overwriting it, until the lock is handed back.
@@ -477,6 +496,75 @@ addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0'
 // its own window (90 days by default), so anything older would keep a category that is not a
 // category, in the list and in the filter. Cleared rows read as ללא סיווג until re-synced.
 db.prepare("UPDATE expenses SET category = NULL WHERE category = '[object Object]'").run();
+
+// The deduction figures are backfilled from the payloads already stored rather than waited
+// for: a sync only refreshes its own window (90 days by default), so without this an older
+// expense would keep claiming its full VAT until something happened to re-sync it, and the
+// year's מע"מ figure would be part-corrected — worse than either state on its own. Rows whose
+// payload predates the `raw` column, or whose Morning payload states no deduction, are left
+// null and go on counting their full amounts. `json_valid` guards the extract: `json_extract`
+// raises on a value that will not parse, which would take the boot down with it.
+db.exec(`
+  UPDATE expenses
+     SET deductible_amount = ROUND(json_extract(raw, '$.deductibleAmount') *
+           (CASE WHEN json_extract(raw, '$.currencyRate') > 0
+                 THEN json_extract(raw, '$.currencyRate') ELSE 1 END), 2),
+         deductible_vat = ROUND(json_extract(raw, '$.deductibleVat') *
+           (CASE WHEN json_extract(raw, '$.currencyRate') > 0
+                 THEN json_extract(raw, '$.currencyRate') ELSE 1 END), 2)
+   WHERE deductible_amount IS NULL AND deductible_vat IS NULL
+     AND raw IS NOT NULL AND json_valid(raw)
+     AND json_extract(raw, '$.deductibleVat') IS NOT NULL
+`);
+
+// The expenses table was created with a CHECK that allowed only 'open' and 'reported', and a
+// CHECK cannot be altered in place — the table has to be rebuilt for 'unknown' to be storable.
+// Every row that says 'open' is rewritten to 'unknown' on the way across, because under the
+// old mapper 'open' was also what an unreadable payload produced: the two are indistinguishable
+// in the stored value, and claiming an expense is unreported is the more damaging of the two
+// mistakes. The next sync restores the real 'open' rows from Morning.
+const expensesSql = (
+  db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expenses'").get() as
+    | { sql: string }
+    | undefined
+)?.sql ?? '';
+if (!expensesSql.includes("'unknown'")) {
+  const columns = (db.prepare('PRAGMA table_info(expenses)').all() as Array<{ name: string }>)
+    .map((c) => c.name)
+    .join(', ');
+  db.exec(`
+    CREATE TABLE expenses_migrating (
+      id TEXT PRIMARY KEY,
+      external_id TEXT,
+      number TEXT,
+      doc_type INTEGER,
+      date TEXT NOT NULL,
+      payment_date TEXT,
+      reporting_date TEXT,
+      supplier_name TEXT NOT NULL DEFAULT '',
+      supplier_tax_id TEXT,
+      external_supplier_id TEXT,
+      category TEXT,
+      description TEXT,
+      amount REAL NOT NULL DEFAULT 0,
+      vat_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      deductible_amount REAL,
+      deductible_vat REAL,
+      currency TEXT NOT NULL DEFAULT 'ILS',
+      status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('open','reported','unknown')),
+      source TEXT NOT NULL DEFAULT 'morning',
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      raw TEXT
+    );
+    INSERT INTO expenses_migrating (${columns}) SELECT ${columns} FROM expenses;
+    UPDATE expenses_migrating SET status = 'unknown' WHERE status = 'open';
+    DROP TABLE expenses;
+    ALTER TABLE expenses_migrating RENAME TO expenses;
+    CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+  `);
+}
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing
