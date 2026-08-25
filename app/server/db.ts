@@ -127,6 +127,13 @@ CREATE TABLE IF NOT EXISTS expenses (
   amount REAL NOT NULL DEFAULT 0,
   vat_amount REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL DEFAULT 0,
+  -- What Morning says may actually be set against the books, after the deduction percentage
+  -- on the expense's classification. Equal to amount/vat_amount for an expense deducted in
+  -- full, smaller for a phone bill at 80% or a car. NULL means Morning did not state it, and
+  -- every sum COALESCEs back to the full figure — which is what this app did before it read
+  -- these at all, so a payload without them keeps behaving as it used to.
+  deductible_amount REAL,
+  deductible_vat REAL,
   currency TEXT NOT NULL DEFAULT 'ILS',
   -- 'unknown' is Morning not having said: a payload carrying no reported/status field this
   -- app recognises is left undetermined rather than called open, which is what once showed
@@ -468,6 +475,10 @@ addColumnIfMissing('invoices', 'open_amount', 'REAL');
 addColumnIfMissing('expenses', 'raw', 'TEXT');
 // Morning's `reportingDate` — see the column comment above.
 addColumnIfMissing('expenses', 'reporting_date', 'TEXT');
+// What of an expense is deductible — see the column comments above. Nullable on purpose:
+// NULL is "Morning did not say", which is not the same as nothing being deductible.
+addColumnIfMissing('expenses', 'deductible_amount', 'REAL');
+addColumnIfMissing('expenses', 'deductible_vat', 'REAL');
 // A קמפיין figure typed by hand outranks the Meta sync, the same way a renamed show outranks
 // the calendar. Set the moment someone edits the cell; from then on the sync reports the row
 // as held back rather than overwriting it, until the lock is handed back.
@@ -485,6 +496,26 @@ addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0'
 // its own window (90 days by default), so anything older would keep a category that is not a
 // category, in the list and in the filter. Cleared rows read as ללא סיווג until re-synced.
 db.prepare("UPDATE expenses SET category = NULL WHERE category = '[object Object]'").run();
+
+// The deduction figures are backfilled from the payloads already stored rather than waited
+// for: a sync only refreshes its own window (90 days by default), so without this an older
+// expense would keep claiming its full VAT until something happened to re-sync it, and the
+// year's מע"מ figure would be part-corrected — worse than either state on its own. Rows whose
+// payload predates the `raw` column, or whose Morning payload states no deduction, are left
+// null and go on counting their full amounts. `json_valid` guards the extract: `json_extract`
+// raises on a value that will not parse, which would take the boot down with it.
+db.exec(`
+  UPDATE expenses
+     SET deductible_amount = ROUND(json_extract(raw, '$.deductibleAmount') *
+           (CASE WHEN json_extract(raw, '$.currencyRate') > 0
+                 THEN json_extract(raw, '$.currencyRate') ELSE 1 END), 2),
+         deductible_vat = ROUND(json_extract(raw, '$.deductibleVat') *
+           (CASE WHEN json_extract(raw, '$.currencyRate') > 0
+                 THEN json_extract(raw, '$.currencyRate') ELSE 1 END), 2)
+   WHERE deductible_amount IS NULL AND deductible_vat IS NULL
+     AND raw IS NOT NULL AND json_valid(raw)
+     AND json_extract(raw, '$.deductibleVat') IS NOT NULL
+`);
 
 // The expenses table was created with a CHECK that allowed only 'open' and 'reported', and a
 // CHECK cannot be altered in place — the table has to be rebuilt for 'unknown' to be storable.
@@ -518,6 +549,8 @@ if (!expensesSql.includes("'unknown'")) {
       amount REAL NOT NULL DEFAULT 0,
       vat_amount REAL NOT NULL DEFAULT 0,
       total REAL NOT NULL DEFAULT 0,
+      deductible_amount REAL,
+      deductible_vat REAL,
       currency TEXT NOT NULL DEFAULT 'ILS',
       status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('open','reported','unknown')),
       source TEXT NOT NULL DEFAULT 'morning',

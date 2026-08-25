@@ -279,6 +279,8 @@ export function inboxItems() {
   // An expense with no category is input VAT that will not make it into a return — the sum
   // that matters on it is the VAT, not what was paid.
   const uncategorized = db.prepare(
+    // The full VAT, not the deductible figure: an unclassified expense has no deduction
+    // percentage to apply, and what this item is about is the VAT at stake until it gets one.
     `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total, COALESCE(SUM(vat_amount),0) AS vat
      FROM expenses WHERE category IS NULL OR TRIM(category) = ''`
   ).get() as any;

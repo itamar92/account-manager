@@ -123,7 +123,18 @@ cannot demote yourself.
   `reportingDate`, stored as `reporting_date` and shown under the date when it falls in another
   month, is the one field in the payload unambiguously about reporting: the מע"מ period Morning
   files the expense under. The מע"מ report still groups expenses by their document date, so an
-  expense Morning reports in another period is counted here in a different one than in Morning. It is a real third state rather than a
+  expense Morning reports in another period is counted here in a different one than in Morning.
+
+  **Spent and deductible are two different figures**, and both are kept. Morning applies the
+  deduction percentage on an expense's classification and states what is left as
+  `deductibleAmount` / `deductibleVat` — for a phone bill at 66% they are two thirds of the
+  document's. Anything that claims money back counts the deductible ones: מע"מ תשומות here and
+  on דוחות, and the expenses the P&L deducts. Anything about money that actually left the
+  business counts the full ones: the סה"כ הוצאות card and the dashboard's כולל מע"מ view. Where
+  the two differ the page shows both, since the gap is real money that cannot be reclaimed. An
+  expense whose payload states no deduction is stored null and counts in full, which is what
+  this app did before it read the field; rows synced before the columns existed are backfilled
+  on boot from the payload in `raw` rather than left half-corrected until the next sync. It is a real third state rather than a
   tidier default, because the alternative is what the list used to do: read a payload it could
   not understand and show the account's every filed expense as טרם דווח, which is both wrong
   and invisible. `GET /api/expenses/status-audit` (owner) and `npm run expenses:probe` both

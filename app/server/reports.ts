@@ -85,10 +85,16 @@ export function monthlyPnl(from: string, to: string): PnlRow[] {
      GROUP BY month`
   ).all(from, to) as any[];
 
+  // Both reports built from this are about what the books may claim, not about what left the
+  // bank: the מע"מ filing reclaims deductible input VAT, and the P&L deducts the recognised
+  // part of an expense. So the two figures that feed them are the deductible ones, falling
+  // back to the full amounts where Morning states no deduction. `expenses_total` stays the
+  // whole sum including VAT — that one is the cash figure, and the dashboard's כולל מע"מ view
+  // is the one place the money actually paid out belongs.
   const expenses = db.prepare(
     `SELECT substr(date, 1, 7) AS month,
-            COALESCE(SUM(amount),0) AS expenses,
-            COALESCE(SUM(vat_amount),0) AS expenses_vat,
+            COALESCE(SUM(COALESCE(deductible_amount, amount)),0) AS expenses,
+            COALESCE(SUM(COALESCE(deductible_vat, vat_amount)),0) AS expenses_vat,
             COALESCE(SUM(total),0) AS expenses_total
      FROM expenses WHERE date >= ? AND date <= ?
      GROUP BY month`

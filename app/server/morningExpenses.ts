@@ -108,14 +108,26 @@ function supplierName(exp: MorningExpense): string {
  * The figure before VAT is taken from `amountExcludeVat` when Morning states it, and worked
  * out by subtraction only when it does not.
  *
- * What is *not* read here, deliberately: `deductibleAmount` and `deductibleVat`, which are
- * what the classification's deduction percentage leaves of each. For an expense deducted in
- * full they equal the figures above, and for a partly deductible one — a phone bill at 80%,
- * a car — they are smaller, which means the input VAT this page totals is more than may
- * actually be reclaimed. Reading them changes what the מע"מ report claims back, so it is a
- * change to make deliberately and not as a side effect of a status fix.
+ * `deductibleAmount` and `deductibleVat` come back alongside them: what the deduction
+ * percentage on the expense's classification leaves of each. They are the figures a filing
+ * is entitled to — the full VAT on a phone bill deducted at 80% is not reclaimable, and
+ * summing `vat` there claims back more than is owed. They are kept separately rather than
+ * replacing the full amounts, because both are true and each answers its own question: what
+ * the expense cost, and what of it the books may recognise.
+ *
+ * A figure Morning does not state is stored as null, not as the full amount, so the two
+ * cases stay apart in the data; every sum falls back to the full figure. Zero is a real
+ * answer — an expense with nothing deductible about it — and is kept as one.
  */
-function money(exp: MorningExpense): { subtotal: number; vat: number; total: number } {
+interface ExpenseMoney {
+  subtotal: number;
+  vat: number;
+  total: number;
+  deductibleSubtotal: number | null;
+  deductibleVat: number | null;
+}
+
+function money(exp: MorningExpense): ExpenseMoney {
   const rate = Number(exp.currencyRate) > 0 ? Number(exp.currencyRate) : 1;
   const vat = round2((Number(exp.vat) || 0) * rate);
   const amount = (Number(exp.amount) || 0) * rate;
@@ -125,7 +137,19 @@ function money(exp: MorningExpense): { subtotal: number; vat: number; total: num
   const subtotal = Number.isFinite(excludingVat) && excludingVat > 0
     ? round2(excludingVat * rate)
     : round2(total - vat);
-  return { subtotal, vat, total };
+
+  const deductible = (value: unknown): number | null => {
+    const figure = Number(value);
+    return Number.isFinite(figure) && figure >= 0 ? round2(figure * rate) : null;
+  };
+
+  return {
+    subtotal,
+    vat,
+    total,
+    deductibleSubtotal: deductible(exp.deductibleAmount),
+    deductibleVat: deductible(exp.deductibleVat),
+  };
 }
 
 /**
@@ -203,7 +227,7 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         continue;
       }
 
-      const { subtotal, vat, total } = money(exp);
+      const { subtotal, vat, total, deductibleSubtotal, deductibleVat } = money(exp);
       const values = {
         number: String(exp.number ?? ''),
         doc_type: docType(exp),
@@ -221,6 +245,8 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         amount: subtotal,
         vat_amount: vat,
         total,
+        deductible_amount: deductibleSubtotal,
+        deductible_vat: deductibleVat,
         currency: exp.currency || 'ILS',
         status: mapStatus(exp),
         notes: (exp.remarks || '').trim() || null,
@@ -237,14 +263,14 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         db.prepare(
           `UPDATE expenses SET number = ?, doc_type = ?, date = ?, payment_date = ?, reporting_date = ?,
              supplier_name = ?, supplier_tax_id = ?, external_supplier_id = ?, category = ?,
-             description = ?, amount = ?, vat_amount = ?, total = ?, currency = ?, status = ?,
-             notes = ?, raw = ?
+             description = ?, amount = ?, vat_amount = ?, total = ?, deductible_amount = ?,
+             deductible_vat = ?, currency = ?, status = ?, notes = ?, raw = ?
            WHERE id = ?`
         ).run(
           values.number, values.doc_type, values.date, values.payment_date, values.reporting_date,
           values.supplier_name, values.supplier_tax_id, values.external_supplier_id, values.category,
-          values.description, values.amount, values.vat_amount, values.total, values.currency,
-          values.status, values.notes, values.raw, existing.id
+          values.description, values.amount, values.vat_amount, values.total, values.deductible_amount,
+          values.deductible_vat, values.currency, values.status, values.notes, values.raw, existing.id
         );
         updated++;
         continue;
@@ -253,13 +279,14 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
       db.prepare(
         `INSERT INTO expenses (id, external_id, number, doc_type, date, payment_date, reporting_date,
            supplier_name, supplier_tax_id, external_supplier_id, category, description, amount,
-           vat_amount, total, currency, status, source, notes, raw)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?, ?)`
+           vat_amount, total, deductible_amount, deductible_vat, currency, status, source, notes, raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?, ?)`
       ).run(
         uuid(), exp.id, values.number, values.doc_type, values.date, values.payment_date,
         values.reporting_date, values.supplier_name, values.supplier_tax_id,
         values.external_supplier_id, values.category, values.description, values.amount,
-        values.vat_amount, values.total, values.currency, values.status, values.notes, values.raw
+        values.vat_amount, values.total, values.deductible_amount, values.deductible_vat,
+        values.currency, values.status, values.notes, values.raw
       );
       created++;
     }
@@ -307,40 +334,56 @@ export function listExpenses(filters: ExpenseFilters = {}) {
 }
 
 /**
- * The totals above the list: what was spent in the range, and how much of it is input VAT
- * (מע"מ תשומות) — the figure a מע"מ filing is built from — split by category.
+ * What each of the two VAT figures is summed from.
+ *
+ * `vat_amount` is the VAT on the documents; `deductible_vat` is what of it may be reclaimed
+ * once the classification's deduction percentage is applied. A filing is entitled to the
+ * second. They differ only where an expense is partly deductible — a phone bill, a car — and
+ * where Morning states nothing the sum falls back to the full figure, which is what this app
+ * counted before it read the field at all.
+ */
+const DEDUCTIBLE_VAT_SQL = 'COALESCE(SUM(COALESCE(deductible_vat, vat_amount)),0)';
+const DEDUCTIBLE_AMOUNT_SQL = 'COALESCE(SUM(COALESCE(deductible_amount, amount)),0)';
+
+/**
+ * The totals above the list: what was spent in the range, and how much of it a filing may
+ * actually claim back, split by category.
+ *
+ * Both figures are returned, spent and deductible, because a page that showed only one of
+ * them would be answering a question nobody asked: the difference between them is money
+ * that was really paid out and really cannot be reclaimed, and it is worth seeing.
  */
 export function expensesSummary(filters: ExpenseFilters = {}) {
   const clause = where(filters);
+  const figures = `COUNT(*) AS count, COALESCE(SUM(amount),0) AS subtotal,
+              COALESCE(SUM(vat_amount),0) AS vat, COALESCE(SUM(total),0) AS total,
+              ${DEDUCTIBLE_AMOUNT_SQL} AS deductible, ${DEDUCTIBLE_VAT_SQL} AS deductible_vat`;
+
   const totals = db
-    .prepare(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(amount),0) AS subtotal,
-              COALESCE(SUM(vat_amount),0) AS vat, COALESCE(SUM(total),0) AS total
-       FROM expenses${clause.sql}`
-    )
+    .prepare(`SELECT ${figures} FROM expenses${clause.sql}`)
     .get(...clause.params) as any;
 
   const byCategory = db
     .prepare(
-      `SELECT COALESCE(NULLIF(category, ''), 'ללא סיווג') AS category, COUNT(*) AS count,
-              COALESCE(SUM(amount),0) AS subtotal, COALESCE(SUM(vat_amount),0) AS vat,
-              COALESCE(SUM(total),0) AS total
+      `SELECT COALESCE(NULLIF(category, ''), 'ללא סיווג') AS category, ${figures}
        FROM expenses${clause.sql}
        GROUP BY 1 ORDER BY total DESC`
     )
     .all(...clause.params) as any[];
 
+  const rounded = (row: any) => ({
+    ...row,
+    subtotal: round2(row.subtotal),
+    vat: round2(row.vat),
+    total: round2(row.total),
+    deductible: round2(row.deductible),
+    deductible_vat: round2(row.deductible_vat),
+  });
+
   return {
+    ...rounded(totals),
     count: totals.count as number,
-    subtotal: round2(totals.subtotal),
-    vat: round2(totals.vat),
-    total: round2(totals.total),
-    byCategory: byCategory.map((row) => ({
-      ...row,
-      subtotal: round2(row.subtotal),
-      vat: round2(row.vat),
-      total: round2(row.total),
-    })),
+    byCategory: byCategory.map(rounded),
   };
 }
 

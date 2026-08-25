@@ -10,7 +10,7 @@ const UNCATEGORIZED = '__none__';
 
 /**
  * The expenses Morning holds: what the business spent, filed under the categories it was
- * classified with, and how much of it is input VAT (מע"מ תשומות) waiting to be reclaimed.
+ * classified with, and how much of it may actually be reclaimed as input VAT (מע"מ תשומות).
  *
  * Read-only by design — an expense is entered and classified in Morning, and shown here
  * beside the income it has to be set against.
@@ -70,7 +70,7 @@ export function Expenses() {
         sub={
           <>
             <span className="num">{summary.count}</span> מסמכים מוצגים · סה"כ <span className="num">{nis(summary.total)}</span>
-            {' · '}מע"מ תשומות <span className="num text-pos">{nis(summary.vat)}</span>
+            {' · '}מע"מ תשומות <span className="num text-pos">{nis(summary.deductible_vat)}</span>
           </>
         }
         actions={
@@ -118,8 +118,24 @@ export function Expenses() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatCard label='סה"כ הוצאות (כולל מע"מ)' value={nis(summary.total)} sub={`${summary.count} מסמכים`} accent="text-neg" />
-        <StatCard label='לפני מע"מ' value={nis(summary.subtotal)} />
-        <StatCard label='מע"מ תשומות' value={nis(summary.vat)} sub="לקיזוז בדיווח" accent="text-pos" />
+        <StatCard
+          label='לפני מע"מ'
+          value={nis(summary.subtotal)}
+          // Only when the two differ: on books where everything is deducted in full, the
+          // recognised figure is the figure, and saying so twice is noise.
+          sub={summary.deductible !== summary.subtotal ? `מוכר לצורכי מס ${nis(summary.deductible)}` : undefined}
+        />
+        {/* The card says לקיזוז בדיווח, so it has to be the reclaimable figure and not the VAT
+            on the documents. Where a deduction percentage holds some of it back, the full sum
+            is named underneath — that gap is money paid out that will not come back. */}
+        <StatCard
+          label='מע"מ תשומות'
+          value={nis(summary.deductible_vat)}
+          sub={summary.deductible_vat !== summary.vat
+            ? `לקיזוז בדיווח · מתוך ${nis(summary.vat)} בחשבוניות`
+            : 'לקיזוז בדיווח'}
+          accent="text-pos"
+        />
         <StatCard
           label="סונכרן לאחרונה"
           value={integration.last_sync ? new Date(integration.last_sync).toLocaleDateString('he-IL') : '—'}
@@ -215,7 +231,22 @@ export function Expenses() {
                   </>
                 ),
               },
-              { key: 'vat', header: 'מע"מ', sortValue: (e: any) => e.vat_amount, className: 'text-muted', render: (e: any) => nis(e.vat_amount) },
+              {
+                key: 'vat', header: 'מע"מ', sortValue: (e: any) => e.vat_amount, className: 'text-muted',
+                // A partly deductible expense shows what may be reclaimed, with the VAT on the
+                // document behind it — the row is the one place the deduction is visible per
+                // expense, and the two figures only differ where a percentage was applied.
+                render: (e: any) => (
+                  e.deductible_vat != null && e.deductible_vat !== e.vat_amount
+                    ? (
+                      <>
+                        <span className="text-pos">{nis(e.deductible_vat)}</span>
+                        <span className="block text-xs text-faint">מתוך {nis(e.vat_amount)}</span>
+                      </>
+                    )
+                    : nis(e.vat_amount)
+                ),
+              },
               { key: 'total', header: 'סה"כ', sortValue: (e: any) => e.total, className: 'font-medium text-neg', render: (e: any) => nis(e.total) },
               { key: 'status', header: 'סטטוס', sortValue: (e: any) => e.status, render: (e: any) => <StatusBadge status={e.status} /> },
             ]}
