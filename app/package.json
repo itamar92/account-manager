@@ -7,7 +7,8 @@
     "dev": "tsx server.ts",
     "build": "vite build",
     "start": "NODE_ENV=production tsx server.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "expenses:probe": "tsx bin/expense-status-probe.ts"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.14",

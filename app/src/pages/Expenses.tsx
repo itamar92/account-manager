@@ -46,6 +46,9 @@ export function Expenses() {
       setNotice(
         `${result.fetched} הוצאות (${result.from} – ${result.to}) · ${result.created} חדשות · ${result.updated} עודכנו` +
         ` · ${result.reported} מסומנות כדווחו ב-Morning` +
+        // Worth saying out loud: expenses whose status Morning did not state are the ones that
+        // look like a mapping problem in the list, and this is where that shows up first.
+        (result.unknown ? ` · ${result.unknown} ללא סטטוס מ-Morning` : '') +
         (result.skipped ? ` · ${result.skipped} דולגו` : '')
       );
       load();
@@ -82,6 +85,7 @@ export function Expenses() {
           <option value="">כל הסטטוסים</option>
           <option value="open">טרם דווחו</option>
           <option value="reported">דווחו</option>
+          <option value="unknown">סטטוס לא ידוע</option>
         </select>
         <select value={category} onChange={(e) => setCategory(e.target.value)} className={filterClass}>
           <option value="">כל הסיווגים</option>
@@ -96,6 +100,15 @@ export function Expenses() {
 
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
       {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
+      {integration.unknown > 0 && (
+        <div className="text-sm text-muted bg-soft rounded-xl px-4 py-2.5">
+          ל-<span className="num">{integration.unknown}</span> הוצאות Morning לא החזירה סטטוס דיווח, והן
+          מוצגות כ<b>סטטוס לא ידוע</b> ולא כ"טרם דווחו" — כדי שלא ייראו כאילו לא דווחו בזמן שהן כן.
+          להצגת השדה שבו Morning שומרת את הדיווח בחשבון הזה:{' '}
+          <code dir="ltr" className="text-accent">npm run expenses:probe</code>
+        </div>
+      )}
+
       {!integration.configured && (
         <div className="text-sm text-muted">
           Morning לא מוגדר — חסרים <code dir="ltr" className="text-accent">GREEN_INVOICE_ID</code> /{' '}

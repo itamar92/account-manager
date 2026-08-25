@@ -116,6 +116,15 @@ cannot demote yourself.
   against. Rows Morning has not classified are filterable in their own right (ללא סיווג),
   since those are the ones a filing has to chase.
 
+  A row's status is דווח, טרם דווח, or **סטטוס לא ידוע** — the last meaning Morning's payload
+  carried no field this app recognises as saying which. It is a real third state rather than a
+  tidier default, because the alternative is what the list used to do: read a payload it could
+  not understand and show the account's every filed expense as טרם דווח, which is both wrong
+  and invisible. `npm run expenses:probe` prints, from the payloads the sync kept in
+  `expenses.raw` and from one expense fetched in full, which keys Morning actually sends and
+  what they hold — the way to settle which field carries the fact for a given account, instead
+  of guessing at a name that sounds right.
+
 - **דוחות** (`/reports`) turns the same books into the two filings they have to produce —
   see [Reports](#reports-דוחות) below.
 

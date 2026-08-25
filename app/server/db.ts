@@ -125,7 +125,10 @@ CREATE TABLE IF NOT EXISTS expenses (
   vat_amount REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL DEFAULT 0,
   currency TEXT NOT NULL DEFAULT 'ILS',
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','reported')),
+  -- 'unknown' is Morning not having said: a payload carrying no reported/status field this
+  -- app recognises is left undetermined rather than called open, which is what once showed
+  -- an account's every filed expense as טרם דווח.
+  status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('open','reported','unknown')),
   source TEXT NOT NULL DEFAULT 'morning',
   notes TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -477,6 +480,52 @@ addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0'
 // its own window (90 days by default), so anything older would keep a category that is not a
 // category, in the list and in the filter. Cleared rows read as ללא סיווג until re-synced.
 db.prepare("UPDATE expenses SET category = NULL WHERE category = '[object Object]'").run();
+
+// The expenses table was created with a CHECK that allowed only 'open' and 'reported', and a
+// CHECK cannot be altered in place — the table has to be rebuilt for 'unknown' to be storable.
+// Every row that says 'open' is rewritten to 'unknown' on the way across, because under the
+// old mapper 'open' was also what an unreadable payload produced: the two are indistinguishable
+// in the stored value, and claiming an expense is unreported is the more damaging of the two
+// mistakes. The next sync restores the real 'open' rows from Morning.
+const expensesSql = (
+  db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'expenses'").get() as
+    | { sql: string }
+    | undefined
+)?.sql ?? '';
+if (!expensesSql.includes("'unknown'")) {
+  const columns = (db.prepare('PRAGMA table_info(expenses)').all() as Array<{ name: string }>)
+    .map((c) => c.name)
+    .join(', ');
+  db.exec(`
+    CREATE TABLE expenses_migrating (
+      id TEXT PRIMARY KEY,
+      external_id TEXT,
+      number TEXT,
+      doc_type INTEGER,
+      date TEXT NOT NULL,
+      payment_date TEXT,
+      supplier_name TEXT NOT NULL DEFAULT '',
+      supplier_tax_id TEXT,
+      external_supplier_id TEXT,
+      category TEXT,
+      description TEXT,
+      amount REAL NOT NULL DEFAULT 0,
+      vat_amount REAL NOT NULL DEFAULT 0,
+      total REAL NOT NULL DEFAULT 0,
+      currency TEXT NOT NULL DEFAULT 'ILS',
+      status TEXT NOT NULL DEFAULT 'unknown' CHECK (status IN ('open','reported','unknown')),
+      source TEXT NOT NULL DEFAULT 'morning',
+      notes TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      raw TEXT
+    );
+    INSERT INTO expenses_migrating (${columns}) SELECT ${columns} FROM expenses;
+    UPDATE expenses_migrating SET status = 'unknown' WHERE status = 'open';
+    DROP TABLE expenses;
+    ALTER TABLE expenses_migrating RENAME TO expenses;
+    CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
+  `);
+}
 
 // Both syncs upsert on these keys, so they must be unique — but only among synced rows,
 // which is why they are partial indexes rather than column constraints. A pre-existing

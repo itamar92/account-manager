@@ -13,20 +13,68 @@ import {
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
-/** Morning's expense status codes. */
+/** Morning's expense status codes, as far as they are known. */
+const STATUS_OPEN = 10;
 const STATUS_REPORTED = 20;
 
+/** What a row's status column can say. `unknown` is "Morning did not tell us". */
+export type ExpenseStatus = 'open' | 'reported' | 'unknown';
+
+/** Reads a flag that may arrive as a boolean, as 0/1, or as the string "true"/"1". */
+function flag(value: unknown): boolean | null {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value !== 0 : null;
+  if (typeof value === 'string') {
+    const text = value.trim().toLowerCase();
+    if (text === 'true' || text === '1' || text === 'yes') return true;
+    if (text === 'false' || text === '0' || text === 'no') return false;
+  }
+  return null;
+}
+
 /**
- * Whether the expense has been reported to the accountant and locked in Morning.
+ * Whether the expense has been reported to the accountant (דווח) — or whether the payload
+ * simply does not say.
  *
- * Two things are read, because Morning states the same fact two ways: the numeric `status`
- * (10 open / 20 reported) and a `reported` boolean — the spelling its own search filter uses.
- * The status is compared after coercion rather than with `===`, since a payload that sends
- * `"20"` as a string would otherwise silently report every expense as still open.
+ * The third answer is the point of this function. Morning states the fact in more than one
+ * spelling, and an earlier version of this mapper read two of them and called everything
+ * else `open`: an account whose expenses were every one of them filed in Morning showed up
+ * here as entirely טרם דווח, with nothing to distinguish "Morning says open" from "this
+ * mapper found no field it recognises". `null` keeps the two apart, so a spelling nobody
+ * has seen yet surfaces as לא ידוע — visible, countable, and diagnosable from `raw` —
+ * instead of quietly inverting every row's status.
+ *
+ * Read, in order of how directly each states the fact:
+ * 1. a flag — `reported` / `isReported`, in any of the shapes `flag` accepts;
+ * 2. a report the expense belongs to, filled in — an id or a date is the reporting itself;
+ * 3. the numeric `status`, where 10 and 20 are the codes believed to mean open and
+ *    reported. Any *other* number is left undetermined rather than read as open: it is
+ *    evidence the enum is not the one assumed here, and guessing at it is the mistake
+ *    this function exists to stop repeating;
+ * 4. last, an empty report field — a `reportId` that is present but null says the expense
+ *    is in no report, which is weaker than anything above it and so is read only once the
+ *    payload has offered nothing else.
  */
-function mapStatus(exp: MorningExpense): 'open' | 'reported' {
-  if (typeof exp.reported === 'boolean') return exp.reported ? 'reported' : 'open';
-  return Number(exp.status) === STATUS_REPORTED ? 'reported' : 'open';
+function readReported(exp: MorningExpense): boolean | null {
+  for (const value of [exp.reported, exp.isReported]) {
+    const known = flag(value);
+    if (known !== null) return known;
+  }
+
+  const marks = [exp.reportId, exp.vatReportId, exp.reportedAt, exp.reportDate];
+  if (marks.some((mark) => mark != null && mark !== '' && mark !== 0)) return true;
+
+  const status = Number(exp.status);
+  if (status === STATUS_REPORTED) return true;
+  if (status === STATUS_OPEN) return false;
+
+  if (marks.some((mark) => mark === null || mark === '')) return false;
+  return null;
+}
+
+function mapStatus(exp: MorningExpense): ExpenseStatus {
+  const reported = readReported(exp);
+  return reported === null ? 'unknown' : reported ? 'reported' : 'open';
 }
 
 /**
@@ -99,8 +147,10 @@ export interface ExpensePullResult {
   created: number;
   updated: number;
   skipped: number;
-  /** How many of the fetched expenses Morning reports as already filed (status 20). */
+  /** How many of the fetched expenses Morning states are already filed (דווח). */
   reported: number;
+  /** How many carried no reported/status field this mapper recognises — status לא ידוע. */
+  unknown: number;
   from: string;
   to: string;
 }
@@ -124,10 +174,12 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
   let created = 0;
   let updated = 0;
   let skipped = 0;
-  // Counted and reported back so the דווח/טרם דווח mapping is checkable from the UI: if
-  // Morning shows expenses as filed and this comes back 0, the status is arriving in some
-  // field this mapper does not read — and the `raw` column then has the answer.
+  // Counted and reported back so the דווח/טרם דווח mapping is checkable from the UI. The
+  // two counts answer different questions: `reported` is what Morning says is filed, while
+  // `unknown` is how often it said nothing this mapper could read — a sync that comes back
+  // with everything unknown is a field-name problem, and `raw` then has the answer.
   let reported = 0;
+  let unknown = 0;
 
   const tx = db.transaction(() => {
     for (const exp of expenses) {
@@ -157,6 +209,7 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         raw: JSON.stringify(exp),
       };
       if (values.status === 'reported') reported++;
+      else if (values.status === 'unknown') unknown++;
 
       const existing = db.prepare('SELECT id FROM expenses WHERE external_id = ?').get(exp.id) as
         | { id: string }
@@ -195,7 +248,7 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
   });
 
   tx();
-  return { fetched: expenses.length, created, updated, skipped, reported, from, to };
+  return { fetched: expenses.length, created, updated, skipped, reported, unknown, from, to };
 }
 
 export interface ExpenseFilters {
@@ -280,12 +333,93 @@ export function expenseCategories(): string[] {
   ).map((row) => row.category);
 }
 
+/** Keys worth looking at when the reported/open mapping is the thing in question. */
+const STATUS_LIKE = /report|status|closed|lock|period|approv/i;
+
+export interface ExpenseStatusAudit {
+  counts: Record<ExpenseStatus | string, number>;
+  /** Rows whose Morning payload was kept — the only ones this audit can say anything about. */
+  withRaw: number;
+  /** Every top-level key Morning's expense payloads carry, and how many carry it. */
+  keys: Array<{ key: string; count: number }>;
+  /** Of those, the ones whose name suggests they carry the reported/open fact, with values. */
+  statusKeys: Array<{ key: string; values: Array<{ value: string; count: number }> }>;
+  /** A Morning id to fetch in full, in case the search payload is lighter than the record. */
+  sampleId: string | null;
+}
+
+/**
+ * What the stored payloads actually say about a status, read back out of `expenses.raw`.
+ *
+ * This exists because the field carrying דווח/טרם דווח has been guessed at twice, and a
+ * guess is not checkable: it either works or it silently marks the whole list open. The
+ * audit answers it from the account's own data — which keys Morning really sends, and what
+ * values they hold — so the mapper can be pointed at the right one instead of at another
+ * plausible name. `bin/expense-status-probe.ts` prints it.
+ */
+export function expenseStatusAudit(limit = 500): ExpenseStatusAudit {
+  const counts: Record<string, number> = {};
+  for (const row of db
+    .prepare('SELECT status, COUNT(*) AS n FROM expenses GROUP BY status')
+    .all() as Array<{ status: string; n: number }>) {
+    counts[row.status] = row.n;
+  }
+
+  const rows = db
+    .prepare("SELECT external_id, raw FROM expenses WHERE raw IS NOT NULL AND raw != '' ORDER BY date DESC LIMIT ?")
+    .all(limit) as Array<{ external_id: string | null; raw: string }>;
+
+  const keyCounts = new Map<string, number>();
+  const values = new Map<string, Map<string, number>>();
+
+  for (const row of rows) {
+    let payload: any;
+    // A payload that will not parse is not worth failing the audit over — it is one row's
+    // worth of evidence out of hundreds.
+    try { payload = JSON.parse(row.raw); } catch { continue; }
+    if (!payload || typeof payload !== 'object') continue;
+
+    for (const [key, value] of Object.entries(payload)) {
+      keyCounts.set(key, (keyCounts.get(key) ?? 0) + 1);
+      if (!STATUS_LIKE.test(key)) continue;
+      // Objects are summarised rather than printed: what matters here is which key holds the
+      // fact and how many distinct values it takes, not a wall of nested JSON.
+      const shown = value === null ? 'null'
+        : typeof value === 'object' ? JSON.stringify(value).slice(0, 120)
+        : String(value);
+      const seen = values.get(key) ?? new Map<string, number>();
+      seen.set(shown, (seen.get(shown) ?? 0) + 1);
+      values.set(key, seen);
+    }
+  }
+
+  const byCountDesc = <T extends { count: number }>(a: T, b: T) => b.count - a.count;
+
+  return {
+    counts,
+    withRaw: rows.length,
+    keys: [...keyCounts].map(([key, count]) => ({ key, count })).sort(byCountDesc),
+    statusKeys: [...values].map(([key, seen]) => ({
+      key,
+      values: [...seen].map(([value, count]) => ({ value, count })).sort(byCountDesc),
+    })),
+    sampleId: rows.find((row) => row.external_id)?.external_id ?? null,
+  };
+}
+
 export function expensesStatus() {
   return {
     configured: isMorningConfigured(),
     last_sync: getSetting('morning_expenses_last_sync', '') || null,
     synced: (
       db.prepare("SELECT COUNT(*) AS n FROM expenses WHERE source = 'morning'").get() as { n: number }
+    ).n,
+    // Rows whose payload said nothing this app could read about דווח/טרם דווח. Surfaced on
+    // the page itself, not only in a sync's notice: the mapping problem outlives the sync
+    // that produced it, and this is the number that says the list is not to be trusted on
+    // status until it is fixed.
+    unknown: (
+      db.prepare("SELECT COUNT(*) AS n FROM expenses WHERE status = 'unknown'").get() as { n: number }
     ).n,
   };
 }
