@@ -41,6 +41,21 @@ const SHORT_MONTHS = ['ינו', 'פבר', 'מרץ', 'אפר', 'מאי', 'יונ'
 /** 'YYYY-MM' as a chart axis label — the year is on the axis title, not on every tick. */
 export const monthLabel = (month: string) => SHORT_MONTHS[parseInt(month.slice(5, 7), 10) - 1] ?? month;
 
+/** 'YYYY-MM' as 'MM/YY' — the compact tick for a chart whose axis carries many months. */
+export const monthSlash = (month: string) => `${month.slice(5, 7)}/${month.slice(2, 4)}`;
+
+/** 'YYYY-MM-DD' as 'DD/MM/YY', the way a period's two ends are written on a report's subtitle. */
+export const dayShort = (date: string) =>
+  `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(2, 4)}`;
+
+/** A bare figure for a chart axis — the ₪ is on the legend, not repeated down the side. */
+export const plain = (n: number | null | undefined) =>
+  (Number(n) || 0).toLocaleString('he-IL', { maximumFractionDigits: 0 });
+
+/** A share as a signed percentage, for the badge that compares a period with the one before it. */
+export const signedPercent = (share: number) =>
+  `${share > 0 ? '+' : ''}${Math.round(share * 100)}%`;
+
 /** 'YYYY-MM' spelled out, for a card that has to say which month it is talking about. */
 export const monthName = (month: string) =>
   `${SHORT_MONTHS[parseInt(month.slice(5, 7), 10) - 1] ?? month} ${month.slice(0, 4)}`;

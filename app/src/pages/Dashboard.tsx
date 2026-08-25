@@ -1,71 +1,40 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { get, monthName, nis } from '../api';
-import { Card, StatCard, StatusBadge, Empty, PageHeader, YearSelect } from '../ui';
-import { BASIS_LABEL, BasisToggle, IncomeExpenseChart, type Basis } from '../charts';
+import { get, nis } from '../api';
+import { Card, StatCard, StatusBadge, Empty, PageHeader } from '../ui';
+import { OverviewPanel } from './OverviewPanel';
 
 export function Dashboard() {
   const [data, setData] = useState<any>(null);
+  // The year the cards under the panel report on. The panel owns the period control and hands
+  // its window down, so the page never asks the same question twice in two different places.
   const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [basis, setBasis] = useState<Basis>('net');
   const [error, setError] = useState('');
 
   useEffect(() => {
     get(`/dashboard?year=${year}`).then(setData).catch((e) => setError(e.message));
   }, [year]);
 
-  if (error) return <Empty text={error} />;
-  if (!data) return <Empty text="טוען…" />;
-
-  const totals = data.yearTotals;
-  const month = data.month;
-  const net = basis === 'net';
-  const income = net ? totals.income : totals.incomeTotal;
-  const expenses = net ? totals.expenses : totals.expensesTotal;
-  const profit = net ? totals.profit : totals.profitTotal;
-  const monthProfit = net ? month.profit : month.profitTotal;
-  const vatNote = BASIS_LABEL[basis];
-
   return (
     <div className="space-y-5">
-      <PageHeader
-        title="סקירה"
-        sub={`שנת ${year} · ${vatNote}`}
-        actions={
-          <>
-            {/* Both views of the same year, side by side — switching is a reading choice, not a filter. */}
-            <BasisToggle value={basis} onChange={setBasis} />
-            <YearSelect value={year} allowAll={false} onChange={(v) => setYear(v === '' ? new Date().getFullYear() : v)} />
-          </>
-        }
-      />
+      <PageHeader title="סקירה" sub="הכנסות, הוצאות מוכרות ומע״מ — לתקופה שנבחרה" />
 
-      {/* The year's money in one row: what came in, what went out, what is left. */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-        <StatCard label={`הכנסות ${year}`} value={nis(income)} sub={vatNote} accent="text-pos" />
-        <StatCard label={`הוצאות ${year}`} value={nis(expenses)} sub={vatNote} accent="text-neg" />
-        <StatCard
-          label={`רווח ${year}`}
-          value={nis(profit)}
-          sub={`${nis(income)} פחות ${nis(expenses)}`}
-          accent={profit >= 0 ? 'text-accent' : 'text-neg'}
-        />
-        <StatCard
-          label={`רווח ${monthName(month.month)}`}
-          value={nis(monthProfit)}
-          sub={`הכנסות ${nis(net ? month.income : month.incomeTotal)} · הוצאות ${nis(net ? month.expenses : month.expensesTotal)}`}
-          accent={monthProfit >= 0 ? 'text-accent' : 'text-neg'}
-        />
-      </div>
+      {/* The period's money: three figures, the months behind them, and who paid. */}
+      <OverviewPanel onPeriod={(period) => setYear(parseInt(period.from.slice(0, 4), 10))} />
 
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-          <h2 className="ser text-lg">הכנסות מול הוצאות · {year}</h2>
-          <Link to="/reports" className="text-sm text-accent hover:underline">דוחות מע"מ ומס הכנסה ←</Link>
-        </div>
-        <IncomeExpenseChart rows={data.monthly} basis={basis} />
-      </Card>
+      {error && <Empty text={error} />}
+      {!error && !data && <Empty text="טוען…" />}
+      {!error && data && <DashboardRest data={data} year={year} />}
+    </div>
+  );
+}
 
+/** Everything under the panel: the balances the year still carries, and the pointers out. */
+function DashboardRest({ data, year }: { data: any; year: number }) {
+  const totals = data.yearTotals;
+
+  return (
+    <>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
         <StatCard label="חשבוניות פתוחות (גבייה)" value={nis(data.openInvoices.total)} sub={`${data.openInvoices.count} חשבוניות`} accent="text-warn" />
         <StatCard label={`התקבל ב-${year}`} value={nis(data.paidYtd.total)} accent="text-pos" />
@@ -134,6 +103,6 @@ export function Dashboard() {
           </Link>
         </div>
       </Card>
-    </div>
+    </>
   );
 }
