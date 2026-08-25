@@ -116,6 +116,9 @@ CREATE TABLE IF NOT EXISTS expenses (
   doc_type INTEGER,
   date TEXT NOT NULL,
   payment_date TEXT,
+  -- The מע"מ period Morning files the expense under. Set on the expense in Morning and not
+  -- derived from the document date: an invoice dated the 20th of August can be reported in July.
+  reporting_date TEXT,
   supplier_name TEXT NOT NULL DEFAULT '',
   supplier_tax_id TEXT,
   external_supplier_id TEXT,
@@ -463,6 +466,8 @@ addColumnIfMissing('invoices', 'open_amount', 'REAL');
 // classification object as a scalar once wrote "[object Object]" into every category, and
 // there was nothing stored to diagnose it from.
 addColumnIfMissing('expenses', 'raw', 'TEXT');
+// Morning's `reportingDate` — see the column comment above.
+addColumnIfMissing('expenses', 'reporting_date', 'TEXT');
 // A קמפיין figure typed by hand outranks the Meta sync, the same way a renamed show outranks
 // the calendar. Set the moment someone edits the cell; from then on the sync reports the row
 // as held back rather than overwriting it, until the lock is handed back.
@@ -504,6 +509,7 @@ if (!expensesSql.includes("'unknown'")) {
       doc_type INTEGER,
       date TEXT NOT NULL,
       payment_date TEXT,
+      reporting_date TEXT,
       supplier_name TEXT NOT NULL DEFAULT '',
       supplier_tax_id TEXT,
       external_supplier_id TEXT,

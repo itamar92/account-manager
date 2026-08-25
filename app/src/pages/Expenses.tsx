@@ -169,7 +169,23 @@ export function Expenses() {
             rowKey={(e: any) => e.id}
             rowClassName={() => 'hover:bg-soft'}
             columns={[
-              { key: 'date', header: 'תאריך', sortValue: (e: any) => e.date, className: 'whitespace-nowrap', render: (e: any) => e.date },
+              {
+                key: 'date', header: 'תאריך', sortValue: (e: any) => e.date, className: 'whitespace-nowrap',
+                // The מע"מ period Morning files the expense under is shown only when it is not
+                // the document's own month. That is the case worth seeing — an August invoice
+                // reported in July's period sits in a different filing than its date suggests —
+                // and printing it on every row would just repeat the date beside it.
+                render: (e: any) => (
+                  <>
+                    {e.date}
+                    {e.reporting_date && e.reporting_date.slice(0, 7) !== e.date.slice(0, 7) && (
+                      <span className="block text-xs text-faint">
+                        דיווח {e.reporting_date.slice(5, 7)}/{e.reporting_date.slice(0, 4)}
+                      </span>
+                    )}
+                  </>
+                ),
+              },
               {
                 key: 'supplier', header: 'ספק', mobile: 'title', sortValue: (e: any) => e.supplier_name,
                 className: 'font-medium', render: (e: any) => e.supplier_name,

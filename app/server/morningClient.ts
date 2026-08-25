@@ -150,12 +150,18 @@ export interface MorningClassification {
  * - the document type is `documentType`, not `type` (it carries the same 300/305/320/400
  *   codes as issued documents, not a status-style enum);
  * - whether the expense has been reported (דווח) is **not** confirmed to live in any one
- *   field. `status` 10/20 and a `reported` boolean are both spellings this client has
- *   assumed at one time or another, and an account whose expenses are all filed in Morning
- *   has still come back with neither. Every spelling below is therefore optional and
- *   read only when present — `mapStatus` asserts nothing from a payload that carries none
- *   of them, rather than calling the expense open. `bin/expense-status-probe.ts` prints
- *   what an account actually sends, which is how the right field gets settled.
+ *   field. A live account sends `status: 10` on every expense and no `reported` flag at
+ *   all, so 10/20 is either an enum this app has the wrong labels for or a state that has
+ *   nothing to do with reporting — the payload also carries `paymentAmountLocal: 0` and no
+ *   `paymentDate` alongside it, which would fit an unpaid/paid pair just as well. Every
+ *   spelling below is therefore optional and read only when present, and `mapStatus`
+ *   asserts nothing from a payload carrying none of them rather than calling the expense
+ *   open. `bin/expense-status-probe.ts` prints what an account actually sends.
+ *
+ * `reportingDate` is the one field here that is unambiguously about reporting: the first of
+ * the month of the מע"מ period the expense is filed under, which Morning lets you set apart
+ * from the document's own date. It says which period will report the expense, not that any
+ * period has.
  */
 export interface MorningExpense {
   id: string;
@@ -166,6 +172,8 @@ export interface MorningExpense {
   documentDate?: string; // YYYY-MM-DD
   date?: string;
   paymentDate?: string | null;
+  /** First of the month of the מע"מ period the expense is filed under. */
+  reportingDate?: string | null;
   /** Believed to be 10 = open, 20 = reported. Sent as a number, but tolerated as a string. */
   status?: number | string;
   /** The same fact as a flag: true = reported. Also accepted as 0/1 or "true"/"false". */
@@ -179,6 +187,14 @@ export interface MorningExpense {
   amount?: number;
   vat?: number;
   amountTotal?: number;
+  /** The total before VAT, stated rather than left to be worked out from `amount` - `vat`. */
+  amountExcludeVat?: number;
+  /**
+   * What of the expense may actually be set against the business's books, after the
+   * classification's deduction percentage. Not read yet — see the note in `money`.
+   */
+  deductibleAmount?: number;
+  deductibleVat?: number;
   currency?: string;
   currencyRate?: number;
   supplier?: { id?: string; name?: string; taxId?: string };

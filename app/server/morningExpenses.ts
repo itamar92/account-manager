@@ -104,6 +104,16 @@ function supplierName(exp: MorningExpense): string {
  * A missing VAT figure is never back-computed the way revenue's is: suppliers who are
  * עוסק פטור, and expenses billed abroad, carry no input VAT at all, and inventing some
  * would overstate what may be reclaimed.
+ *
+ * The figure before VAT is taken from `amountExcludeVat` when Morning states it, and worked
+ * out by subtraction only when it does not.
+ *
+ * What is *not* read here, deliberately: `deductibleAmount` and `deductibleVat`, which are
+ * what the classification's deduction percentage leaves of each. For an expense deducted in
+ * full they equal the figures above, and for a partly deductible one — a phone bill at 80%,
+ * a car — they are smaller, which means the input VAT this page totals is more than may
+ * actually be reclaimed. Reading them changes what the מע"מ report claims back, so it is a
+ * change to make deliberately and not as a side effect of a status fix.
  */
 function money(exp: MorningExpense): { subtotal: number; vat: number; total: number } {
   const rate = Number(exp.currencyRate) > 0 ? Number(exp.currencyRate) : 1;
@@ -111,7 +121,11 @@ function money(exp: MorningExpense): { subtotal: number; vat: number; total: num
   const amount = (Number(exp.amount) || 0) * rate;
   const stated = Number(exp.amountTotal);
   const total = round2(Number.isFinite(stated) && stated > 0 ? stated * rate : amount);
-  return { subtotal: round2(total - vat), vat, total };
+  const excludingVat = Number(exp.amountExcludeVat);
+  const subtotal = Number.isFinite(excludingVat) && excludingVat > 0
+    ? round2(excludingVat * rate)
+    : round2(total - vat);
+  return { subtotal, vat, total };
 }
 
 /**
@@ -195,6 +209,10 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
         doc_type: docType(exp),
         date,
         payment_date: exp.paymentDate ? String(exp.paymentDate).slice(0, 10) : null,
+        // The מע"מ period Morning files the expense under, which it lets you set apart from
+        // the document's own date — an August invoice can be reported in July's period. Stored
+        // because it is the only field in the payload that is unambiguously about reporting.
+        reporting_date: exp.reportingDate ? String(exp.reportingDate).slice(0, 10) : null,
         supplier_name: supplierName(exp),
         supplier_tax_id: exp.supplier?.taxId ?? null,
         external_supplier_id: exp.supplier?.id ?? null,
@@ -217,30 +235,31 @@ export async function pullExpensesFromMorning(options: { days?: number } = {}): 
 
       if (existing) {
         db.prepare(
-          `UPDATE expenses SET number = ?, doc_type = ?, date = ?, payment_date = ?, supplier_name = ?,
-             supplier_tax_id = ?, external_supplier_id = ?, category = ?, description = ?,
-             amount = ?, vat_amount = ?, total = ?, currency = ?, status = ?, notes = ?, raw = ?
+          `UPDATE expenses SET number = ?, doc_type = ?, date = ?, payment_date = ?, reporting_date = ?,
+             supplier_name = ?, supplier_tax_id = ?, external_supplier_id = ?, category = ?,
+             description = ?, amount = ?, vat_amount = ?, total = ?, currency = ?, status = ?,
+             notes = ?, raw = ?
            WHERE id = ?`
         ).run(
-          values.number, values.doc_type, values.date, values.payment_date, values.supplier_name,
-          values.supplier_tax_id, values.external_supplier_id, values.category, values.description,
-          values.amount, values.vat_amount, values.total, values.currency, values.status, values.notes,
-          values.raw, existing.id
+          values.number, values.doc_type, values.date, values.payment_date, values.reporting_date,
+          values.supplier_name, values.supplier_tax_id, values.external_supplier_id, values.category,
+          values.description, values.amount, values.vat_amount, values.total, values.currency,
+          values.status, values.notes, values.raw, existing.id
         );
         updated++;
         continue;
       }
 
       db.prepare(
-        `INSERT INTO expenses (id, external_id, number, doc_type, date, payment_date, supplier_name,
-           supplier_tax_id, external_supplier_id, category, description, amount, vat_amount, total,
-           currency, status, source, notes, raw)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?, ?)`
+        `INSERT INTO expenses (id, external_id, number, doc_type, date, payment_date, reporting_date,
+           supplier_name, supplier_tax_id, external_supplier_id, category, description, amount,
+           vat_amount, total, currency, status, source, notes, raw)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'morning', ?, ?)`
       ).run(
         uuid(), exp.id, values.number, values.doc_type, values.date, values.payment_date,
-        values.supplier_name, values.supplier_tax_id, values.external_supplier_id, values.category,
-        values.description, values.amount, values.vat_amount, values.total, values.currency,
-        values.status, values.notes, values.raw
+        values.reporting_date, values.supplier_name, values.supplier_tax_id,
+        values.external_supplier_id, values.category, values.description, values.amount,
+        values.vat_amount, values.total, values.currency, values.status, values.notes, values.raw
       );
       created++;
     }

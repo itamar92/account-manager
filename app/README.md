@@ -117,7 +117,13 @@ cannot demote yourself.
   since those are the ones a filing has to chase.
 
   A row's status is דווח, טרם דווח, or **סטטוס לא ידוע** — the last meaning Morning's payload
-  carried no field this app recognises as saying which. It is a real third state rather than a
+  carried no field this app recognises as saying which. Note that a live account sends
+  `status: 10` on every expense and no reported flag at all, so what 10 and 20 mean is still
+  unconfirmed and the דווח/טרם דווח label on them is not yet something to trust.
+  `reportingDate`, stored as `reporting_date` and shown under the date when it falls in another
+  month, is the one field in the payload unambiguously about reporting: the מע"מ period Morning
+  files the expense under. The מע"מ report still groups expenses by their document date, so an
+  expense Morning reports in another period is counted here in a different one than in Morning. It is a real third state rather than a
   tidier default, because the alternative is what the list used to do: read a payload it could
   not understand and show the account's every filed expense as טרם דווח, which is both wrong
   and invisible. `GET /api/expenses/status-audit` (owner) and `npm run expenses:probe` both
