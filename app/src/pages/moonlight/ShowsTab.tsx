@@ -1,13 +1,24 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { del, get, post, nis } from '../../api';
 import { Button, Combobox, Empty, FilterBar, PageHeader, Pill, PeriodSelect, SearchInput, textMatch } from '../../ui';
-import { eventLabel, expenseRowTotal, moneyReceived, paymentStatusLabel, type PeriodTabProps } from './shared';
+import {
+  eventLabel, expenseRowTotal, moneyReceived, paymentStatusLabel, showHref, type PeriodTabProps,
+} from './shared';
 
 const HEB_MONTHS = ['ינו', 'פבר', 'מרץ', 'אפר', 'מאי', 'יונ', 'יול', 'אוג', 'ספט', 'אוק', 'נוב', 'דצמ'];
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Where the list was scrolled to when a show was opened out of it.
+ *
+ * A year of gigs is a long page, and being put back at the top of it is being put back
+ * somewhere else. It is written on the way into a show and read once on the way back, so it
+ * never survives long enough to fight with a list reached any other way.
+ */
+const SCROLL_KEY = 'moonlight:shows:scroll';
 
 /** Status colours for the pill: [background, text]. */
 const STATUS_TONE: Record<string, [string, string]> = {
@@ -39,11 +50,25 @@ interface Props extends PeriodTabProps {
  */
 export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
+  // Which shows are on screen lives in the URL rather than in state, so opening one and coming
+  // back lands on the list you left — the year, the filter and the search you had — instead of
+  // the default list the page opens on cold. The period selects are URL-backed the same way.
+  const [params, setParams] = useSearchParams();
   // Null means "nobody has chosen yet", which is not the same as choosing קרובות: a band
   // looking at a finished year would otherwise open the page on an empty list.
-  const [chosen, setChosen] = useState<Filter | null>(null);
-  const [search, setSearch] = useState('');
+  const raw = params.get('show');
+  const chosen: Filter | null = FILTERS.some(([key]) => key === raw) ? (raw as Filter) : null;
+  const search = params.get('q') ?? '';
   const [syncing, setSyncing] = useState(false);
+
+  // Replace rather than push: «back» should leave the list, not walk back through every filter
+  // that was tried on the way to the one being read.
+  const setParam = (key: string, value: string) => {
+    const next = new URLSearchParams(params);
+    if (value) next.set(key, value); else next.delete(key);
+    setParams(next, { replace: true });
+  };
 
   const syncCalendar = async () => {
     setSyncing(true);
@@ -57,10 +82,21 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
     finally { setSyncing(false); }
   };
 
+  const openShow = (id: string) => {
+    try {
+      sessionStorage.setItem(SCROLL_KEY, JSON.stringify({ search: location.search, y: window.scrollY }));
+    } catch { /* a browser that refuses storage still navigates */ }
+    navigate(showHref(id, location));
+  };
+
+  // Once, and only when there are cards to scroll past — restoring against an empty list would
+  // put the page back at the top the moment the shows arrived.
+  const restored = useRef(false);
+
   const now = today();
   const upcomingCount = events.filter((e) => e.date >= now).length;
   const filter: Filter = chosen ?? (upcomingCount > 0 ? 'upcoming' : 'past');
-  const setFilter = setChosen;
+  const setFilter = (next: Filter) => setParam('show', next);
 
   const visible = useMemo(() => {
     const matched = events.filter((e) => textMatch(search, e.venue, e.location));
@@ -71,6 +107,18 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
     return [...byFilter].sort((a, b) =>
       filter === 'upcoming' ? a.date.localeCompare(b.date) : b.date.localeCompare(a.date));
   }, [events, search, filter, now]);
+
+  useEffect(() => {
+    if (restored.current || visible.length === 0) return;
+    restored.current = true;
+    try {
+      const raw = sessionStorage.getItem(SCROLL_KEY);
+      if (!raw) return;
+      sessionStorage.removeItem(SCROLL_KEY);
+      const saved = JSON.parse(raw);
+      if (saved?.search === location.search && saved.y > 0) window.scrollTo(0, saved.y);
+    } catch { /* nothing to restore is not a failure */ }
+  }, [visible.length]);
 
   const count = (f: Filter) => (f === 'all' ? events.length
     : f === 'upcoming' ? upcomingCount
@@ -108,7 +156,7 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
         <span className="w-px h-6 bg-line mx-0.5" />
         <PeriodSelect year={period.year} month={period.month}
           onYearChange={period.setYear} onMonthChange={period.setMonth} />
-        <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי מקום…" className="flex-1 min-w-[9rem] sm:max-w-xs" />
+        <SearchInput value={search} onChange={(v) => setParam('q', v)} placeholder="חיפוש לפי מקום…" className="flex-1 min-w-[9rem] sm:max-w-xs" />
       </FilterBar>
 
       {isOwner && <OrphanCosts onError={onError} onChange={reload} />}
@@ -118,7 +166,7 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
       ) : (
         <div className="space-y-2.5">
           {visible.map((e) => (
-            <ShowCard key={e.id} show={e} onOpen={() => navigate(`/moonlight/shows/${e.id}`)} />
+            <ShowCard key={e.id} show={e} onOpen={() => openShow(e.id)} />
           ))}
         </div>
       )}

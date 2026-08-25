@@ -147,3 +147,46 @@ export const EXPENSE_FIELDS = [
 /** What one expense row adds up to, for reading a row the server has not totalled for us. */
 export const expenseRowTotal = (row: any) =>
   Math.round(EXPENSE_FIELDS.reduce((sum, f) => sum + (Number(row?.[f]) || 0), 0) * 100) / 100;
+
+/**
+ * The parameter a link into a show carries the list it came from in.
+ *
+ * A show is opened from four different places, each of which has a state worth coming back to —
+ * the year the list was filtered to, the search that was typed, the tab you were on. Rather
+ * than have the show page guess, the link that opened it says where it came from, and the
+ * breadcrumb takes you back to exactly that address.
+ */
+export const RETURN_PARAM = 'back';
+
+/** A link to one show that remembers the list it was opened from. */
+export function showHref(id: string, from?: { pathname: string; search: string }): string {
+  const back = from ? `${from.pathname}${from.search}` : '';
+  return back
+    ? `/moonlight/shows/${id}?${RETURN_PARAM}=${encodeURIComponent(back)}`
+    : `/moonlight/shows/${id}`;
+}
+
+/** The Moonlight pages a show can be opened from, longest path first so `/moonlight` is last. */
+const RETURN_LABELS: Array<[string, string]> = [
+  ['/moonlight/shows', 'הופעות'],
+  ['/moonlight/summary', 'סקירה כספית'],
+  ['/moonlight/suppliers', 'ספקים וחברים'],
+  ['/moonlight/generalExpenses', 'הוצאות כלליות'],
+  ['/moonlight/campaignAi', 'יועץ קמפיינים'],
+  ['/moonlight/ads', 'קמפיינים'],
+  ['/moonlight', 'סקירה כספית'],
+];
+
+/**
+ * Where the breadcrumb out of a show goes, and what it is called.
+ *
+ * Anything that is not a Moonlight address is not somewhere this breadcrumb will send you: a
+ * value out of the URL is only ever as trustworthy as whoever typed it, and the shows list is
+ * the right answer for every case it is wrong about anyway.
+ */
+export function showReturn(raw: string | null): { to: string; label: string } {
+  const to = raw && /^\/moonlight(\/[\w./-]*)?(\?[^\s]*)?$/.test(raw) ? raw : '/moonlight/shows';
+  const path = to.split('?')[0];
+  const match = RETURN_LABELS.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));
+  return { to, label: match ? match[1] : 'הופעות' };
+}

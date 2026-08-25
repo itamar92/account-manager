@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { get, post, put, nis } from '../api';
 import { useAuth } from '../AuthContext';
-import { Button, Input, Modal, usePeriodFilter } from '../ui';
+import { Button, Input, Modal, useUrlPeriodFilter } from '../ui';
 import { ShowsTab } from './moonlight/ShowsTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
@@ -41,7 +41,9 @@ export function Moonlight() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tab: Tab = isTab(params.tab) ? params.tab : 'summary';
   // The tables show the period you are working in; the summary keeps its own, wider range.
-  const period = usePeriodFilter();
+  // It lives in the URL so that opening a show out of a list and coming back lands on the
+  // list as it was, rather than on the year the page opens on by default.
+  const period = useUrlPeriodFilter();
   const [events, setEvents] = useState<any[]>([]);
   const [generalExpenses, setGeneralExpenses] = useState<any[]>([]);
   const [allEvents, setAllEvents] = useState<any[]>([]);
