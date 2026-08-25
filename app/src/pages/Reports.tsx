@@ -102,6 +102,14 @@ function VatReport({ report, onToggle }: { report: any; onToggle: ToggleFn }) {
         />
       </div>
 
+      {report.shifted_expenses > 0 && (
+        <div className="text-sm text-muted">
+          {report.shifted_expenses} הוצאות מדווחות ב-Morning בחודש שונה מזה שבו הן מתוארכות. הן נספרות
+          כאן בתקופה שמדווחת אותן, כפי ש-Morning מדווח אותן — ולכן תקופה כאן יכולה שלא להתאים לאותו
+          חודש בעמוד הוצאות, שמציג לפי תאריך המסמך.
+        </div>
+      )}
+
       {openExpenses > 0 && (
         <div className="text-sm text-warn">
           {openExpenses} הוצאות בשנה זו עדיין מסומנות ב-Morning כלא מדווחות — מע"מ התשומות שלהן נכלל כאן,

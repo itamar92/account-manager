@@ -196,6 +196,18 @@ opened, from the documents Morning syncs in on the income side and the supplier 
 syncs in on the outgoing one, so a report cannot drift from the lists it was built from.
 Everything is on an **accrual basis** (מצטבר), which is what an Israeli מע"מ filing reports: a
 document belongs to the period it was issued in, whether or not the money has arrived.
+
+The two reports differ on one point, deliberately. **מע"מ counts an expense in the period
+Morning reports it in** (`reporting_date`, falling back to the document date) — a filing has to
+agree with Morning about which period reports which expense, or the input VAT claimed for a
+period is not the input VAT Morning reported for it, and an expense dated in December but
+reported in January belongs to January's filing. **מס הכנסה and the dashboard count it in the
+month it is dated**, which is the year the expense was incurred and the year a return covers.
+So a period on דוחות need not match the same months on הוצאות, which lists by document date;
+the מע"מ page says how many expenses in the year are shifted that way.
+
+`monthlyPnl(from, to, basis)` is where this lives — one query, one `ExpenseBasis` argument, so
+neither report can drift from the other on anything except the date it is asked to use.
 Credit invoices (330) are counted here and offset, since a period's turnover has to be net of
 what was credited back — they arrive from Morning with negative amounts, so summing the set
 does that netting for free.
