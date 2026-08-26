@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, Briefcase, CalendarClock, Moon, Music, Receipt } from 'lucide-react';
+import { AlertCircle, Briefcase, CalendarClock, FileBarChart, Moon, Music, Receipt } from 'lucide-react';
 import { clsx } from 'clsx';
 import { get, nis } from '../api';
 import { Empty, InkPanel, PageHeader, Pill } from '../ui';
@@ -93,6 +93,38 @@ export function Inbox() {
         amount: band.awaitingPaymentTotal, cta: 'לרשימה', to: '/moonlight/income',
       });
     }
+    // The closed year's return: a date, and a figure to pay with it.
+    const filing = inbox.annualFiling;
+    if (filing) {
+      const late = filing.deadline.days_left < 0;
+      const owed = filing.balance >= 0;
+      out.push({
+        key: 'annual-filing', kind: 'tax', tone: late ? 'neg' : 'warn', icon: FileBarChart,
+        primary: late,
+        title: `הדוח השנתי ל-${filing.year} טרם הוגש`,
+        sub: `${late ? `באיחור ${-filing.deadline.days_left} ימים` : `להגשה בעוד ${filing.deadline.days_left} ימים`}`
+          + ` · ${filing.deadline.file_by}`
+          + (filing.deadline.stated ? '' : ' (מועד ברירת מחדל — ניתן לעדכן)')
+          + ` · ${owed ? 'יתרה לתשלום' : 'צפוי החזר'}`,
+        amount: Math.abs(filing.balance),
+        cta: 'לדוח השנתי', to: `/reports?tab=annual&year=${filing.year}`,
+      });
+    }
+
+    // The year still running: what it is heading towards, while there is still time to act.
+    const shortfall = inbox.annualShortfall;
+    if (shortfall) {
+      out.push({
+        key: 'annual-shortfall', kind: 'tax', tone: 'warn', icon: CalendarClock,
+        title: `${shortfall.year} מתקדמת ליתרת מס של ${nis(shortfall.shortfall)}`,
+        sub: shortfall.mikdamot_paid > 0
+          ? `מעבר ל-${nis(shortfall.payments)} שכבר נוכו ושולמו, מהם ${nis(shortfall.mikdamot_paid)} מקדמות`
+          : 'לא הוזנו מקדמות לשנה זו — כדאי לבדוק מול רואה החשבון אם צריך לשלם',
+        amount: shortfall.shortfall,
+        cta: 'לתחזית', to: `/reports?tab=annual&year=${shortfall.year}`,
+      });
+    }
+
     if (band.missingAssignments.length) {
       out.push({
         key: 'band-staff', kind: 'data', tone: 'moon', icon: Moon,

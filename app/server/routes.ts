@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { randomBytes } from 'crypto';
 import {
   db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
@@ -47,6 +47,15 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
+import { annualOutlook, annualReport, getProfile, saveProfile } from './annualReport.js';
+import { parseCertificate } from './formParser.js';
+import {
+  createAsset, deleteAsset, depreciationSchedule, listAssets, updateAsset,
+} from './fixedAssets.js';
+import {
+  creditBreakdown, clearCreditStatus, EMPTY_STATUS, getCreditStatus, normalizeStatus,
+  saveCreditStatus,
+} from './creditPoints.js';
 import {
   isExpenseBasis, isPeriodKey, overview, recognitionRates, setRecognitionRates,
 } from './overview.js';
@@ -331,6 +340,32 @@ export function inboxItems() {
     status: period.status,
   } : null;
 
+  // The annual return asks two different things at two different times of year, and both are
+  // invisible in a list built from invoices and מע"מ periods.
+  //
+  // The closed year has a return to file and a balance to pay with it. The year still running
+  // is heading towards a balance whether or not anybody is watching — and the מקדמות going into
+  // it are either keeping up or they are not. That gap is worth something in August, when it
+  // can still be discussed with the accountant, and worth nothing the following June.
+  //
+  // Both stay quiet until the declared side has been filled in for the year in question: with
+  // no salary, no withholding and no advances entered, the ladder is not yet describing
+  // anybody's tax and has no business raising an alarm about it.
+  const thisYear = new Date().getFullYear();
+  const closedYear = annualOutlook(thisYear - 1);
+  const runningYear = annualOutlook(thisYear);
+
+  const annualFiling = closedYear.configured
+    && closedYear.deadline.status !== 'filed' && closedYear.deadline.status !== 'paid'
+    ? closedYear
+    : null;
+
+  // A shekel or two of rounding is not a warning. The threshold is what would be worth a phone
+  // call, not what is arithmetically non-zero.
+  const annualShortfall = runningYear.configured && runningYear.shortfall >= 1000
+    ? runningYear
+    : null;
+
   const band = bandFollowUps();
 
   const sum = (rows: any[], key: string) => round2(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0));
@@ -338,6 +373,7 @@ export function inboxItems() {
   const openCount = [
     overdue.length, unbilled.length, Number(uncategorized.count) || 0,
     band.awaitingPayment.length, band.missingAssignments.length,
+    annualFiling ? 1 : 0, annualShortfall ? 1 : 0,
   ].filter(Boolean).length;
 
   return {
@@ -358,6 +394,8 @@ export function inboxItems() {
       vat: round2(Number(uncategorized.vat) || 0),
     },
     vat,
+    annualFiling,
+    annualShortfall,
     band: {
       awaitingPaymentTotal: band.awaitingPaymentTotal,
       awaitingPaymentCount: band.awaitingPayment.length,
@@ -376,6 +414,123 @@ router.get('/reports/vat', requireOwner, handle((req, res) => {
 
 router.get('/reports/income-tax', requireOwner, handle((req, res) => {
   res.json({ report: incomeTaxReport(reportYear(req.query)) });
+}));
+
+/**
+ * The annual return as it is shaping up — the 1301 ladder, this year against last.
+ *
+ * `basis=ytd` reads the business side as the books have it so far; the default projects the
+ * year from the months that have closed, which is the only reading that means anything before
+ * December. The declared side is annual either way.
+ */
+router.get('/reports/annual', requireOwner, handle((req, res) => {
+  const basis = req.query.basis === 'ytd' ? 'ytd' : 'projected';
+  res.json({ report: annualReport(reportYear(req.query), basis) });
+}));
+
+router.get('/reports/annual/profile/:year', requireOwner, handle((req, res) => {
+  res.json({ profile: getProfile(parseInt(req.params.year, 10) || new Date().getFullYear()) });
+}));
+
+router.put('/reports/annual/profile/:year', requireOwner, handle((req, res) => {
+  const year = parseInt(req.params.year, 10);
+  if (!Number.isFinite(year) || year < 2000 || year > 2100)
+    return res.status(400).json({ error: 'שנת מס לא תקינה' });
+  res.json({ profile: saveProfile(year, req.body || {}) });
+}));
+
+/**
+ * Reads a certificate — טופס 106, the ביטוח לאומי letter, a קופה's annual statement — and says
+ * what it found. It deliberately writes nothing: the review screen puts the figures beside
+ * what is already stored and a person decides, because a number lifted out of a PDF is about
+ * to become a tax figure.
+ *
+ * The body is the file itself rather than JSON, so a PDF does not have to be base64'd to a
+ * third larger to get here, and the size limit is this route's own — the app's global JSON
+ * limit is 1mb, which a scanned certificate passes on its way through.
+ */
+router.post(
+  '/reports/annual/parse',
+  requireOwner,
+  express.raw({ type: ['application/pdf', 'application/octet-stream'], limit: '15mb' }),
+  // ParseError carries its own status, which handleAsync reports — a scan with no text layer
+  // is a 422 the person can act on, not a 500.
+  handleAsync(async (req, res) => {
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: 'לא התקבל קובץ — יש לשלוח PDF בגוף הבקשה' });
+      return;
+    }
+    res.json({ parsed: await parseCertificate(new Uint8Array(body)) });
+  })
+);
+
+// ============ רכוש קבוע ופחת (owner) ============
+
+/**
+ * The depreciation schedule for a tax year — the 1342 as this app keeps it. Assets bought
+ * after the year are left out, since they have nothing to say about it yet.
+ */
+router.get('/tax/assets', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  res.json({ year, schedule: depreciationSchedule(year), assets: listAssets() });
+}));
+
+router.post('/tax/assets', requireOwner, handle((req, res) => {
+  res.status(201).json({ asset: createAsset(req.body || {}) });
+}));
+
+router.put('/tax/assets/:id', requireOwner, handle((req, res) => {
+  res.json({ asset: updateAsset(req.params.id, req.body || {}) });
+}));
+
+router.delete('/tax/assets/:id', requireOwner, handle((req, res) => {
+  deleteAsset(req.params.id);
+  res.json({ ok: true });
+}));
+
+// ============ נקודות זיכוי calculator (owner) ============
+
+/**
+ * The saved status and what it is worth in the requested tax year. The status is the durable
+ * thing — birth years and a discharge date do not change — and the points are recomputed from
+ * it per year, because the same facts are worth different numbers in different years.
+ */
+router.get('/tax/credit-points', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  const status = getCreditStatus();
+  res.json({
+    status: status ?? EMPTY_STATUS,
+    configured: status !== null,
+    year,
+    breakdown: creditBreakdown(status ?? EMPTY_STATUS, year),
+    // What the estimate is using right now, whether from the calculator or the typed number.
+    active_points: getCreditPoints(year),
+  });
+}));
+
+/** Previews a status without saving it, so the form can total as it is filled in. */
+router.post('/tax/credit-points/preview', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  res.json({ breakdown: creditBreakdown(normalizeStatus(req.body?.status), year) });
+}));
+
+/**
+ * Saves the status and writes the resulting points into the setting the estimates read, so
+ * "submit" on the calculator is the same act as typing the number into the field by hand.
+ */
+router.post('/tax/credit-points', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  const status = saveCreditStatus(req.body?.status);
+  const breakdown = creditBreakdown(status, year);
+  setSetting('tax_credit_points', String(breakdown.total));
+  res.json({ status, breakdown, active_points: breakdown.total });
+}));
+
+/** Drops the status and goes back to the number typed into the settings field. */
+router.delete('/tax/credit-points', requireOwner, handle((_req, res) => {
+  clearCreditStatus();
+  res.json({ status: EMPTY_STATUS, configured: false, active_points: getCreditPoints() });
 }));
 
 /**

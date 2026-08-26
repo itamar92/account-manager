@@ -17,6 +17,20 @@ export const put = <T = any>(path: string, body?: unknown) =>
 export const del = <T = any>(path: string) => api<T>(path, { method: 'DELETE' });
 
 /**
+ * Sends a file as the request body rather than as JSON.
+ *
+ * The Content-Type is the file's own, which is what the route matches on, and it overrides the
+ * application/json every other call here sends — a PDF posted as JSON is rejected by the body
+ * parser before the route ever sees it.
+ */
+export const postFile = <T = any>(path: string, file: File) =>
+  api<T>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    body: file,
+  });
+
+/**
  * The sign is placed before the ₪ rather than between it and the digits: a loss-making month
  * reads as ־₪1,000 instead of the ₪־1,000 that a bidirectional line turns into nonsense.
  *

@@ -40,6 +40,10 @@ export const DEFAULT_RECOGNITION_RATES: Record<string, number> = {
   'מים': 0.15,
   'חשבון גז': 0.15,
   'ועד בית': 0.15,
+  // כיבודים are allowed at 80% by the regulations — the same kind of statutory haircut the
+  // car rates above are, and the one an assessment adds back most often after the car.
+  'כיבודים': 0.8,
+  'אירוח': 0.8,
   'אינטרנט': 0.8,
   'טלפון': 0.8,
   'סלולר': 0.8,

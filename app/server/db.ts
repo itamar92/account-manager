@@ -161,6 +161,68 @@ CREATE TABLE IF NOT EXISTS tax_filings (
   UNIQUE(kind, period_key)
 );
 
+-- The declared half of the annual return (טופס 1301): salary, מילואים, deposits, what was
+-- withheld at source and what was paid in advance. None of it can be discovered from the
+-- business's own documents — it comes off טופס 106, the ביטוח לאומי certificate and the
+-- קופות' annual statements — so it is entered once a year and kept per tax year.
+-- The *_allowed columns hold what an assessment actually let through, where that is known;
+-- NULL means it was never stated and the report falls back to its own estimate.
+CREATE TABLE IF NOT EXISTS annual_tax_profile (
+  id TEXT PRIMARY KEY,
+  year INTEGER NOT NULL UNIQUE,
+  salary REAL NOT NULL DEFAULT 0,
+  salary_withheld REAL NOT NULL DEFAULT 0,
+  miluim REAL NOT NULL DEFAULT 0,
+  miluim_withheld REAL NOT NULL DEFAULT 0,
+  other_income REAL NOT NULL DEFAULT 0,
+  other_withheld REAL NOT NULL DEFAULT 0,
+  business_income_override REAL,
+  keren_hishtalmut_paid REAL NOT NULL DEFAULT 0,
+  keren_hishtalmut_allowed REAL,
+  pension_atzmai_paid REAL NOT NULL DEFAULT 0,
+  pension_atzmai_allowed REAL,
+  ni_paid REAL NOT NULL DEFAULT 0,
+  pension_sachir_paid REAL NOT NULL DEFAULT 0,
+  pension_sachir_allowed REAL,
+  life_insurance_paid REAL NOT NULL DEFAULT 0,
+  donations_paid REAL NOT NULL DEFAULT 0,
+  mikdamot_paid REAL NOT NULL DEFAULT 0,
+  credit_points_override REAL,
+  -- Whether to apply this app's own recognition rates on top of Morning's. Off leaves the
+  -- profit exactly as the books have it; on brings it closer to what an assessor will allow.
+  apply_recognition_rates INTEGER NOT NULL DEFAULT 1,
+  -- When this year's return is actually due. Left empty the report falls back to the online
+  -- filing date; a filer represented by a CPA usually has a later date from the מייצגים quota,
+  -- and only they know what it is.
+  file_by TEXT,
+  notes TEXT,
+  updated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- רכוש קבוע: what the books expensed on purchase and the return depreciates over years.
+-- The tax side of the same documents, kept apart from them because the two answers are both
+-- correct and differ only in timing. opening_accumulated is פחת שנצבר as a 1342 stated it at
+-- the end of opening_year; every year after that is computed forward from it, so a schedule
+-- seeded from a real form stays exactly in step with one.
+CREATE TABLE IF NOT EXISTS fixed_assets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  asset_group TEXT NOT NULL DEFAULT '',
+  purchase_date TEXT NOT NULL,
+  cost REAL NOT NULL DEFAULT 0,
+  rate REAL NOT NULL DEFAULT 0.15,
+  opening_accumulated REAL NOT NULL DEFAULT 0,
+  opening_year INTEGER,
+  -- Whether the P&L already deducted the purchase in full, which decides whether the
+  -- reconciliation has to add it back. An asset bought before this app existed never did.
+  deducted_in_books INTEGER NOT NULL DEFAULT 1,
+  disposed_date TEXT,
+  expense_id TEXT,
+  notes TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS band_events (
   id TEXT PRIMARY KEY,
   venue TEXT NOT NULL,
@@ -472,6 +534,10 @@ addColumnIfMissing('invoices', 'open_amount', 'REAL');
 // differently than expected can be seen in the data instead of guessed at — reading the
 // classification object as a scalar once wrote "[object Object]" into every category, and
 // there was nothing stored to diagnose it from.
+// Added after the annual report shipped, so a database created with the first version of the
+// table gets the toggle rather than failing every read of it.
+addColumnIfMissing('annual_tax_profile', 'apply_recognition_rates', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('annual_tax_profile', 'file_by', 'TEXT');
 addColumnIfMissing('expenses', 'raw', 'TEXT');
 // Morning's `reportingDate` — see the column comment above.
 addColumnIfMissing('expenses', 'reporting_date', 'TEXT');
