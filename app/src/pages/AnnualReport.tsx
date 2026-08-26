@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { get, put, nis, postFile } from '../api';
-import { Button, Card, Empty, EditableCell, MoneyInput, Modal, Segmented, StatCard, Switch, Textarea } from '../ui';
+import { Button, Card, Empty, EditableCell, Input, MoneyInput, Modal, Segmented, StatCard, Switch, Textarea } from '../ui';
 import { FixedAssets } from './FixedAssets';
 
 /**
@@ -55,6 +55,28 @@ export function AnnualReport({ year }: { year: number }) {
           accent="text-accent"
         />
       </div>
+
+      {/* The date the balance above is owed by. Only once the year has closed — a year still
+          running has nothing to file, and a countdown to it would be noise. */}
+      {a.deadline.status !== 'collecting' && (
+        <div className={clsx(
+          'flex flex-wrap items-center justify-between gap-3 text-sm rounded-xl px-4 py-3',
+          a.deadline.status === 'overdue' ? 'bg-neg-soft text-neg'
+            : a.deadline.status === 'due' ? 'bg-warn-soft text-warn'
+            : 'bg-pos-soft text-pos'
+        )}>
+          <span className="font-medium">
+            {a.deadline.status === 'paid' ? `הדוח ל-${a.year} הוגש ושולם`
+              : a.deadline.status === 'filed' ? `הדוח ל-${a.year} הוגש`
+              : a.deadline.status === 'overdue' ? `הדוח ל-${a.year} באיחור ${-a.deadline.days_left} ימים`
+              : `הדוח ל-${a.year} להגשה בעוד ${a.deadline.days_left} ימים`}
+          </span>
+          <span className="text-xs opacity-80">
+            {a.deadline.file_by}
+            {!a.deadline.stated && ' · מועד ההגשה המקוונת, ניתן לעדכן בנתונים המוצהרים'}
+          </span>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Segmented
@@ -337,6 +359,7 @@ function ProfileModal({ open, year, profile, onClose, onSaved }: {
   open: boolean; year: number; profile: any; onClose: () => void; onSaved: () => void;
 }) {
   const [form, setForm] = useState<Record<string, string>>({});
+  const [fileBy, setFileBy] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -352,6 +375,7 @@ function ProfileModal({ open, year, profile, onClose, onSaved }: {
       }
     }
     setForm(next);
+    setFileBy(profile?.file_by ?? '');
     setNotes(profile?.notes ?? '');
     setError('');
   }, [open, profile]);
@@ -362,7 +386,7 @@ function ProfileModal({ open, year, profile, onClose, onSaved }: {
     try {
       // A blank optional field is sent as null — "the assessment never said" — while a blank
       // required one is a plain zero.
-      const body: Record<string, unknown> = { notes };
+      const body: Record<string, unknown> = { notes, file_by: fileBy };
       for (const group of FIELD_GROUPS) {
         for (const [key] of group.fields) {
           const raw = (form[key] ?? '').trim();
@@ -411,6 +435,20 @@ function ProfileModal({ open, year, profile, onClose, onSaved }: {
             </div>
           </div>
         ))}
+
+        <div>
+          <h3 className="text-sm font-bold mb-1">מועד ההגשה</h3>
+          <p className="text-xs text-faint mb-2">
+            ריק ⇐ 30 ביוני {year + 1}, מועד ההגשה המקוונת. מיוצג על ידי רואה חשבון מקבל בדרך כלל
+            מועד מאוחר יותר ממכסת המייצגים — רק הוא יודע מהו, וזה המקום להזין אותו.
+          </p>
+          <div className="max-w-xs">
+            <Input
+              type="date" dir="ltr" value={fileBy}
+              onChange={(e) => setFileBy(e.target.value)}
+            />
+          </div>
+        </div>
 
         <Textarea label="הערות" rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>

@@ -1,8 +1,8 @@
 {
-  "as_of": "2026-04-16",
+  "as_of": "2026-08-26",
   "profile": "osek_murshe bi-monthly",
   "mkdamot_mas_hachnasa_required": false,
-  "mkdamot_note": "No shoverim issued for 2026 — skip. Re-check if Tax Authority sends assessment.",
+  "mkdamot_note": "NEEDS RE-VERIFYING, do not repeat as fact: recorded as not required because no shoverim were seen for 2026, but the filed 2025 return shows 46,066 NIS of mikdamot actually paid. Confirm against a shuma / pinkas mikdamot or with the accountant. Track the gap via get_annual_report -> outlook.shortfall and outlook.mikdamot_paid.",
   "deadlines_2026": [
     {
       "date": "2026-04-15",
@@ -16,26 +16,102 @@
       "type": "doch_shnati",
       "period": "Annual report 2025",
       "status": "ACTIVE — accountant handling",
-      "action": "Nudge Itamar Miron: confirm filing on track, ask if any docs/signatures still needed."
+      "action": "Nudge Itamar Miron: confirm filing on track, ask if any docs/signatures still needed, and get the real quota date into the app (annual profile -> file_by). Read the balance from get_annual_report -> outlook.balance before the call.",
+      "note": "Date here is the one previously recorded. The app's outlook.deadline.file_by is authoritative once a quota date has been entered; until then it shows the 30 June online-filing default and flags itself as not stated."
     },
-    {"date":"2026-05-15","type":"vat_bimonthly","period":"Mar-Apr 2026"},
-    {"date":"2026-05-15","type":"bituach_leumi_monthly","period":"April 2026"},
-    {"date":"2026-06-15","type":"bituach_leumi_monthly","period":"May 2026"},
-    {"date":"2026-07-15","type":"vat_bimonthly","period":"May-Jun 2026"},
-    {"date":"2026-07-15","type":"bituach_leumi_monthly","period":"June 2026"},
-    {"date":"2026-08-15","type":"bituach_leumi_monthly","period":"July 2026","shabbat_adjust":"2026-08-16"},
-    {"date":"2026-09-15","type":"vat_bimonthly","period":"Jul-Aug 2026"},
-    {"date":"2026-09-15","type":"bituach_leumi_monthly","period":"Aug 2026"},
-    {"date":"2026-10-15","type":"bituach_leumi_monthly","period":"Sep 2026"},
-    {"date":"2026-11-15","type":"vat_bimonthly","period":"Sep-Oct 2026","shabbat_adjust":"2026-11-16"},
-    {"date":"2026-11-15","type":"bituach_leumi_monthly","period":"Oct 2026","shabbat_adjust":"2026-11-16"},
-    {"date":"2026-12-15","type":"bituach_leumi_monthly","period":"Nov 2026"},
-    {"date":"2027-01-15","type":"vat_bimonthly","period":"Nov-Dec 2026"},
-    {"date":"2027-01-15","type":"bituach_leumi_monthly","period":"Dec 2026"}
+    {
+      "date": "2026-05-15",
+      "type": "vat_bimonthly",
+      "period": "Mar-Apr 2026"
+    },
+    {
+      "date": "2026-05-15",
+      "type": "bituach_leumi_monthly",
+      "period": "April 2026"
+    },
+    {
+      "date": "2026-06-15",
+      "type": "bituach_leumi_monthly",
+      "period": "May 2026"
+    },
+    {
+      "date": "2026-07-15",
+      "type": "vat_bimonthly",
+      "period": "May-Jun 2026"
+    },
+    {
+      "date": "2026-07-15",
+      "type": "bituach_leumi_monthly",
+      "period": "June 2026"
+    },
+    {
+      "date": "2026-08-15",
+      "type": "bituach_leumi_monthly",
+      "period": "July 2026",
+      "shabbat_adjust": "2026-08-16"
+    },
+    {
+      "date": "2026-09-15",
+      "type": "vat_bimonthly",
+      "period": "Jul-Aug 2026"
+    },
+    {
+      "date": "2026-09-15",
+      "type": "bituach_leumi_monthly",
+      "period": "Aug 2026"
+    },
+    {
+      "date": "2026-10-15",
+      "type": "bituach_leumi_monthly",
+      "period": "Sep 2026"
+    },
+    {
+      "date": "2026-11-15",
+      "type": "vat_bimonthly",
+      "period": "Sep-Oct 2026",
+      "shabbat_adjust": "2026-11-16"
+    },
+    {
+      "date": "2026-11-15",
+      "type": "bituach_leumi_monthly",
+      "period": "Oct 2026",
+      "shabbat_adjust": "2026-11-16"
+    },
+    {
+      "date": "2026-12-15",
+      "type": "bituach_leumi_monthly",
+      "period": "Nov 2026"
+    },
+    {
+      "date": "2027-01-15",
+      "type": "vat_bimonthly",
+      "period": "Nov-Dec 2026"
+    },
+    {
+      "date": "2027-01-15",
+      "type": "bituach_leumi_monthly",
+      "period": "Dec 2026"
+    }
   ],
   "turnover_watch": {
     "current_ytd": 90857,
     "detailed_vat_report_874_threshold": 500000,
     "note": "Projected annual ~315K — under 500K, bi-monthly OK."
+  },
+  "source_of_truth": "Amounts and the annual-return deadline come from the app's get_annual_report MCP tool, not from this file. This file lists the recurring dates; the app knows what is owed on them.",
+  "deadlines_2027": [
+    {
+      "date": "2027-06-30",
+      "type": "doch_shnati",
+      "period": "Annual report 2026",
+      "status": "default online-filing date — replace with the CPA quota date when known",
+      "action": "Balance due with the return: get_annual_report(2026) -> outlook.balance."
+    }
+  ],
+  "annual_return_watch": {
+    "why": "The annual return is the only deadline whose amount is not known until the year is nearly over, which is what makes an in-year projection worth having at all.",
+    "check": "get_annual_report(current year) -> outlook",
+    "raise_when": "outlook.configured is true and outlook.shortfall is material — that is tax owed beyond everything already withheld and advanced. Raise it while advances can still be adjusted, not in June.",
+    "if_not_configured": "outlook.configured false means the declared side (salary, miluim, withholding, deposits, advances) was never entered. Ask for the year's Form 106 and certificates; do not report a balance."
   }
 }

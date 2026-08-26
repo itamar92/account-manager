@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { get, put, monthName, nis } from '../api';
 import { Card, DataTable, Empty, EditableCell, PageHeader, PeriodBadge, Segmented, StatCard, YearSelect } from '../ui';
@@ -22,9 +23,19 @@ const tabs: [Tab, string][] = [
  * it came from. The one thing that is stored is the tick beside a period once it has actually
  * been filed and paid — the app cannot learn that from the books.
  */
+const isTab = (value: string | null): value is Tab =>
+  value === 'vat' || value === 'incomeTax' || value === 'annual';
+
 export function Reports() {
-  const [tab, setTab] = useState<Tab>('vat');
-  const [year, setYear] = useState(new Date().getFullYear());
+  // The inbox links straight at a tab and a year — "the 2025 return is not filed" is only a
+  // useful thing to click if it lands on the 2025 return. Read once, on the way in: after
+  // that the page's own controls own the state, so switching tabs does not fight the URL.
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(() => (isTab(params.get('tab')) ? params.get('tab') as Tab : 'vat'));
+  const [year, setYear] = useState(() => {
+    const value = parseInt(params.get('year') ?? '', 10);
+    return Number.isFinite(value) && value >= 2000 && value <= 2100 ? value : new Date().getFullYear();
+  });
   const [vat, setVat] = useState<any>(null);
   const [incomeTax, setIncomeTax] = useState<any>(null);
   const [error, setError] = useState('');

@@ -47,7 +47,7 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
-import { annualReport, getProfile, saveProfile } from './annualReport.js';
+import { annualOutlook, annualReport, getProfile, saveProfile } from './annualReport.js';
 import { parseCertificate } from './formParser.js';
 import {
   createAsset, deleteAsset, depreciationSchedule, listAssets, updateAsset,
@@ -340,6 +340,32 @@ export function inboxItems() {
     status: period.status,
   } : null;
 
+  // The annual return asks two different things at two different times of year, and both are
+  // invisible in a list built from invoices and מע"מ periods.
+  //
+  // The closed year has a return to file and a balance to pay with it. The year still running
+  // is heading towards a balance whether or not anybody is watching — and the מקדמות going into
+  // it are either keeping up or they are not. That gap is worth something in August, when it
+  // can still be discussed with the accountant, and worth nothing the following June.
+  //
+  // Both stay quiet until the declared side has been filled in for the year in question: with
+  // no salary, no withholding and no advances entered, the ladder is not yet describing
+  // anybody's tax and has no business raising an alarm about it.
+  const thisYear = new Date().getFullYear();
+  const closedYear = annualOutlook(thisYear - 1);
+  const runningYear = annualOutlook(thisYear);
+
+  const annualFiling = closedYear.configured
+    && closedYear.deadline.status !== 'filed' && closedYear.deadline.status !== 'paid'
+    ? closedYear
+    : null;
+
+  // A shekel or two of rounding is not a warning. The threshold is what would be worth a phone
+  // call, not what is arithmetically non-zero.
+  const annualShortfall = runningYear.configured && runningYear.shortfall >= 1000
+    ? runningYear
+    : null;
+
   const band = bandFollowUps();
 
   const sum = (rows: any[], key: string) => round2(rows.reduce((s, r) => s + (Number(r[key]) || 0), 0));
@@ -347,6 +373,7 @@ export function inboxItems() {
   const openCount = [
     overdue.length, unbilled.length, Number(uncategorized.count) || 0,
     band.awaitingPayment.length, band.missingAssignments.length,
+    annualFiling ? 1 : 0, annualShortfall ? 1 : 0,
   ].filter(Boolean).length;
 
   return {
@@ -367,6 +394,8 @@ export function inboxItems() {
       vat: round2(Number(uncategorized.vat) || 0),
     },
     vat,
+    annualFiling,
+    annualShortfall,
     band: {
       awaitingPaymentTotal: band.awaitingPaymentTotal,
       awaitingPaymentCount: band.awaitingPayment.length,

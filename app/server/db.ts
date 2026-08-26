@@ -191,6 +191,10 @@ CREATE TABLE IF NOT EXISTS annual_tax_profile (
   -- Whether to apply this app's own recognition rates on top of Morning's. Off leaves the
   -- profit exactly as the books have it; on brings it closer to what an assessor will allow.
   apply_recognition_rates INTEGER NOT NULL DEFAULT 1,
+  -- When this year's return is actually due. Left empty the report falls back to the online
+  -- filing date; a filer represented by a CPA usually has a later date from the מייצגים quota,
+  -- and only they know what it is.
+  file_by TEXT,
   notes TEXT,
   updated_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -533,6 +537,7 @@ addColumnIfMissing('invoices', 'open_amount', 'REAL');
 // Added after the annual report shipped, so a database created with the first version of the
 // table gets the toggle rather than failing every read of it.
 addColumnIfMissing('annual_tax_profile', 'apply_recognition_rates', 'INTEGER NOT NULL DEFAULT 1');
+addColumnIfMissing('annual_tax_profile', 'file_by', 'TEXT');
 addColumnIfMissing('expenses', 'raw', 'TEXT');
 // Morning's `reportingDate` — see the column comment above.
 addColumnIfMissing('expenses', 'reporting_date', 'TEXT');

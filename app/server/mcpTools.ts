@@ -20,6 +20,8 @@ import { bandDivision, bandFollowUps, bandSummary } from './routes.js';
 import { adAnalysis, listCampaigns, monthlyBreakdown, campaignDaily } from './metaSync.js';
 import { assignmentsForEvent, listSuppliers, missingRoles, supplierDebts } from './assignments.js';
 import { incomeTaxReport, monthlyPnl, pnlTotals, vatReport } from './reports.js';
+import { annualOutlook, annualReport } from './annualReport.js';
+import { depreciationSchedule } from './fixedAssets.js';
 import { getBusinessDetails } from './business.js';
 import { eventLabel } from './moonlight.js';
 import { lastReport } from './campaignAdvisor.js';
@@ -196,6 +198,35 @@ export const MCP_TOOLS: McpTool[] = [
     handler: (args) => {
       const y = year(args);
       return { year: y, vat: vatReport(y), income_tax: incomeTaxReport(y) };
+    },
+  },
+
+  {
+    name: 'get_annual_report',
+    description:
+      'The דוח שנתי (Form 1301) as it is shaping up for a tax year: every income source — ' +
+      'business, salary, מילואים — through the deductions, the brackets and the credits, down ' +
+      'to יתרה לתשלום, which is what will actually be owed after everything already withheld ' +
+      'and paid in advance. Also the reconciliation from the books\' profit to the profit the ' +
+      'return is filed on (depreciation and part-recognised expenses), and the filing deadline. ' +
+      'Use this — not get_tax_report — for "what will I owe", "is the return filed", "are the ' +
+      'מקדמות keeping up", and anything about the annual return. Note that get_tax_report\'s ' +
+      'income-tax half prices the business profit as if it were the only income there is, so it ' +
+      'understates the tax badly for anyone who also draws a salary.',
+    inputSchema: yearSchema,
+    handler: (args) => {
+      const y = year(args);
+      const report = annualReport(y);
+      return {
+        year: y,
+        // The headline first: an agent reading this wants the balance and the date before it
+        // wants the ladder that produced them.
+        outlook: annualOutlook(y),
+        // Last year too, so "is this normal" has something to be normal against.
+        previous_outlook: report.previous ? annualOutlook(y - 1) : null,
+        assessment: report.current,
+        depreciation: depreciationSchedule(y),
+      };
     },
   },
 

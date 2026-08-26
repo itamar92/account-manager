@@ -78,6 +78,12 @@ export interface AnnualProfile {
   /** Overrides the calculator, for a year whose assessment used a different number. */
   credit_points_override: number | null;
   /**
+   * When the return is actually due, where it is known. Blank falls back to the online filing
+   * date — a filer represented by a CPA has a later date from the מייצגים quota, which only the
+   * CPA knows and this app should not guess.
+   */
+  file_by: string | null;
+  /**
    * Whether to apply this app's own recognition rates on top of Morning's when reconciling.
    * Off leaves the profit exactly as the books have it; on brings it closer to what an
    * assessor will allow, which is the more useful default for a report about the future.
@@ -109,6 +115,7 @@ export function emptyProfile(year: number): AnnualProfile {
     pension_sachir_paid: 0, pension_sachir_allowed: null,
     life_insurance_paid: 0, donations_paid: 0, mikdamot_paid: 0,
     credit_points_override: null,
+    file_by: null,
     apply_recognition_rates: true,
     notes: '', updated_at: null,
   };
@@ -121,6 +128,7 @@ export function getProfile(year: number): AnnualProfile {
   for (const key of PROFILE_NUMBERS) profile[key] = num(row[key]);
   for (const key of PROFILE_OPTIONALS) profile[key] = optional(row[key]);
   profile.apply_recognition_rates = row.apply_recognition_rates !== 0;
+  profile.file_by = row.file_by || null;
   profile.notes = row.notes ?? '';
   profile.updated_at = row.updated_at ?? null;
   return profile;
@@ -145,11 +153,19 @@ export function saveProfile(year: number, input: Record<string, unknown>): Annua
   if (input.apply_recognition_rates !== undefined) {
     next.apply_recognition_rates = !!input.apply_recognition_rates;
   }
+  if (input.file_by !== undefined) {
+    const value = String(input.file_by ?? '').trim();
+    if (value && !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+      throw Object.assign(new Error('מועד ההגשה חייב להיות תאריך תקין'), { status: 400 });
+    }
+    next.file_by = value || null;
+  }
   if (input.notes !== undefined) next.notes = String(input.notes ?? '').trim();
   next.updated_at = new Date().toISOString().slice(0, 10);
 
   const columns = [
-    ...PROFILE_NUMBERS, ...PROFILE_OPTIONALS, 'apply_recognition_rates', 'notes', 'updated_at',
+    ...PROFILE_NUMBERS, ...PROFILE_OPTIONALS,
+    'apply_recognition_rates', 'file_by', 'notes', 'updated_at',
   ] as const;
   db.prepare(
     `INSERT INTO annual_tax_profile (id, year, ${columns.join(', ')})
@@ -274,6 +290,7 @@ export interface AnnualAssessment {
   reconciliation: Reconciliation;
   profile: AnnualProfile;
   filing: TaxFiling | null;
+  deadline: AnnualDeadline;
 }
 
 /** The marginal rate at a given taxable income, read straight off the bands. */
@@ -289,6 +306,7 @@ function marginalRate(taxable: number, rates: YearRates): number {
 export function annualAssessment(year: number, basis: AnnualBasis = 'projected'): AnnualAssessment {
   const rates = ratesFor(year);
   const profile = getProfile(year);
+  const filing = listFilings('income_tax', year).get(String(year)) ?? null;
 
   // How much of the year the books have actually seen. A year still running is projected from
   // the months that closed, the same way the מס הכנסה report does it — otherwise a report
@@ -459,7 +477,100 @@ export function annualAssessment(year: number, basis: AnnualBasis = 'projected')
     business_income: businessIncome,
     reconciliation,
     profile,
-    filing: listFilings('income_tax', year).get(String(year)) ?? null,
+    filing,
+    deadline: annualDeadline(year, profile, filing),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// when it is due, and what that means before it is
+// ---------------------------------------------------------------------------
+
+/**
+ * The default filing date for a tax year: 30 June of the year after, moved off Shabbat.
+ *
+ * That is the online-filing date, which is the one an עוסק מורשה actually files by. It is
+ * deliberately only a fallback — the statutory date is earlier, a filer represented by a CPA
+ * gets a later one from the מייצגים quota, and neither is something this app can know. Whoever
+ * does know types it into the year's `file_by`, and from then on the report tracks that.
+ */
+export function defaultFileBy(year: number): string {
+  const date = new Date(Date.UTC(year + 1, 5, 30));
+  if (date.getUTCDay() === 6) date.setUTCDate(31);
+  return date.toISOString().slice(0, 10);
+}
+
+export interface AnnualDeadline {
+  file_by: string;
+  /** Whether `file_by` was stated for this year or fell back to the default. */
+  stated: boolean;
+  days_left: number;
+  /**
+   * `collecting` — the tax year has not ended, so there is nothing to file yet.
+   * `due` / `overdue` — it has, and the date is ahead or behind.
+   * `filed` / `paid` — the tick on the year says so.
+   */
+  status: 'collecting' | 'due' | 'overdue' | 'filed' | 'paid';
+}
+
+function annualDeadline(year: number, profile: AnnualProfile, filing: TaxFiling | null): AnnualDeadline {
+  const fileBy = profile.file_by ?? defaultFileBy(year);
+  const today = new Date().toISOString().slice(0, 10);
+  const days = Math.round(
+    (Date.parse(`${fileBy}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000
+  );
+  const status: AnnualDeadline['status'] =
+    filing?.paid_at ? 'paid'
+    : filing?.filed_at ? 'filed'
+    // A year still running cannot be late for its own return.
+    : today <= `${year}-12-31` ? 'collecting'
+    : days >= 0 ? 'due'
+    : 'overdue';
+  return { file_by: fileBy, stated: profile.file_by !== null, days_left: days, status };
+}
+
+/**
+ * The two questions the deadline calendar and the tax agent actually ask, for one year.
+ *
+ * The first is backward-looking and simple: a closed year has a return to file, a date to file
+ * it by, and a balance to pay with it. The second is the one worth having a report for at all —
+ * a year still running is heading towards a balance, and the מקדמות paid into it so far are
+ * either keeping up or they are not. A gap found in August is a conversation with the
+ * accountant; the same gap found in June is a lump sum.
+ */
+export interface AnnualOutlook {
+  year: number;
+  /** Whether anyone has filled the declared side in. Nothing below means much until they have. */
+  configured: boolean;
+  /** True while the tax year is still running, which makes every figure a projection. */
+  in_progress: boolean;
+  balance: number;
+  tax_due: number;
+  payments: number;
+  /** מקדמות alone, the part that can still be changed during the year. */
+  mikdamot_paid: number;
+  /** What is owed beyond what has been withheld and advanced — the gap to close. */
+  shortfall: number;
+  national_insurance: number;
+  deadline: AnnualDeadline;
+  filing: TaxFiling | null;
+}
+
+export function annualOutlook(year: number): AnnualOutlook {
+  const assessment = annualAssessment(year, 'projected');
+  const now = new Date().toISOString().slice(0, 10);
+  return {
+    year,
+    configured: assessment.profile.updated_at !== null,
+    in_progress: now <= `${year}-12-31`,
+    balance: assessment.balance,
+    tax_due: assessment.tax_due,
+    payments: assessment.total_payments,
+    mikdamot_paid: assessment.profile.mikdamot_paid,
+    shortfall: Math.max(0, assessment.balance),
+    national_insurance: assessment.national_insurance,
+    deadline: assessment.deadline,
+    filing: assessment.filing,
   };
 }
 
