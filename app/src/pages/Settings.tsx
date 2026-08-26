@@ -5,6 +5,7 @@ import { get, post, put, del } from '../api';
 import { Button, Card, Input, Modal, Empty, PageHeader } from '../ui';
 import { CalendarRules } from './CalendarRules';
 import { AgentSettings } from './AgentSettings';
+import { CreditPointsCalculator } from './CreditPointsCalculator';
 
 /** The drawers of the filing cabinet, in the order they are needed when setting the app up. */
 const SECTIONS = [
@@ -31,7 +32,7 @@ const SECTION_SUBS: Record<Section, string> = {
   connections: 'מקורות הנתונים והסוכן — הרצה ידנית ובדיקת חיבור',
   agent: 'חיבור ה-SSH ליועץ הקמפיינים — שרת, משתמש ומפתח',
   calendar: 'כללים שקובעים אילו אירועים נמשכים, ולאן',
-  vat: 'תדירות דיווח ונקודות זיכוי להערכת המס',
+  vat: 'תדירות דיווח ומחשבון נקודות הזיכוי',
   users: 'מי נכנס לאפליקציה ומה הוא רואה',
   api: 'גישה לאפליקציות חיצוניות ולסוכני AI',
 };
@@ -264,25 +265,38 @@ export function Settings() {
       {/* What the דוחות page needs to know that the books cannot tell it: how often מע"מ is
           filed, and how many נקודות זיכוי the income-tax estimate should credit. */}
       {sec === 'vat' && (
-      <Card>
-        <p className="text-xs text-faint mb-4">
-          משפיע על חלוקת תקופות הדיווח בדוח המע"מ ועל הערכת המס השנתית.
-        </p>
-        {reportsSaved && <div className="text-sm text-pos mb-3">{reportsSaved}</div>}
-        <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
-          <label className="block">
-            <span className="block text-sm text-muted mb-1">תדירות דיווח מע"מ</span>
-            <select value={vatFrequency} onChange={(e) => setVatFrequency(e.target.value)}
-              className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
-              <option value="bimonthly">דו-חודשי</option>
-              <option value="monthly">חודשי</option>
-            </select>
-          </label>
-          <Input label="נקודות זיכוי" type="number" step="0.25" min="0" value={creditPoints}
-            onChange={(e) => setCreditPoints(e.target.value)} />
-          <Button variant="ghost" onClick={saveReportSettings}>שמירה</Button>
-        </div>
-      </Card>
+      <div className="space-y-4">
+        <Card>
+          <p className="text-xs text-faint mb-4">
+            משפיע על חלוקת תקופות הדיווח בדוח המע"מ ועל הערכת המס השנתית.
+          </p>
+          {reportsSaved && <div className="text-sm text-pos mb-3">{reportsSaved}</div>}
+          <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
+            <label className="block">
+              <span className="block text-sm text-muted mb-1">תדירות דיווח מע"מ</span>
+              <select value={vatFrequency} onChange={(e) => setVatFrequency(e.target.value)}
+                className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
+                <option value="bimonthly">דו-חודשי</option>
+                <option value="monthly">חודשי</option>
+              </select>
+            </label>
+            <Input label="נקודות זיכוי" type="number" step="0.25" min="0" value={creditPoints}
+              onChange={(e) => setCreditPoints(e.target.value)} />
+            <Button variant="ghost" onClick={saveReportSettings}>שמירה</Button>
+          </div>
+          <p className="text-xs text-faint mt-3">
+            השדה הזה הוא הנפילה־אחורה. כשהמחשבון שלמטה מלא, הוא זה שקובע — ומחשב את המספר
+            מחדש לכל שנת מס.
+          </p>
+        </Card>
+
+        <Card>
+          <h3 className="ser text-lg mb-3">מחשבון נקודות זיכוי</h3>
+          {/* Reloading the settings after a save keeps the plain field above in step with the
+              number the calculator just wrote into it. */}
+          <CreditPointsCalculator year={new Date().getFullYear()} onSaved={load} />
+        </Card>
+      </div>
       )}
 
       {sec === 'business' && business && (

@@ -47,6 +47,11 @@ import {
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
+import { annualReport, getProfile, saveProfile } from './annualReport.js';
+import {
+  creditBreakdown, clearCreditStatus, EMPTY_STATUS, getCreditStatus, normalizeStatus,
+  saveCreditStatus,
+} from './creditPoints.js';
 import {
   isExpenseBasis, isPeriodKey, overview, recognitionRates, setRecognitionRates,
 } from './overview.js';
@@ -376,6 +381,73 @@ router.get('/reports/vat', requireOwner, handle((req, res) => {
 
 router.get('/reports/income-tax', requireOwner, handle((req, res) => {
   res.json({ report: incomeTaxReport(reportYear(req.query)) });
+}));
+
+/**
+ * The annual return as it is shaping up — the 1301 ladder, this year against last.
+ *
+ * `basis=ytd` reads the business side as the books have it so far; the default projects the
+ * year from the months that have closed, which is the only reading that means anything before
+ * December. The declared side is annual either way.
+ */
+router.get('/reports/annual', requireOwner, handle((req, res) => {
+  const basis = req.query.basis === 'ytd' ? 'ytd' : 'projected';
+  res.json({ report: annualReport(reportYear(req.query), basis) });
+}));
+
+router.get('/reports/annual/profile/:year', requireOwner, handle((req, res) => {
+  res.json({ profile: getProfile(parseInt(req.params.year, 10) || new Date().getFullYear()) });
+}));
+
+router.put('/reports/annual/profile/:year', requireOwner, handle((req, res) => {
+  const year = parseInt(req.params.year, 10);
+  if (!Number.isFinite(year) || year < 2000 || year > 2100)
+    return res.status(400).json({ error: 'שנת מס לא תקינה' });
+  res.json({ profile: saveProfile(year, req.body || {}) });
+}));
+
+// ============ נקודות זיכוי calculator (owner) ============
+
+/**
+ * The saved status and what it is worth in the requested tax year. The status is the durable
+ * thing — birth years and a discharge date do not change — and the points are recomputed from
+ * it per year, because the same facts are worth different numbers in different years.
+ */
+router.get('/tax/credit-points', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  const status = getCreditStatus();
+  res.json({
+    status: status ?? EMPTY_STATUS,
+    configured: status !== null,
+    year,
+    breakdown: creditBreakdown(status ?? EMPTY_STATUS, year),
+    // What the estimate is using right now, whether from the calculator or the typed number.
+    active_points: getCreditPoints(year),
+  });
+}));
+
+/** Previews a status without saving it, so the form can total as it is filled in. */
+router.post('/tax/credit-points/preview', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  res.json({ breakdown: creditBreakdown(normalizeStatus(req.body?.status), year) });
+}));
+
+/**
+ * Saves the status and writes the resulting points into the setting the estimates read, so
+ * "submit" on the calculator is the same act as typing the number into the field by hand.
+ */
+router.post('/tax/credit-points', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  const status = saveCreditStatus(req.body?.status);
+  const breakdown = creditBreakdown(status, year);
+  setSetting('tax_credit_points', String(breakdown.total));
+  res.json({ status, breakdown, active_points: breakdown.total });
+}));
+
+/** Drops the status and goes back to the number typed into the settings field. */
+router.delete('/tax/credit-points', requireOwner, handle((_req, res) => {
+  clearCreditStatus();
+  res.json({ status: EMPTY_STATUS, configured: false, active_points: getCreditPoints() });
 }));
 
 /**

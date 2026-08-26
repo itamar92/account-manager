@@ -3,12 +3,14 @@ import { clsx } from 'clsx';
 import { get, put, monthName, nis } from '../api';
 import { Card, DataTable, Empty, EditableCell, PageHeader, PeriodBadge, Segmented, StatCard, YearSelect } from '../ui';
 import { BASIS_LABEL, BasisToggle, IncomeExpenseChart, type Basis } from '../charts';
+import { AnnualReport } from './AnnualReport';
 
-type Tab = 'vat' | 'incomeTax';
+type Tab = 'vat' | 'incomeTax' | 'annual';
 
 const tabs: [Tab, string][] = [
   ['vat', 'דוח מע"מ'],
   ['incomeTax', 'מס הכנסה'],
+  ['annual', 'דוח שנתי'],
 ];
 
 /**
@@ -47,7 +49,7 @@ export function Reports() {
     <div className="space-y-4">
       <PageHeader
         title="דוחות וסגירת חודש"
-        sub={`שנת ${year} · מע"מ ומס הכנסה`}
+        sub={`שנת ${year} · מע"מ, מס הכנסה והדוח השנתי`}
         actions={
           <>
             <Segmented value={tab} onChange={setTab} options={tabs.map(([value, label]) => ({ value, label }))} />
@@ -60,6 +62,7 @@ export function Reports() {
 
       {tab === 'vat' && <VatReport report={vat} onToggle={toggleFiling} />}
       {tab === 'incomeTax' && <IncomeTaxReport report={incomeTax} onToggle={toggleFiling} />}
+      {tab === 'annual' && <AnnualReport year={year} />}
     </div>
   );
 }

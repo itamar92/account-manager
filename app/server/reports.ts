@@ -12,6 +12,7 @@
  * a document belongs to the period it was issued in, whether or not the money has arrived.
  */
 import { db, getSetting, uuid } from './db.js';
+import { creditBreakdown, getCreditStatus } from './creditPoints.js';
 import { ACCOUNTING_DOC_TYPES_SQL } from './docTypes.js';
 import { expensesSummary } from './morningExpenses.js';
 
@@ -390,49 +391,113 @@ export function vatReport(year: number): VatReport {
 // ---------------------------------------------------------------------------
 
 /**
- * The rates the annual estimate is built from.
+ * The rates each tax year is worked out with.
  *
- * These are set by the Tax Authority and the ביטוח לאומי institute and adjusted every January,
- * so they are pinned to the year they were published for and reported alongside the estimate:
- * a table left behind by a new tax year is then visible in the report rather than silently
- * wrong. Update `year` together with the numbers.
+ * They are set by the Tax Authority and the ביטוח לאומי institute and adjusted every January,
+ * so they are pinned to the year they were published for and reported alongside every figure
+ * built from them: a table left behind by a new tax year is then visible in the report rather
+ * than silently wrong. A year with no entry falls back to the latest one there is, and says so.
  */
-export const TAX_RATES = {
-  year: 2025,
+export interface YearRates {
   /** Annual taxable income bands and the marginal rate on each; the last one is open-ended. */
-  brackets: [
-    { upTo: 84_120, rate: 0.10 },
-    { upTo: 120_720, rate: 0.14 },
-    { upTo: 193_800, rate: 0.20 },
-    { upTo: 269_280, rate: 0.31 },
-    { upTo: 560_280, rate: 0.35 },
-    { upTo: 721_560, rate: 0.47 },
-    // Above the last threshold the 3% מס יסף rides on top of the 47% marginal rate.
-    { upTo: Infinity, rate: 0.50 },
-  ],
+  brackets: Array<{ upTo: number; rate: number }>;
   /** One נקודת זיכוי for a full year. */
-  creditPointValue: 2_904,
+  creditPointValue: number;
   /** ביטוח לאומי + מס בריאות for an עצמאי: the low band, the band above it, and the ceiling. */
   nationalInsurance: {
-    reducedRate: 0.0597,
-    reducedCeiling: 90_264,
-    fullRate: 0.1783,
-    ceiling: 608_340,
-  },
+    reducedRate: number;
+    reducedCeiling: number;
+    fullRate: number;
+    ceiling: number;
+  };
   /** The share of ביטוח לאומי paid that is deductible against taxable income. */
-  niDeductibleShare: 0.52,
-} as const;
+  niDeductibleShare: number;
+  /** Set where part of the table was carried forward rather than published for this year. */
+  provisional?: string;
+}
 
-/** How many נקודות זיכוי to credit — 2.25 is a resident male's default; a woman's is 2.75. */
-export function getCreditPoints(): number {
+export const TAX_YEARS: Record<number, YearRates> = {
+  2025: {
+    brackets: [
+      { upTo: 84_120, rate: 0.10 },
+      { upTo: 120_720, rate: 0.14 },
+      { upTo: 193_800, rate: 0.20 },
+      { upTo: 269_280, rate: 0.31 },
+      { upTo: 560_280, rate: 0.35 },
+      { upTo: 721_560, rate: 0.47 },
+      // Above the last threshold the 3% מס יסף rides on top of the 47% marginal rate.
+      { upTo: Infinity, rate: 0.50 },
+    ],
+    creditPointValue: 2_904,
+    nationalInsurance: {
+      reducedRate: 0.0597,
+      reducedCeiling: 90_264,
+      fullRate: 0.1783,
+      ceiling: 608_340,
+    },
+    niDeductibleShare: 0.52,
+  },
+  2026: {
+    // Brackets 3-5 were widened by Amendment 288 (חוק ההתייעלות הכלכלית 2026), retroactive to
+    // 1 January 2026; brackets 1-2 and the 47% band were left at their 2025 values.
+    brackets: [
+      { upTo: 84_120, rate: 0.10 },
+      { upTo: 120_720, rate: 0.14 },
+      { upTo: 228_000, rate: 0.20 },
+      { upTo: 301_200, rate: 0.31 },
+      { upTo: 560_280, rate: 0.35 },
+      { upTo: 721_560, rate: 0.47 },
+      { upTo: Infinity, rate: 0.50 },
+    ],
+    creditPointValue: 2_904,
+    // Carried forward from 2025 rather than published here: the ביטוח לאומי bands move with the
+    // average wage, and a number invented for them would be worse than one openly out of date.
+    nationalInsurance: {
+      reducedRate: 0.0597,
+      reducedCeiling: 90_264,
+      fullRate: 0.1783,
+      ceiling: 608_340,
+    },
+    niDeductibleShare: 0.52,
+    provisional: 'שיעורי ומדרגות הביטוח הלאומי עדיין לפי 2025 — לעדכן כשמתפרסמים',
+  },
+};
+
+/** The latest year the table actually has, used when a report asks for one it does not. */
+const LATEST_RATES_YEAR = Math.max(...Object.keys(TAX_YEARS).map(Number));
+
+/** The rates for a tax year, and which year they in fact came from. */
+export function ratesFor(year: number): YearRates & { rates_year: number } {
+  const key = TAX_YEARS[year] ? year : LATEST_RATES_YEAR;
+  return { ...TAX_YEARS[key], rates_year: key };
+}
+
+/** Kept for callers that want the current table without naming a year. */
+export const TAX_RATES = { year: LATEST_RATES_YEAR, ...TAX_YEARS[LATEST_RATES_YEAR] };
+
+/**
+ * How many נקודות זיכוי to credit.
+ *
+ * The calculator in the settings stores a *status* — children's birth years, discharge date,
+ * and the rest — from which the points are worked out per tax year, because the same facts are
+ * worth different numbers in different years. A database that has never had the calculator
+ * filled in falls back to the number typed into the settings field, which is what this app
+ * used before the calculator existed.
+ */
+export function getCreditPoints(year: number = new Date().getFullYear()): number {
+  const status = getCreditStatus();
+  if (status) {
+    const breakdown = creditBreakdown(status, year);
+    if (!breakdown.empty) return breakdown.total;
+  }
   const value = parseFloat(getSetting('tax_credit_points', '2.25'));
   return Number.isFinite(value) && value >= 0 ? value : 2.25;
 }
 
-function bracketTax(taxable: number): number {
+export function bracketTax(taxable: number, rates: YearRates): number {
   let tax = 0;
   let previous = 0;
-  for (const band of TAX_RATES.brackets) {
+  for (const band of rates.brackets) {
     if (taxable <= previous) break;
     tax += (Math.min(taxable, band.upTo) - previous) * band.rate;
     previous = band.upTo;
@@ -440,12 +505,27 @@ function bracketTax(taxable: number): number {
   return round2(tax);
 }
 
-function nationalInsurance(profit: number): number {
-  const { reducedRate, reducedCeiling, fullRate, ceiling } = TAX_RATES.nationalInsurance;
+/**
+ * ביטוח לאומי ומס בריאות on an עצמאי's profit.
+ *
+ * `insuredElsewhere` is income already insured this year through a salary. It matters a great
+ * deal and is the thing a profit-only calculation gets wrong: the reduced band and the ceiling
+ * are read against a person's whole income, and a salary consumes them first. Someone earning
+ * a full salary alongside the business has no reduced band left at all, so every shekel of
+ * profit is charged at the full rate rather than starting cheap — which is the difference
+ * between about 9,900 and about 20,600 shekels on a profit of 115,000.
+ */
+export function nationalInsurance(profit: number, rates: YearRates, insuredElsewhere = 0): number {
+  const { reducedRate, reducedCeiling, fullRate, ceiling } = rates.nationalInsurance;
   if (profit <= 0) return 0;
-  const reduced = Math.min(profit, reducedCeiling) * reducedRate;
-  const full = Math.max(0, Math.min(profit, ceiling) - reducedCeiling) * fullRate;
-  return round2(reduced + full);
+  const other = Math.max(0, insuredElsewhere);
+  // What is left of each band once the salary has taken its share.
+  const reducedRoom = Math.max(0, reducedCeiling - other);
+  const totalRoom = Math.max(0, ceiling - other);
+  const charged = Math.min(profit, totalRoom);
+  const reduced = Math.min(charged, reducedRoom);
+  const full = Math.max(0, charged - reduced);
+  return round2(reduced * reducedRate + full * fullRate);
 }
 
 export interface TaxEstimate {
@@ -473,22 +553,27 @@ export interface TaxEstimate {
  * still an estimate — it knows nothing about a spouse's income, another employer, a pension
  * deduction or any personal relief — and the UI says so.
  */
-export function taxEstimate(profit: number, creditPoints = getCreditPoints()): TaxEstimate {
+export function taxEstimate(
+  profit: number,
+  creditPoints = getCreditPoints(),
+  year: number = TAX_RATES.year
+): TaxEstimate {
+  const rates = ratesFor(year);
   const base = Math.max(0, round2(profit));
-  const ni = nationalInsurance(base);
-  const niDeduction = round2(ni * TAX_RATES.niDeductibleShare);
+  const ni = nationalInsurance(base, rates);
+  const niDeduction = round2(ni * rates.niDeductibleShare);
   const taxable = Math.max(0, round2(base - niDeduction));
-  const gross = bracketTax(taxable);
-  const credits = round2(creditPoints * TAX_RATES.creditPointValue);
+  const gross = bracketTax(taxable, rates);
+  const credits = round2(creditPoints * rates.creditPointValue);
   const incomeTax = Math.max(0, round2(gross - credits));
   const total = round2(incomeTax + ni);
   return {
-    rates_year: TAX_RATES.year,
+    rates_year: rates.rates_year,
     credit_points: creditPoints,
     profit: base,
     national_insurance: ni,
     ni_deduction: niDeduction,
-    ni_deductible_share: TAX_RATES.niDeductibleShare,
+    ni_deductible_share: rates.niDeductibleShare,
     taxable_income: taxable,
     tax_before_credits: gross,
     credits,
@@ -521,8 +606,9 @@ export function incomeTaxReport(year: number): IncomeTaxReport {
   const elapsed = now.getFullYear() > year ? 12
     : now.getFullYear() < year ? 0
     : now.getMonth() + 1;
+  const points = getCreditPoints(year);
   const projection = elapsed > 0 && elapsed < 12
-    ? { ...taxEstimate(round2((totals.profit / elapsed) * 12)), months_elapsed: elapsed }
+    ? { ...taxEstimate(round2((totals.profit / elapsed) * 12), points, year), months_elapsed: elapsed }
     : null;
 
   return {
@@ -530,7 +616,7 @@ export function incomeTaxReport(year: number): IncomeTaxReport {
     months,
     totals,
     byCategory: summary.byCategory,
-    estimate: taxEstimate(totals.profit),
+    estimate: taxEstimate(totals.profit, points, year),
     projection,
     filing: listFilings('income_tax', year).get(String(year)) ?? null,
   };

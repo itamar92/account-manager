@@ -161,6 +161,38 @@ CREATE TABLE IF NOT EXISTS tax_filings (
   UNIQUE(kind, period_key)
 );
 
+-- The declared half of the annual return (טופס 1301): salary, מילואים, deposits, what was
+-- withheld at source and what was paid in advance. None of it can be discovered from the
+-- business's own documents — it comes off טופס 106, the ביטוח לאומי certificate and the
+-- קופות' annual statements — so it is entered once a year and kept per tax year.
+-- The *_allowed columns hold what an assessment actually let through, where that is known;
+-- NULL means it was never stated and the report falls back to its own estimate.
+CREATE TABLE IF NOT EXISTS annual_tax_profile (
+  id TEXT PRIMARY KEY,
+  year INTEGER NOT NULL UNIQUE,
+  salary REAL NOT NULL DEFAULT 0,
+  salary_withheld REAL NOT NULL DEFAULT 0,
+  miluim REAL NOT NULL DEFAULT 0,
+  miluim_withheld REAL NOT NULL DEFAULT 0,
+  other_income REAL NOT NULL DEFAULT 0,
+  other_withheld REAL NOT NULL DEFAULT 0,
+  business_income_override REAL,
+  keren_hishtalmut_paid REAL NOT NULL DEFAULT 0,
+  keren_hishtalmut_allowed REAL,
+  pension_atzmai_paid REAL NOT NULL DEFAULT 0,
+  pension_atzmai_allowed REAL,
+  ni_paid REAL NOT NULL DEFAULT 0,
+  pension_sachir_paid REAL NOT NULL DEFAULT 0,
+  pension_sachir_allowed REAL,
+  life_insurance_paid REAL NOT NULL DEFAULT 0,
+  donations_paid REAL NOT NULL DEFAULT 0,
+  mikdamot_paid REAL NOT NULL DEFAULT 0,
+  credit_points_override REAL,
+  notes TEXT,
+  updated_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS band_events (
   id TEXT PRIMARY KEY,
   venue TEXT NOT NULL,
