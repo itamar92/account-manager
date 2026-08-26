@@ -132,37 +132,99 @@ The agent can be any machine reachable from the VM. Running it on the VM itself 
 and the only one that is always up, so that is what follows.
 
 ```bash
-# On the VM. A dedicated account — the app's key must not open your own shell.
-sudo adduser --disabled-password --gecos '' aiagent
-sudo -u aiagent -i          # install and log the CLI in as that user, interactively, once
-```
-
-```bash
 # On your own machine — a key of its own, so it can be revoked without touching anything else.
 ssh-keygen -t ed25519 -f ~/.ssh/am-agent -C 'account-manager-agent' -N ''
 ssh-keygen -lf ~/.ssh/am-agent.pub          # note the fingerprint
+scp ~/.ssh/am-agent.pub ubuntu@<public-ip>:  # the .pub half only — never the other one
 ```
 
-Install the **public** half on the VM, restricted to the one command. The `command=` prefix is
-what makes this safe: whatever the app asks for, sshd runs that and only that.
+The VM side is one script, `deploy/setup-claude-agent.sh`:
 
 ```bash
-sudo -u aiagent mkdir -p /home/aiagent/.ssh
-# as one line, with your key's body in place of AAAA…
-echo 'command="claude -p --output-format json",no-port-forwarding,no-agent-forwarding,no-X11-forwarding,no-pty ssh-ed25519 AAAA… account-manager-agent' \
-  | sudo -u aiagent tee -a /home/aiagent/.ssh/authorized_keys
-sudo -u aiagent chmod 700 /home/aiagent/.ssh
-sudo -u aiagent chmod 600 /home/aiagent/.ssh/authorized_keys
+# On the VM, from the checkout in step 4.
+cd /opt/account-manager
+sudo deploy/setup-claude-agent.sh --pubkey ~ubuntu/am-agent.pub
 ```
 
-Then pin the host key:
+It creates the `aiagent` account, installs Claude Code under it, installs the forced command
+(below) as `/home/aiagent/bin/am-agent` owned by root, creates the mode-600 env file the login
+token goes in, appends the public key restricted to that one command, and prints the host key to
+pin. Re-running it is how you update the wrapper or Claude Code later; nothing it does a second
+time disturbs the agent's login. `--skip-install` leaves the CLI alone, `--user` puts the agent
+somewhere other than `aiagent`.
+
+Doing it by hand is the same three steps: `adduser --disabled-password --gecos '' aiagent`,
+`sudo -u aiagent -H bash -c 'curl -fsSL https://claude.ai/install.sh | bash'` — the native
+installer, which publishes a linux-arm64 build for the Ampere shapes and updates itself in the
+background — and the `command="…"` line from the script in `/home/aiagent/.ssh/authorized_keys`.
+
+### Log the agent in
+
+This is the one step that cannot be scripted, and the credential the whole SSH shape exists to
+keep off the app's side. Claude Code needs a Pro, Max, Team or Enterprise plan.
+
+**A token, for a box nobody watches.** On your own machine, where a browser exists:
 
 ```bash
-ssh-keyscan -t ed25519 <the-agent-host>     # → the "מפתח המארח" field
+claude setup-token          # prints a one-year OAuth token; it is not saved anywhere
 ```
 
-The rest is filled in **in the app**, at **Settings → סוכן AI** — no restart, and no private key
-in a file on the VM:
+Then on the VM, uncomment the line in `/home/aiagent/.config/am-agent/env` and paste it in:
+
+```
+CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat…
+```
+
+It expires a year out with nothing to warn you, so put the date in the calendar the app already
+syncs. Nothing else on the VM reads that file — the app's container cannot, and neither can the
+`ubuntu` account.
+
+**Or interactively, on the VM**, which leaves the credential in `/home/aiagent/.claude` instead:
+
+```bash
+sudo -u aiagent -i
+claude                      # press c for the URL, open it on your own machine,
+                            # paste the code back at "Paste code here if prompted"
+```
+
+The browser cannot reach the VM's callback server over SSH, which is exactly the case that
+paste-the-code flow is for. A login made this way expires too, and warns about it at the start of
+an interactive session — which on this account nobody ever starts. That is the argument for the
+token.
+
+`ANTHROPIC_API_KEY` also works and bills the API rather than the plan; set it in the same env
+file if that is what you want. Do not set it by accident, since it outranks the login.
+
+### What the app's key actually runs
+
+`deploy/claude-agent.sh`, installed as `/home/aiagent/bin/am-agent`. sshd runs it in place of
+whatever the caller asked for and puts the request in `SSH_ORIGINAL_COMMAND`, which the wrapper
+**matches but never executes** — so the two branches below are the entire surface a holder of
+that key has:
+
+- a request ending in `--version` runs `claude --version`. This is the probe behind
+  **בדיקת חיבור**, and the reason for the wrapper: pinned directly to `claude -p …`, a version
+  check instead spends a full analysis on an empty prompt and answers with a parse error a
+  minute later.
+- anything else pipes stdin — the prompt, as `agentClient.ts` sends it — into
+  `claude -p --output-format json --tools "" --strict-mcp-config --no-session-persistence`.
+
+`--tools ""` is the part worth keeping. The advisor's prompts carry campaign names and ad copy
+this app collected from Meta, and an agent summarising that text has no business also holding
+Bash and Edit on the VM the app runs on; `--strict-mcp-config` with no config keeps a stray MCP
+server out of an unattended run for the same reason. The wrapper also caps the prompt at 1 MB
+and stops the run at 110 s, under the app's own 120 s ceiling, so an overrun comes back as a
+message rather than as a dropped connection.
+
+It is a **copy**, owned by root: a `git pull` on the VM does not change what the key can run, and
+the agent account cannot rewrite its own restriction. `sudo deploy/setup-claude-agent.sh` again
+is what installs a new version.
+
+### Point the app at it
+
+`setup-claude-agent.sh` prints the host key at the end; `ssh-keyscan -t ed25519 <the-agent-host>`
+is the same thing by hand. The rest is filled in **in the app**, at **Settings → סוכן AI** — no
+restart, and no private key in a file on the VM:
 
 | Field | Value |
 |-------|-------|
@@ -172,6 +234,9 @@ in a file on the VM:
 | מפתח פרטי | the contents of `~/.ssh/am-agent` (the half **without** `.pub`), pasted whole |
 | מפתח המארח | the `ssh-keyscan` output above, pasted as-is |
 | הפקודה | `claude -p --output-format json` |
+
+Leave הפקודה at its default. With a forced command in place it no longer decides what runs — the
+wrapper does — and only its first word still matters, as what the probe asks for a version of.
 
 The key is stored encrypted with `secret.key` (or `APP_SECRET_KEY`) rather than in the database
 in the clear, and is never sent back to the browser — after saving, the page identifies it by its
@@ -194,13 +259,62 @@ Two things worth checking once, because they are the difference between this bei
 a shell on your VM handed to a web app:
 
 ```bash
-ssh -i ~/.ssh/am-agent aiagent@<host> 'whoami'   # must NOT print a username — the forced
-                                                 # command runs instead, whatever you ask for
+ssh -i ~/.ssh/am-agent -o IdentitiesOnly=yes aiagent@<host> 'claude --version'
+# → a version string: the probe works
+
+ssh -i ~/.ssh/am-agent -o IdentitiesOnly=yes aiagent@<host> 'whoami' </dev/null
+# → "am-agent: empty prompt on stdin". A username here means the forced command is missing
+#   and that key is a shell on your VM.
 ```
 
 and that the host key is actually pinned — with it empty the app refuses to connect in
 production rather than trusting whoever answers the address. The סוכן AI page says so in as
 many words when it is not.
+
+## 4b. Claude Code for yourself on the VM
+
+Separate from the agent account, and worth having: a `claude` you drive by hand on the box is the
+fastest way to read logs, unpick a failed deploy or query the database in place. Install it under
+your own account, not `aiagent` — that account's login belongs to the app.
+
+```bash
+# As ubuntu, on the VM.
+curl -fsSL https://claude.ai/install.sh | bash
+exec $SHELL -l          # picks up ~/.local/bin
+claude                  # press c for the URL, open it on your machine, paste the code back
+```
+
+The A1 shape has RAM to spare for this. The 1 GB `E2.1.Micro` fallback from step 1 does not —
+there, work from your laptop instead.
+
+Two things to know before you let it loose in `/opt/account-manager`:
+
+- **The deploy workflow does `git reset --hard`** on that checkout (see *Automatic deploys*).
+  Tracked edits made there are dropped on the next deploy without asking. Change code on your
+  own machine and push; keep the VM checkout for reading and for `docker compose`.
+- **This box holds the live invoicing data.** `--dangerously-skip-permissions` is one keystroke
+  away from an unreviewed `docker compose down -v`, which is the database. Not here.
+
+### Give it the app's own data, read-only
+
+The app's MCP server (`/mcp`, `app/README.md`) exposes the whole dataset as read-only tools, so
+`claude` on the VM can answer questions against the real numbers instead of you pasting them in.
+Create a key in **Settings → מפתחות API**, then:
+
+```bash
+claude mcp add --transport http account-manager https://im-tools.org/mcp \
+  --header "X-API-Key: am_…" --scope user
+claude              # /mcp shows the server as connected, or names the HTTP status if not
+```
+
+The URL is the public one even from the VM: the container publishes no port, so `im-tools.org`
+through the tunnel is the only way in. The key lands in `~/.claude.json` in the clear — revoke it
+in the same settings page if the account is ever compromised, and give the VM its own key so
+revoking it costs nothing elsewhere.
+
+If Cloudflare Access is in front (§7), `/mcp` needs the bypass policy described there. Without it
+Access answers with a 302 to its login page and the server shows as `failed` with an HTML parse
+error rather than a clean 401.
 
 ## 5. Backups
 
@@ -381,7 +495,10 @@ deploys into it.
 ## Notes
 
 - **Secrets live only in `deploy/.env`** on the VM (git-ignored, `chmod 600`).
-  The Google refresh token and Morning API secret are both there.
+  The Google refresh token and Morning API secret are both there. The one
+  exception is the agent's AI login, which lives in
+  `/home/aiagent/.config/am-agent/env` (mode 600, and unreadable by the app's
+  container) — §4a says why it is kept over there.
 - **The Python `scripts/`** (`collect_bills.py` etc.) are not part of this
   deployment and shouldn't be. They drive Playwright through interactive utility
   logins with 2FA — they belong on your laptop.
