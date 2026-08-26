@@ -27,6 +27,7 @@
 import { db, uuid } from './db.js';
 import { getCreditPoints, monthlyPnl, pnlTotals, ratesFor, bracketTax, nationalInsurance, listFilings, type TaxFiling, type YearRates } from './reports.js';
 import { creditBreakdown, getCreditStatus, type CreditBreakdown } from './creditPoints.js';
+import { reconcile, type Reconciliation } from './taxAdjustments.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const num = (v: unknown): number => {
@@ -76,6 +77,12 @@ export interface AnnualProfile {
   mikdamot_paid: number;
   /** Overrides the calculator, for a year whose assessment used a different number. */
   credit_points_override: number | null;
+  /**
+   * Whether to apply this app's own recognition rates on top of Morning's when reconciling.
+   * Off leaves the profit exactly as the books have it; on brings it closer to what an
+   * assessor will allow, which is the more useful default for a report about the future.
+   */
+  apply_recognition_rates: boolean;
   notes: string;
   updated_at: string | null;
 }
@@ -102,6 +109,7 @@ export function emptyProfile(year: number): AnnualProfile {
     pension_sachir_paid: 0, pension_sachir_allowed: null,
     life_insurance_paid: 0, donations_paid: 0, mikdamot_paid: 0,
     credit_points_override: null,
+    apply_recognition_rates: true,
     notes: '', updated_at: null,
   };
 }
@@ -112,6 +120,7 @@ export function getProfile(year: number): AnnualProfile {
   const profile = emptyProfile(year);
   for (const key of PROFILE_NUMBERS) profile[key] = num(row[key]);
   for (const key of PROFILE_OPTIONALS) profile[key] = optional(row[key]);
+  profile.apply_recognition_rates = row.apply_recognition_rates !== 0;
   profile.notes = row.notes ?? '';
   profile.updated_at = row.updated_at ?? null;
   return profile;
@@ -133,15 +142,26 @@ export function saveProfile(year: number, input: Record<string, unknown>): Annua
       next[key] = value === null ? null : Math.max(0, value);
     }
   }
+  if (input.apply_recognition_rates !== undefined) {
+    next.apply_recognition_rates = !!input.apply_recognition_rates;
+  }
   if (input.notes !== undefined) next.notes = String(input.notes ?? '').trim();
   next.updated_at = new Date().toISOString().slice(0, 10);
 
-  const columns = [...PROFILE_NUMBERS, ...PROFILE_OPTIONALS, 'notes', 'updated_at'] as const;
+  const columns = [
+    ...PROFILE_NUMBERS, ...PROFILE_OPTIONALS, 'apply_recognition_rates', 'notes', 'updated_at',
+  ] as const;
   db.prepare(
     `INSERT INTO annual_tax_profile (id, year, ${columns.join(', ')})
      VALUES (?, ?, ${columns.map(() => '?').join(', ')})
      ON CONFLICT(year) DO UPDATE SET ${columns.map((c) => `${c} = excluded.${c}`).join(', ')}`
-  ).run(uuid(), year, ...columns.map((c) => next[c as keyof AnnualProfile] as any));
+  ).run(
+    uuid(), year,
+    ...columns.map((c) => {
+      const value = next[c as keyof AnnualProfile];
+      return typeof value === 'boolean' ? (value ? 1 : 0) : (value as any);
+    })
+  );
 
   return next;
 }
@@ -250,6 +270,8 @@ export interface AnnualAssessment {
   /** The marginal rate the next shekel of profit meets — the number worth acting on. */
   marginal_rate: number;
   business_income: number;
+  /** How the books' profit became the profit the return is filed on. */
+  reconciliation: Reconciliation;
   profile: AnnualProfile;
   filing: TaxFiling | null;
 }
@@ -277,7 +299,11 @@ export function annualAssessment(year: number, basis: AnnualBasis = 'projected')
   const useProjection = basis === 'projected' && elapsed > 0 && elapsed < 12;
   const bookProfit = useProjection ? round2((totals.profit / elapsed) * 12) : totals.profit;
 
-  const businessIncome = Math.max(0, profile.business_income_override ?? bookProfit);
+  // Books → return. Depreciation and the add-back are actual figures for the year whichever
+  // basis is in use: a purchase happened or it did not, and projecting it would invent
+  // equipment. Only the profit they are applied to is run-rated.
+  const reconciliation = reconcile(year, bookProfit, profile.apply_recognition_rates);
+  const businessIncome = Math.max(0, profile.business_income_override ?? reconciliation.adjusted_profit);
 
   // --- א. הכנסות ---------------------------------------------------------
   const income: LadderLine[] = [
@@ -288,6 +314,8 @@ export function annualAssessment(year: number, basis: AnnualBasis = 'projected')
       origin: profile.business_income_override !== null ? 'declared' : 'computed',
       note: profile.business_income_override !== null
         ? 'רווח מותאם שהוזן ידנית'
+        : reconciliation.lines.length > 0
+        ? `רווח מותאם${useProjection ? ` · תחזית לפי ${elapsed} חודשים` : ''} — ראו את התיאום למטה`
         : useProjection
         ? `תחזית שנתית לפי ${elapsed} חודשים`
         : 'מהספרים',
@@ -429,6 +457,7 @@ export function annualAssessment(year: number, basis: AnnualBasis = 'projected')
     credit_breakdown: breakdown,
     marginal_rate: marginalRate(taxable, rates),
     business_income: businessIncome,
+    reconciliation,
     profile,
     filing: listFilings('income_tax', year).get(String(year)) ?? null,
   };

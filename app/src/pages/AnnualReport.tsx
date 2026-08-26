@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { get, put, nis } from '../api';
-import { Button, Card, Empty, EditableCell, MoneyInput, Modal, Segmented, StatCard, Textarea } from '../ui';
+import { Button, Card, Empty, EditableCell, MoneyInput, Modal, Segmented, StatCard, Switch, Textarea } from '../ui';
+import { FixedAssets } from './FixedAssets';
 
 /**
  * הדוח השנתי — the טופס 1301 ladder as it is shaping up, this year beside last.
@@ -156,6 +157,17 @@ export function AnnualReport({ year }: { year: number }) {
           אינה תחליף לדוח שמגיש רואה החשבון.
         </p>
       </Card>
+
+      <ReconciliationCard
+        reconciliation={a.reconciliation}
+        year={a.year}
+        onToggleRates={async (on) => {
+          await put(`/reports/annual/profile/${year}`, { apply_recognition_rates: on });
+          load();
+        }}
+      />
+
+      <FixedAssets year={year} onChanged={load} />
 
       {a.credit_breakdown && !a.credit_breakdown.empty && (
         <Card>
@@ -402,5 +414,102 @@ function ProfileModal({ open, year, profile, onClose, onSaved }: {
         <Button variant="ghost" onClick={onClose}>ביטול</Button>
       </div>
     </Modal>
+  );
+}
+
+/**
+ * Book profit → רווח מותאם, step by visible step.
+ *
+ * Two different things are going on and the card keeps them apart. Equipment is *timing*: the
+ * books deducted a purchase in full and the return spreads it, so the purchase comes back out
+ * and returns as depreciation, and over the asset's life the two agree exactly. Part-recognised
+ * expenses are not timing at all — that money is deducted by the books and never by the return.
+ */
+function ReconciliationCard({ reconciliation, year, onToggleRates }: {
+  reconciliation: any; year: number; onToggleRates: (on: boolean) => void;
+}) {
+  const r = reconciliation;
+  const [showCategories, setShowCategories] = React.useState(false);
+  const inBooks = r.adjustments.total_in_books;
+
+  return (
+    <Card>
+      <h2 className="ser text-lg mb-1">מהספרים לרווח המותאם</h2>
+      <p className="text-xs text-faint mb-4">
+        הרווח שהעסק מדווח והרווח שהדוח מוגש עליו אינם אותו מספר, ואף אחד מהם אינו שגוי.
+        זו השורה שמסבירה את ההפרש.
+      </p>
+
+      <div className="text-sm max-w-2xl">
+        <Row label={`רווח לפי הספרים ${year}`} amount={r.book_profit} />
+        {r.lines.map((line: any) => (
+          <div key={line.key} className="flex items-baseline justify-between gap-3 py-1.5">
+            <span className="min-w-0">
+              <span className="flex items-center gap-1.5 flex-wrap">
+                <span>{line.label}</span>
+                <OriginChip origin={line.origin} />
+              </span>
+              {line.note && <span className="block text-xs text-faint">{line.note}</span>}
+            </span>
+            <span className={clsx('num shrink-0', line.amount < 0 ? 'text-pos' : 'text-neg')}>
+              {line.amount < 0 ? `−${nis(Math.abs(line.amount))}` : `+${nis(line.amount)}`}
+            </span>
+          </div>
+        ))}
+        {r.lines.length === 0 && (
+          <p className="text-xs text-muted py-2">
+            אין תיאומים לשנה זו — אין רכוש קבוע רשום ואין הוצאות שאחוז ההכרה שלהן נמוך מ-100%.
+          </p>
+        )}
+        <Row label="רווח מותאם לצורכי מס" amount={r.adjusted_profit} strong accent="text-accent" />
+      </div>
+
+      <div className="mt-4 pt-3 border-t border-line">
+        <Switch
+          checked={r.applied_rates}
+          onChange={onToggleRates}
+          label="להחיל את אחוזי ההכרה שבהגדרות על הוצאות ש-Morning לא סימן"
+        />
+        <p className="text-xs text-faint mt-1.5">
+          כשכבוי, הרווח נשאר בדיוק כפי שהספרים מציגים אותו. כשדולק, הוא מתקרב למה שפקיד השומה
+          יתיר בפועל — רכב כ-45%, כיבודים 80%.
+        </p>
+      </div>
+
+      {inBooks > 0 && (
+        <div className="mt-4 pt-3 border-t border-line">
+          <button
+            type="button" onClick={() => setShowCategories((v) => !v)}
+            className="text-sm text-muted hover:text-ink transition-colors"
+          >
+            {showCategories ? '▾' : '▸'} {nis(inBooks)} כבר נוכו מהרווח לפי שיעורי ההכרה של Morning
+          </button>
+          <p className="text-xs text-faint mt-1">
+            אלה כבר בתוך «רווח לפי הספרים» למעלה — מוצג כדי שיהיה אפשר לראות אותו, לא כדי
+            להוסיף אותו פעם שנייה.
+          </p>
+          {showCategories && (
+            <div className="mt-3 space-y-1.5">
+              {r.adjustments.categories.map((c: any) => (
+                <div key={c.category} className="flex items-baseline justify-between gap-3 text-[13px]">
+                  <span className="text-muted">
+                    {c.category}
+                    <span className="text-faint"> · מתוך {nis(c.amount)} · הכרה {Math.round(c.rate * 100)}%</span>
+                  </span>
+                  {/* The two halves are different facts: one is already inside the profit,
+                      the other is the adjustment being made to it. Never one number. */}
+                  <span className="num shrink-0 flex items-baseline gap-2">
+                    {c.disallowed_in_books > 0 && <span>{nis(c.disallowed_in_books)} בספרים</span>}
+                    {c.further_disallowed > 0 && (
+                      <span className="text-warn">{nis(c.further_disallowed)} תיאום</span>
+                    )}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
   );
 }

@@ -49,6 +49,9 @@ import {
 } from './reports.js';
 import { annualReport, getProfile, saveProfile } from './annualReport.js';
 import {
+  createAsset, deleteAsset, depreciationSchedule, listAssets, updateAsset,
+} from './fixedAssets.js';
+import {
   creditBreakdown, clearCreditStatus, EMPTY_STATUS, getCreditStatus, normalizeStatus,
   saveCreditStatus,
 } from './creditPoints.js';
@@ -404,6 +407,30 @@ router.put('/reports/annual/profile/:year', requireOwner, handle((req, res) => {
   if (!Number.isFinite(year) || year < 2000 || year > 2100)
     return res.status(400).json({ error: 'שנת מס לא תקינה' });
   res.json({ profile: saveProfile(year, req.body || {}) });
+}));
+
+// ============ רכוש קבוע ופחת (owner) ============
+
+/**
+ * The depreciation schedule for a tax year — the 1342 as this app keeps it. Assets bought
+ * after the year are left out, since they have nothing to say about it yet.
+ */
+router.get('/tax/assets', requireOwner, handle((req, res) => {
+  const year = reportYear(req.query);
+  res.json({ year, schedule: depreciationSchedule(year), assets: listAssets() });
+}));
+
+router.post('/tax/assets', requireOwner, handle((req, res) => {
+  res.status(201).json({ asset: createAsset(req.body || {}) });
+}));
+
+router.put('/tax/assets/:id', requireOwner, handle((req, res) => {
+  res.json({ asset: updateAsset(req.params.id, req.body || {}) });
+}));
+
+router.delete('/tax/assets/:id', requireOwner, handle((req, res) => {
+  deleteAsset(req.params.id);
+  res.json({ ok: true });
 }));
 
 // ============ נקודות זיכוי calculator (owner) ============
