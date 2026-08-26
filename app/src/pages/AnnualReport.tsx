@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { get, put, nis } from '../api';
+import { get, put, nis, postFile } from '../api';
 import { Button, Card, Empty, EditableCell, MoneyInput, Modal, Segmented, StatCard, Switch, Textarea } from '../ui';
 import { FixedAssets } from './FixedAssets';
 
@@ -383,6 +383,12 @@ function ProfileModal({ open, year, profile, onClose, onSaved }: {
       </p>
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5 mb-3">{error}</div>}
 
+      <CertificateUpload
+        year={year}
+        current={form}
+        onApply={(values) => setForm((f) => ({ ...f, ...values }))}
+      />
+
       <div className="space-y-5">
         {FIELD_GROUPS.map((group) => (
           <div key={group.title}>
@@ -511,5 +517,160 @@ function ReconciliationCard({ reconciliation, year, onToggleRates }: {
         </div>
       )}
     </Card>
+  );
+}
+
+/** The field labels the review list shows, matching the form below it. */
+const FIELD_LABELS: Record<string, string> = {
+  salary: 'משכורת ברוטו',
+  salary_withheld: 'ניכוי במקור ממשכורת',
+  miluim: 'תגמולי מילואים',
+  miluim_withheld: 'ניכוי במקור ממילואים',
+  keren_hishtalmut_paid: 'קרן השתלמות לעצמאי — הופקד',
+  pension_atzmai_paid: 'קופת גמל לקצבה עצמאי — הופקד',
+  pension_sachir_paid: 'קופת גמל לקצבה שכיר — הופקד',
+  life_insurance_paid: 'פרמיות ביטוח חיים',
+};
+
+/**
+ * Reading the year's certificates into the form.
+ *
+ * The upload never writes. Everything it finds arrives as a proposal, each line ticked or
+ * unticked, shown beside whatever the field already holds — because these numbers go on a tax
+ * return, and a figure lifted out of a PDF layout deserves a person's eye before it becomes
+ * one. Several certificates can be dropped in turn; each adds its own fields to the form,
+ * which is only saved when the form is.
+ */
+function CertificateUpload({ year, current, onApply }: {
+  year: number;
+  current: Record<string, string>;
+  onApply: (values: Record<string, string>) => void;
+}) {
+  const [parsed, setParsed] = React.useState<any>(null);
+  const [chosen, setChosen] = React.useState<Record<string, boolean>>({});
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  const read = async (file: File) => {
+    setBusy(true);
+    setError('');
+    setParsed(null);
+    try {
+      const d = await postFile(`/reports/annual/parse`, file);
+      setParsed(d.parsed);
+      // Everything starts ticked: the common case is a clean read of a form you just downloaded.
+      setChosen(Object.fromEntries(d.parsed.fields.map((f: any) => [f.field, true])));
+    } catch (err: any) { setError(err.message); }
+    finally { setBusy(false); }
+  };
+
+  const apply = () => {
+    const values: Record<string, string> = {};
+    for (const f of parsed.fields) if (chosen[f.field]) values[f.field] = String(f.amount);
+    onApply(values);
+    setParsed(null);
+    if (inputRef.current) inputRef.current.value = '';
+  };
+
+  const yearMismatch = parsed?.year && parsed.year !== year;
+
+  return (
+    <div className="bg-soft border border-line rounded-xl p-4 mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-bold">קריאה ממסמך</h3>
+          <p className="text-xs text-faint mt-0.5">
+            טופס 106, אישור מילואים, דוח שנתי של קרן או ביטוח — נקרא לפי קודי רשות המסים
+            שמודפסים עליו. דורש PDF מקורי, לא סריקה.
+          </p>
+        </div>
+        <label className="shrink-0">
+          <input
+            ref={inputRef} type="file" accept="application/pdf" className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) read(f); }}
+          />
+          <span className={clsx(
+            'inline-block text-sm px-3 py-2 rounded-xl border border-line cursor-pointer transition-colors',
+            busy ? 'text-faint' : 'bg-surface hover:border-accent'
+          )}>
+            {busy ? 'קורא…' : 'בחירת קובץ'}
+          </span>
+        </label>
+      </div>
+
+      {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-3 py-2 mt-3">{error}</div>}
+
+      {parsed && (
+        <div className="mt-4 pt-3 border-t border-line">
+          <div className="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+            <span className="text-sm font-medium">{parsed.kind_label}</span>
+            {parsed.year && (
+              <span className={clsx('text-xs', yearMismatch ? 'text-warn' : 'text-faint')}>
+                שנת מס {parsed.year}{yearMismatch && ` — הטופס הנערך הוא ${year}`}
+              </span>
+            )}
+          </div>
+
+          {parsed.warnings.map((w: string, i: number) => (
+            <p key={i} className="text-xs text-warn mb-1.5">⚠ {w}</p>
+          ))}
+
+          {parsed.fields.length === 0 ? (
+            <p className="text-sm text-muted">לא נמצאו סכומים לשיוך.</p>
+          ) : (
+            <>
+              <div className="space-y-1.5">
+                {parsed.fields.map((f: any) => {
+                  // Worth flagging only where a real figure is about to be replaced. Every
+                  // untouched numeric field holds '0', and "replaces ₪0" on every row is noise
+                  // that buries the one line that actually matters.
+                  const existing = parseFloat(current[f.field] ?? '');
+                  const changes = Number.isFinite(existing) && existing !== 0
+                    && Math.abs(existing - f.amount) > 0.01;
+                  return (
+                    <label key={f.field} className="flex items-baseline gap-2.5 text-sm cursor-pointer">
+                      <input
+                        type="checkbox" checked={!!chosen[f.field]}
+                        onChange={(e) => setChosen((c) => ({ ...c, [f.field]: e.target.checked }))}
+                        className="mt-1 shrink-0"
+                      />
+                      <span className="min-w-0 flex-1">
+                        {FIELD_LABELS[f.field] ?? f.field}
+                        <span className="text-xs text-faint">
+                          {f.code ? ` · קוד ${f.code}` : ' · לפי נוסח המסמך'}
+                        </span>
+                        {/* Replacing a figure already in the form is the case worth seeing. */}
+                        {changes && (
+                          <span className="block text-xs text-warn">
+                            מחליף {nis(existing)} שכבר בטופס
+                          </span>
+                        )}
+                      </span>
+                      <span className="num shrink-0 font-medium">{nis(f.amount)}</span>
+                    </label>
+                  );
+                })}
+              </div>
+
+              {parsed.extras.length > 0 && (
+                <p className="text-xs text-faint mt-3">
+                  נקראו גם, ואינם נכנסים לטופס:{' '}
+                  {parsed.extras.map((e: any) => `${e.label} (${e.code}) ${nis(e.amount)}`).join(' · ')}
+                </p>
+              )}
+
+              <div className="flex gap-2 mt-3">
+                <Button onClick={apply}>מילוי השדות המסומנים</Button>
+                <Button variant="ghost" onClick={() => setParsed(null)}>ביטול</Button>
+              </div>
+              <p className="text-xs text-faint mt-2">
+                המילוי נכנס לטופס בלבד — הוא נשמר רק כששומרים את הטופס.
+              </p>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

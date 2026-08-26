@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import express, { Router } from 'express';
 import { randomBytes } from 'crypto';
 import {
   db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
@@ -48,6 +48,7 @@ import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
 import { annualReport, getProfile, saveProfile } from './annualReport.js';
+import { parseCertificate } from './formParser.js';
 import {
   createAsset, deleteAsset, depreciationSchedule, listAssets, updateAsset,
 } from './fixedAssets.js';
@@ -408,6 +409,32 @@ router.put('/reports/annual/profile/:year', requireOwner, handle((req, res) => {
     return res.status(400).json({ error: 'שנת מס לא תקינה' });
   res.json({ profile: saveProfile(year, req.body || {}) });
 }));
+
+/**
+ * Reads a certificate — טופס 106, the ביטוח לאומי letter, a קופה's annual statement — and says
+ * what it found. It deliberately writes nothing: the review screen puts the figures beside
+ * what is already stored and a person decides, because a number lifted out of a PDF is about
+ * to become a tax figure.
+ *
+ * The body is the file itself rather than JSON, so a PDF does not have to be base64'd to a
+ * third larger to get here, and the size limit is this route's own — the app's global JSON
+ * limit is 1mb, which a scanned certificate passes on its way through.
+ */
+router.post(
+  '/reports/annual/parse',
+  requireOwner,
+  express.raw({ type: ['application/pdf', 'application/octet-stream'], limit: '15mb' }),
+  // ParseError carries its own status, which handleAsync reports — a scan with no text layer
+  // is a 422 the person can act on, not a 500.
+  handleAsync(async (req, res) => {
+    const body = req.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: 'לא התקבל קובץ — יש לשלוח PDF בגוף הבקשה' });
+      return;
+    }
+    res.json({ parsed: await parseCertificate(new Uint8Array(body)) });
+  })
+);
 
 // ============ רכוש קבוע ופחת (owner) ============
 
