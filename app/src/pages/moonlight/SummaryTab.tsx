@@ -229,6 +229,22 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
                   {nis(followUps?.owedToSuppliersTotal ?? 0)}
                 </Link>
               </div>
+
+              {/* The mirror of the line above: that one is money the band still has to pay,
+                  this one is money it has already paid and cannot yet deduct. */}
+              <div className="border-t border-white/15 pt-3.5 flex items-center justify-between">
+                <span className="text-sm text-white/60">
+                  שולם וממתין לחשבונית
+                  {followUps?.awaitingInvoiceVat > 0 && (
+                    <span className="block text-[12px] text-white/40">
+                      מע״מ שטרם ניתן להשבה {nis(followUps.awaitingInvoiceVat)}
+                    </span>
+                  )}
+                </span>
+                <Link to="/moonlight/supplierPayments" className="num text-lg font-semibold text-[#EFC27B] hover:underline">
+                  {nis(followUps?.awaitingInvoiceTotal ?? 0)}
+                </Link>
+              </div>
             </div>
 
             <div className="flex flex-col gap-4">

@@ -3,7 +3,7 @@ import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-route
 import {
   Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Settings,
   LogOut, Wallet, Music, Megaphone, Sparkles, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
-  Calculator,
+  Calculator, HandCoins,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
@@ -56,6 +56,8 @@ const moonNav: NavGroup[] = [
     head: 'כסף',
     items: [
       { to: '/moonlight/suppliers', label: 'ספקים וחברים', icon: Users },
+      // What went out to the suppliers, and which of it still owes the books a document.
+      { to: '/moonlight/supplierPayments', label: 'תשלומים לספקים', icon: HandCoins },
       { to: '/moonlight/generalExpenses', label: 'הוצאות כלליות', icon: Receipt },
     ],
   },

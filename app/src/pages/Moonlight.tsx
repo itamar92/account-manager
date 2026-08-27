@@ -7,6 +7,7 @@ import { ShowsTab } from './moonlight/ShowsTab';
 import { GeneralExpensesTab } from './moonlight/GeneralExpensesTab';
 import { SummaryTab } from './moonlight/SummaryTab';
 import { SuppliersTab } from './moonlight/SuppliersTab';
+import { SupplierPaymentsTab } from './moonlight/SupplierPaymentsTab';
 import { AdsTab } from './moonlight/AdsTab';
 import { CampaignAnalysisTab } from './moonlight/CampaignAnalysisTab';
 import { DEFAULT_COMMISSION_PERCENT, divisionSplitLabel, useBandMembers } from './moonlight/shared';
@@ -22,9 +23,11 @@ import { DEFAULT_COMMISSION_PERCENT, divisionSplitLabel, useBandMembers } from '
  * `campaignAi` sits next to `ads` because it is the same money read a different way: that one
  * says what the campaigns cost, this one says whether it was worth it.
  */
-type Tab = 'summary' | 'shows' | 'suppliers' | 'generalExpenses' | 'ads' | 'campaignAi';
+type Tab = 'summary' | 'shows' | 'suppliers' | 'supplierPayments' | 'generalExpenses' | 'ads' | 'campaignAi';
 
-const TABS: Tab[] = ['summary', 'shows', 'suppliers', 'generalExpenses', 'ads', 'campaignAi'];
+const TABS: Tab[] = [
+  'summary', 'shows', 'suppliers', 'supplierPayments', 'generalExpenses', 'ads', 'campaignAi',
+];
 
 /** Where the retired tabs now live, so an old bookmark still lands somewhere sensible. */
 const MOVED: Record<string, Tab> = {
@@ -135,6 +138,8 @@ export function Moonlight() {
       )}
 
       {tab === 'suppliers' && <SuppliersTab {...tabProps} />}
+
+      {tab === 'supplierPayments' && <SupplierPaymentsTab {...tabProps} />}
 
       {tab === 'generalExpenses' && (
         <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} period={period} />

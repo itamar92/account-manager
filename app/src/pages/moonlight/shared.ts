@@ -170,6 +170,7 @@ export function showHref(id: string, from?: { pathname: string; search: string }
 const RETURN_LABELS: Array<[string, string]> = [
   ['/moonlight/shows', 'הופעות'],
   ['/moonlight/summary', 'סקירה כספית'],
+  ['/moonlight/supplierPayments', 'תשלומים לספקים'],
   ['/moonlight/suppliers', 'ספקים וחברים'],
   ['/moonlight/generalExpenses', 'הוצאות כלליות'],
   ['/moonlight/campaignAi', 'יועץ קמפיינים'],

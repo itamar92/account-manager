@@ -361,6 +361,85 @@ CREATE TABLE IF NOT EXISTS band_event_assignments (
   UNIQUE(event_id, role)
 );
 
+-- ============ paying suppliers, and the documents that should come back ============
+--
+-- A payment is its own row rather than a flag on a cost line, because one transfer routinely
+-- settles several shows at once: אבי is paid ₪3,000 covering four gigs, and «did his invoice
+-- arrive?» is a question about that transfer, not about any one of the four. The _paid
+-- columns on band_event_expenses stay exactly what they were — every reader of them keeps
+-- working — but they are now the *consequence* of a payment row rather than the record of it.
+--
+-- The resolution column is how a payment leaves the queue without a document being found: 'verified'
+-- for one settled before this table existed (or confirmed by hand outside the app), and
+-- 'not_required' for money that legitimately produces no invoice. NULL means still open, and
+-- an open payment is either covered by its linked documents or waiting for them. Without
+-- these two the queue would fill with rows that can never close, and a list that is
+-- permanently red is a list nobody opens.
+CREATE TABLE IF NOT EXISTS supplier_payments (
+  id TEXT PRIMARY KEY,
+  supplier_id TEXT NOT NULL REFERENCES band_suppliers(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  method TEXT,
+  notes TEXT,
+  -- Whether a document is expected back at all. Copied from the supplier when the payment is
+  -- recorded, so changing the supplier's policy later does not silently reopen settled money.
+  expects_invoice INTEGER NOT NULL DEFAULT 1,
+  resolution TEXT CHECK (resolution IN ('verified','not_required')),
+  -- 'manual' is a payment recorded through the pay-supplier dialog; 'line' is one the app
+  -- created when a cost line was ticked paid on a show; 'backfill' is one the migration
+  -- synthesised from a line that was already paid before payments were recorded at all.
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','line','backfill')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Which cost lines one transfer settled — the multi-show part. The amount is stored per line
+-- rather than only as the payment's total, because the shows pay different fees and the
+-- payment is their exact sum.
+--
+-- The unique index is the invariant that keeps the two representations honest: a cost line is
+-- settled by at most one payment, so a show's per-role paid flag and a line row here can never
+-- disagree about who paid for what.
+CREATE TABLE IF NOT EXISTS supplier_payment_lines (
+  payment_id TEXT NOT NULL REFERENCES supplier_payments(id) ON DELETE CASCADE,
+  event_id TEXT NOT NULL REFERENCES band_events(id) ON DELETE CASCADE,
+  role TEXT NOT NULL CHECK (role IN ('lightman','soundman','singer','sound_company')),
+  amount REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (payment_id, event_id, role)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_payment_lines_line
+  ON supplier_payment_lines(event_id, role);
+
+-- The documents that answer for a payment: rows of the Morning expense table, linked.
+--
+-- It is a link table rather than a column on either side because the relationship is
+-- genuinely many-to-many, and every one of the four shapes happens: one payment answered by
+-- one invoice, one payment answered by several (the supplier bills per gig and is paid
+-- monthly), several payments answered by one (an advance and a balance), and an invoice that
+-- arrived before the payment it belongs to. allocated_amount is what this document covers
+-- of this payment, so a partly-documented transfer can say so instead of having to claim it
+-- is either finished or untouched.
+--
+-- expense_id deliberately carries no foreign key. The expenses table is a mirror of Morning
+-- and has been rebuilt in place by a migration once already (see below, where it is copied
+-- into expenses_migrating and renamed back). A DROP of the referenced table with
+-- foreign_keys = ON cascades, which would take every link here with it — the rows would be
+-- gone before anyone noticed the schema had been tidied. Nothing deletes an expense in normal
+-- use (the sync upserts on external_id), and a link left pointing at a row that no longer
+-- exists is pruned rather than cascaded.
+CREATE TABLE IF NOT EXISTS supplier_payment_docs (
+  payment_id TEXT NOT NULL REFERENCES supplier_payments(id) ON DELETE CASCADE,
+  expense_id TEXT NOT NULL,
+  allocated_amount REAL NOT NULL DEFAULT 0,
+  matched_by TEXT NOT NULL DEFAULT 'user' CHECK (matched_by IN ('auto','user')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (payment_id, expense_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier ON supplier_payments(supplier_id, date);
+CREATE INDEX IF NOT EXISTS idx_supplier_payment_docs_expense ON supplier_payment_docs(expense_id);
+
 -- Which calendar events to draw, and where they land. One row per rule so a second
 -- freelance client (its own organizer, its own ignore words) is configuration, not code.
 CREATE TABLE IF NOT EXISTS calendar_rules (
@@ -557,6 +636,21 @@ addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
 // 0 (the default, and what every supplier entered before this column had) means nobody has
 // said what they charge, and the cost line is left to be typed by hand as before.
 addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0');
+
+// What ties a supplier here to the documents they issue in Morning. The email that staffs
+// them off the calendar is not the same identifier: an invoice carries a business, not a
+// mailbox. The tax id is the strong match — two businesses cannot share one — and the Morning
+// supplier id is stronger still where Morning has one, so a document matched on either is
+// safe to link without asking. `aliases` is the weak one, for the gap between what the band
+// calls somebody and what their invoice is headed with: newline- or comma-separated names,
+// compared case- and whitespace-insensitively, and never enough on its own to auto-link.
+addColumnIfMissing('band_suppliers', 'tax_id', 'TEXT');
+addColumnIfMissing('band_suppliers', 'morning_supplier_id', 'TEXT');
+addColumnIfMissing('band_suppliers', 'aliases', 'TEXT');
+// Whether this supplier hands back a document at all. On by default, because most do — but
+// א.ק.ו.ם, a hall that nets its fee out of the door, and anyone paid against a receipt that
+// reaches Morning under another name would otherwise sit in the queue for ever.
+addColumnIfMissing('band_suppliers', 'expects_invoice', 'INTEGER NOT NULL DEFAULT 1');
 
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a

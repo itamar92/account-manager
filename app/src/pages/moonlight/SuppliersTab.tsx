@@ -4,6 +4,7 @@ import { del, get, post, put, nis } from '../../api';
 import { Button, DataTable, Input, Modal, PageHeader, fieldClass } from '../../ui';
 import { ASSIGNMENT_ROLES, roleName, type TabProps } from './shared';
 import { MembersPanel } from './MembersPanel';
+import { PaySupplierModal } from './SupplierPaymentsTab';
 
 /**
  * Who the band hires, and what it still owes them.
@@ -19,6 +20,9 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
   const [supplierModal, setSupplierModal] = useState<any | null>(null);
   const [debtsFor, setDebtsFor] = useState<any | null>(null);
   const [matching, setMatching] = useState(false);
+  // Paying is started from here as well as from the payments page: this is where you notice
+  // somebody is owed for four gigs, and it is one transfer, not four.
+  const [payFor, setPayFor] = useState<string | null>(null);
 
   const load = () => {
     get('/moonlight/assignments')
@@ -39,7 +43,12 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
   };
 
   const removeSupplier = async (supplier: any) => {
-    if (!confirm(`למחוק את «${supplier.name}»? השיבוצים שלו יימחקו גם הם.`)) return;
+    // Payments cascade with the supplier, so the warning says so: what goes is the band's own
+    // record of what it paid them, and the queue that was waiting on their invoices.
+    const extra = Number(supplier.missing_docs) > 0
+      ? ` כולל ${supplier.missing_doc_payments} תשלומים שממתינים לחשבונית.`
+      : '';
+    if (!confirm(`למחוק את «${supplier.name}»? השיבוצים והתשלומים הרשומים לו יימחקו גם הם.${extra}`)) return;
     try { await del(`/moonlight/suppliers/${supplier.id}`); load(); }
     catch (err: any) { onError(err.message); }
   };
@@ -60,6 +69,8 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
   // reported as its own figure instead of being folded into the total.
   const owedTotal = suppliers.reduce((sum, s) => sum + (Number(s.owed) || 0), 0);
   const upcomingTotal = suppliers.reduce((sum, s) => sum + (Number(s.upcoming) || 0), 0);
+  // The mirror of the debt: money that has already gone out and has no document behind it.
+  const missingDocsTotal = suppliers.reduce((sum, s) => sum + (Number(s.missing_docs) || 0), 0);
   const upcomingNote = upcomingTotal > 0
     ? <> · <span className="num">{nis(upcomingTotal)}</span> משובץ בהופעות עתידיות</>
     : null;
@@ -83,7 +94,7 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
                 {matching ? 'מתאים…' : 'התאמה מהיומן'}
               </Button>
             </span>
-            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '', default_amount: 0 })}>
+            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '', default_amount: 0, tax_id: '', morning_supplier_id: '', aliases: '', expects_invoice: true })}>
               + ספק
             </Button>
           </>
@@ -92,8 +103,17 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
 
       <p className="text-[13px] text-muted">
         אימייל של ספק הוא מה שהופך אורח ביומן לשיבוץ, ותעריף קבוע נכנס לבד לשורת העלות כששיבצתם אותו.
-        השיבוץ עצמו ותשלום החוב נעשים בעמוד ההופעה. החוב נספר רק מהופעות שכבר היו.
+        החוב נספר רק מהופעות שכבר היו. «תשלום» כאן סוגר כמה הופעות בהעברה אחת, וההעברה היא מה
+        שממתין לחשבונית — ראו <Link to="/moonlight/supplierPayments" className="text-accent hover:underline">תשלומים לספקים</Link>.
+        ח.פ/ת.ז הוא מה שמאפשר לשייך חשבונית מ־Morning לתשלום בוודאות.
       </p>
+
+      {missingDocsTotal > 0 && (
+        <div className="text-[13px] bg-warn-soft text-warn rounded-xl px-4 py-2.5">
+          <span className="num font-semibold">{nis(missingDocsTotal)}</span> שולמו וטרם התקבלה עליהם חשבונית ·{' '}
+          <Link to="/moonlight/supplierPayments" className="underline">לרשימה</Link>
+        </div>
+      )}
 
       <DataTable
         empty="עדיין אין ספקים — הוסיפו ספק כדי להתחיל לשבץ"
@@ -134,10 +154,29 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
               </div>
             ),
           },
+          {
+            key: 'missing_docs', header: 'חסרות חשבוניות',
+            sortValue: (s: any) => Number(s.missing_docs) || 0,
+            render: (s: any) => {
+              if (!s.expects_invoice) return <span className="text-faint" title="לא מצפים מהספק הזה לחשבונית">—</span>;
+              if (!(Number(s.missing_docs) > 0)) return <span className="text-pos">—</span>;
+              return (
+                <Link to="/moonlight/supplierPayments" className="flex flex-col items-start gap-0.5 hover:underline">
+                  <span className="num text-warn font-medium">{nis(s.missing_docs)}</span>
+                  <span className="text-[11.5px] text-faint whitespace-nowrap">
+                    {s.missing_doc_payments} תשלומים · הוותיק לפני {s.missing_docs_days} ימים
+                  </span>
+                </Link>
+              );
+            },
+          },
           isOwner && {
             key: 'actions', mobile: 'actions' as const, className: 'text-left whitespace-nowrap',
             render: (s: any) => (
               <div className="flex gap-3 md:gap-2 justify-end">
+                {Number(s.owed) > 0 && (
+                  <button onClick={() => setPayFor(s.id)} className="text-sm text-accent hover:underline">תשלום</button>
+                )}
                 <button onClick={() => setSupplierModal({ ...s })} className="text-sm text-accent hover:underline">עריכה</button>
                 <button onClick={() => removeSupplier(s)} className="text-sm text-neg hover:underline">מחיקה</button>
               </div>
@@ -172,6 +211,36 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
             <p className="text-[12px] text-faint -mt-1">
               0 = אין תעריף קבוע. סכום שהוקלד ידנית בהופעה לא יידרס.
             </p>
+            <div className="border-t border-line pt-3 space-y-3">
+              <p className="text-[12px] text-faint">
+                שיוך חשבוניות מ־Morning: ח.פ/ת.ז הוא זיהוי ודאי ומאפשר שיוך אוטומטי; שם חלופי הוא
+                רק רמז, ומציע התאמה לאישור שלכם.
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="ח.פ / ת.ז" dir="ltr" value={supplierModal.tax_id || ''}
+                  onChange={(e) => setSupplierModal({ ...supplierModal, tax_id: e.target.value })} />
+                <Input label="מזהה ספק ב־Morning" dir="ltr" value={supplierModal.morning_supplier_id || ''}
+                  onChange={(e) => setSupplierModal({ ...supplierModal, morning_supplier_id: e.target.value })} />
+              </div>
+              <Input
+                label="שמות חלופיים (השם על החשבונית, מופרד בפסיקים)"
+                value={supplierModal.aliases || ''}
+                onChange={(e) => setSupplierModal({ ...supplierModal, aliases: e.target.value })}
+              />
+              <label className="flex items-center gap-2 text-sm text-ink-2">
+                <input
+                  type="checkbox"
+                  className="accent-accent"
+                  checked={supplierModal.expects_invoice ?? true}
+                  onChange={(e) => setSupplierModal({ ...supplierModal, expects_invoice: e.target.checked })}
+                />
+                מצפים לחשבונית מהספק הזה
+              </label>
+              <p className="text-[12px] text-faint -mt-1">
+                כבו את זה למי שלעולם לא מוציא חשבונית — אחרת התשלומים אליו יישארו ברשימת ההמתנה
+                לנצח, ורשימה שאי אפשר לרוקן היא רשימה שמפסיקים לפתוח.
+              </p>
+            </div>
             <Input label="הערות" value={supplierModal.notes || ''}
               onChange={(e) => setSupplierModal({ ...supplierModal, notes: e.target.value })} />
             <Button type="submit" className="w-full">שמירה</Button>
@@ -227,6 +296,15 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
           </div>
         )}
       </Modal>
+
+      <PaySupplierModal
+        open={!!payFor}
+        suppliers={suppliers}
+        initialSupplierId={payFor || ''}
+        onClose={() => setPayFor(null)}
+        onSaved={() => { setPayFor(null); load(); }}
+        onError={onError}
+      />
       </div>
     </div>
   );
