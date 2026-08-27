@@ -45,6 +45,12 @@ import {
   isAssignmentRole, listSuppliers, missingRoles, setAssignment, supplierDebts,
 } from './assignments.js';
 import {
+  deletePayment, invoiceQueue, linkDocument, listPayments, openLines, recordPayment,
+  pruneOrphanPayments, setResolution, runMatch, supplierInvoiceGaps, syncLinePayments,
+  unlinkDocument,
+  PAYMENT_RESOLUTIONS, type PaymentResolution,
+} from './supplierPayments.js';
+import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
 import { annualOutlook, annualReport, getProfile, saveProfile } from './annualReport.js';
@@ -851,12 +857,24 @@ export function bandFollowUps() {
     .map((e) => ({ id: e.id, venue: e.venue, date: e.date, missing: missingRoles(e.id) }))
     .filter((r) => r.missing.length > 0);
 
+  // The fourth: money that has already gone out to a supplier with no document filed against
+  // it. It is the mirror of owedToSuppliers — that one is what the band still has to pay, this
+  // one is what it has paid and cannot yet deduct.
+  const queue = invoiceQueue(getVatPercent());
+
   return {
     awaitingPayment,
     awaitingPaymentTotal: round2(awaitingPayment.reduce((s, e) => s + e.amount, 0)),
     owedToSuppliers,
     owedToSuppliersTotal: round2(owedToSuppliers.reduce((s, e) => s + e.outstanding, 0)),
     missingAssignments,
+    awaitingInvoice: queue.rows.map((row) => ({
+      id: row.id, supplier_id: row.supplier_id, supplier_name: row.supplier_name,
+      date: row.date, missing: row.missing, age_days: row.age_days, shows: row.lines.length,
+    })),
+    awaitingInvoiceTotal: queue.total,
+    awaitingInvoiceVat: queue.vat_at_risk,
+    awaitingInvoiceOldestDays: queue.oldest_days,
   };
 }
 
@@ -1267,6 +1285,9 @@ router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, re
     db.prepare(
       `UPDATE band_event_expenses SET ${paid.map((f) => `${f}_paid = 1`).join(', ')} WHERE id = ?`
     ).run(row.id);
+    // The flags are the fast way to settle a show; the payment rows are what the invoice
+    // queue reads. Syncing here is what stops money paid the quick way from going untracked.
+    syncLinePayments(event.id);
   }
   res.json({ event: recomputeEvent(event.id), settled: paid.length });
 }));
@@ -1380,6 +1401,9 @@ router.delete('/moonlight/events/:id', requireOwner, handle((req, res) => {
   const flag = req.query.exclude_from_calendar;
   const result = deleteEventCascade(req.params.id, flag !== '0' && flag !== 'false');
   if (!result.deleted) return res.status(404).json({ error: 'event not found' });
+  // The show's cost lines went with it. A payment left covering nothing is a transfer the
+  // queue would ask for an invoice against for ever, so it goes too.
+  pruneOrphanPayments();
   res.json(result);
 }));
 
@@ -1394,6 +1418,7 @@ router.post('/moonlight/events/bulk-delete', requireOwner, handle((req, res) => 
       deleted += result.deleted;
       excluded += result.excluded;
     }
+    pruneOrphanPayments();
     return { deleted, excluded };
   });
   res.json(run());
@@ -1463,6 +1488,11 @@ router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
   // Handing the lock back means asking for Meta's figure again, so it is restored right away
   // rather than at whatever point somebody next runs a sync.
   if (body.campaign_locked !== undefined && !body.campaign_locked) applyCampaignSpend();
+  // Ticking one supplier's line paid on the show page is a payment like any other, so it gets
+  // a payment row and joins the queue waiting for its invoice; un-ticking gives it back.
+  if (existing.event_id && EVENT_EXPENSE_FLAGS.some((f) => body[f] !== undefined)) {
+    syncLinePayments(existing.event_id);
+  }
   if (existing.event_id) recomputeEvent(existing.event_id);
   res.json({
     expense: db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id),
@@ -1534,12 +1564,18 @@ router.get('/moonlight/follow-ups', requireAuth, handle((_req, res) => {
  */
 function suppliersWithDebts() {
   const debts = supplierDebts();
+  const gaps = supplierInvoiceGaps();
   return listSuppliers().map((s) => ({
     ...s,
+    expects_invoice: !!s.expects_invoice,
     owed: debts.get(s.id)?.owed ?? 0,
     owed_shows: debts.get(s.id)?.shows ?? [],
     upcoming: debts.get(s.id)?.upcoming ?? 0,
     upcoming_shows: debts.get(s.id)?.upcoming_shows ?? [],
+    // The mirror of `owed`: money that has already left, with nothing filed against it yet.
+    missing_docs: gaps.get(s.id)?.missing ?? 0,
+    missing_doc_payments: gaps.get(s.id)?.payments ?? 0,
+    missing_docs_days: gaps.get(s.id)?.oldest_days ?? 0,
   }));
 }
 
@@ -1659,13 +1695,22 @@ router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
   const id = uuid();
+  const b = req.body || {};
   try {
     db.prepare(
-      `INSERT INTO band_suppliers (id, name, email, role, phone, notes, default_amount)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO band_suppliers
+         (id, name, email, role, phone, notes, default_amount,
+          tax_id, morning_supplier_id, aliases, expects_invoice)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       id, name.trim(), email?.trim() || null, role, phone || null, notes || null,
-      supplierAmount(default_amount)
+      supplierAmount(default_amount),
+      String(b.tax_id ?? '').trim() || null,
+      String(b.morning_supplier_id ?? '').trim() || null,
+      String(b.aliases ?? '').trim() || null,
+      // Defaulting on: most suppliers do invoice, and a supplier wrongly expected to is one
+      // visible row to dismiss, where one wrongly not expected to is money silently untracked.
+      b.expects_invoice === undefined || b.expects_invoice ? 1 : 0
     );
   } catch {
     return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
@@ -1684,11 +1729,17 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   try {
     db.prepare(
       `UPDATE band_suppliers
-         SET name = ?, email = ?, role = ?, phone = ?, notes = ?, default_amount = ?
+         SET name = ?, email = ?, role = ?, phone = ?, notes = ?, default_amount = ?,
+             tax_id = ?, morning_supplier_id = ?, aliases = ?, expects_invoice = ?
        WHERE id = ?`
     ).run(
       String(b.name).trim(), b.email?.trim() || null, b.role, b.phone || null, b.notes || null,
-      supplierAmount(b.default_amount), req.params.id
+      supplierAmount(b.default_amount),
+      String(b.tax_id ?? '').trim() || null,
+      String(b.morning_supplier_id ?? '').trim() || null,
+      String(b.aliases ?? '').trim() || null,
+      b.expects_invoice ? 1 : 0,
+      req.params.id
     );
   } catch {
     return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
@@ -1755,6 +1806,77 @@ router.post('/moonlight/assignments/auto-match', requireOwner, handle((_req, res
   res.json({ assigned: autoAssignAll() });
 }));
 
+// ---- paying suppliers, and the invoices owed back for it ----
+
+/**
+ * The lines this supplier has not been paid for yet — what the pay dialog is built from.
+ *
+ * Every show at once rather than one show's worth, because that is how the band actually
+ * pays: one transfer to אבי covering the four gigs he did since the last one.
+ */
+router.get('/moonlight/suppliers/:id/open-lines', requireAuth, handle((req, res) => {
+  if (!db.prepare('SELECT id FROM band_suppliers WHERE id = ?').get(req.params.id)) {
+    return res.status(404).json({ error: 'supplier not found' });
+  }
+  res.json({ lines: openLines(req.params.id) });
+}));
+
+/** Every recorded payment with what answers for it, plus the aged total still undocumented. */
+router.get('/moonlight/supplier-payments', requireAuth, handle((_req, res) => {
+  res.json({ payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
+}));
+
+/**
+ * Records one transfer against the lines it settles. The amount is the sum of those lines and
+ * is never read off the request — see recordPayment.
+ */
+router.post('/moonlight/supplier-payments', requireOwner, handle((req, res) => {
+  const { supplier_id, date, method, notes, lines } = req.body || {};
+  if (!supplier_id) return res.status(400).json({ error: 'ספק חובה' });
+  if (!Array.isArray(lines) || !lines.length) {
+    return res.status(400).json({ error: 'לא נבחרו שורות לתשלום' });
+  }
+  res.json({ payment: recordPayment({ supplier_id, date, method, notes, lines }) });
+}));
+
+router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res) => {
+  deletePayment(req.params.id);
+  res.json({ ok: true });
+}));
+
+/** Attaches a Morning expense to a payment — the manual half of the matcher. */
+router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, res) => {
+  const expenseId = String(req.body?.expense_id || '');
+  if (!expenseId) return res.status(400).json({ error: 'מסמך חובה' });
+  linkDocument(req.params.id, expenseId, 'user');
+  res.json({ payment: listPayments().find((p) => p.id === req.params.id) ?? null });
+}));
+
+router.delete('/moonlight/supplier-payments/:id/docs/:expenseId', requireOwner, handle((req, res) => {
+  unlinkDocument(req.params.id, req.params.expenseId);
+  res.json({ payment: listPayments().find((p) => p.id === req.params.id) ?? null });
+}));
+
+/**
+ * Closes a payment nothing will ever be filed against, or reopens one closed by mistake.
+ *
+ * Sending no resolution is the reopen: a payment closed as «לא נדרשת חשבונית» that turns out
+ * to have one after all goes back to waiting rather than needing to be re-recorded.
+ */
+router.post('/moonlight/supplier-payments/:id/resolve', requireOwner, handle((req, res) => {
+  const raw = req.body?.resolution;
+  const resolution = raw == null || raw === ''
+    ? null
+    : PAYMENT_RESOLUTIONS.includes(raw as PaymentResolution) ? (raw as PaymentResolution) : undefined;
+  if (resolution === undefined) return res.status(400).json({ error: 'סטטוס לא חוקי' });
+  res.json({ payment: setResolution(req.params.id, resolution) });
+}));
+
+/** Runs the matcher over everything Morning has sent since the last time. */
+router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, res) => {
+  res.json({ ...runMatch(), payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
+}));
+
 // ====== integrations: Morning (Green Invoice) + Google Calendar + Meta ads (owner) ======
 router.get('/integrations', requireOwner, handle((_req, res) => {
   res.json({ morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus() });
@@ -1773,13 +1895,18 @@ router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, 
   const expenses = await pullExpensesFromMorning({ days }).catch((err: any) => ({
     error: err.message || 'משיכת ההוצאות נכשלה',
   }));
-  res.json({ result: { ...result, expenses } });
+  // A document that has just arrived is the answer to a payment already waiting for it, so
+  // the match runs here rather than waiting to be asked for: the queue is shortest the moment
+  // after a sync, which is exactly when somebody is looking at it.
+  const matched = runMatch();
+  res.json({ result: { ...result, expenses, matched: matched.linked } });
 }));
 
 /** Pulls expenses only — what the הוצאות page's own sync button asks for. */
 router.post('/integrations/morning/expenses-sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  res.json({ result: await pullExpensesFromMorning({ days }) });
+  const result = await pullExpensesFromMorning({ days });
+  res.json({ result: { ...result, matched: runMatch().linked } });
 }));
 
 /** Pre-fills the issue dialog with the document Morning is about to be asked for. */

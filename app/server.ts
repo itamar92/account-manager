@@ -7,6 +7,7 @@ import { router, apiV1 } from './server/routes.js';
 import { mcpHttpHandler } from './server/mcpServer.js';
 import { runSeed } from './server/seed.js';
 import { backfillMoonlight } from './server/moonlight.js';
+import { backfillSupplierPayments, pruneOrphanPayments } from './server/supplierPayments.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -16,6 +17,11 @@ runSeed();
 // Links every show to its expense row and refreshes the derived columns. Idempotent, so it
 // also picks up shows a previous version's calendar sync created without one.
 backfillMoonlight();
+// Gives every cost line already marked שולם the payment row it never had. Runs after the
+// backfill above, which is what guarantees each show has an expense row to read the fees from.
+backfillSupplierPayments();
+// Cheap, and a payment covering nothing would otherwise sit in the queue for ever.
+pruneOrphanPayments();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
