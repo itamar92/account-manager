@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { del, get, post, nis, nisExact } from '../../api';
 import {
-  Button, DataTable, Input, Modal, PageHeader, Segmented, StatCard, Textarea, fieldClass,
+  Button, DataTable, Input, Modal, PageHeader, SearchInput, Segmented, StatCard, Textarea,
+  fieldClass,
 } from '../../ui';
 import { roleName, showHref, type TabProps } from './shared';
 
@@ -38,6 +39,17 @@ const DOC_STATUS: Record<string, { label: string; className: string }> = {
   not_required: { label: 'לא נדרשת חשבונית', className: 'text-faint' },
 };
 
+/**
+ * Why a document is being offered. Said on the row, because «של אותו ספק» and «אותו סכום, ספק
+ * לא מזוהה» are two very different things to be asked to confirm — and only the second one
+ * needs the person to look at the invoice itself before pressing anything.
+ */
+const SUGGESTION_REASON: Record<string, { label: string; className: string }> = {
+  supplier: { label: 'של הספק הזה', className: 'text-pos' },
+  amount: { label: 'סכום זהה · ספק לא מזוהה', className: 'text-warn' },
+  similar: { label: 'שם דומה', className: 'text-muted' },
+};
+
 type Filter = 'waiting' | 'all' | 'closed';
 
 export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
@@ -47,6 +59,7 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
   const [filter, setFilter] = useState<Filter>('waiting');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [payFor, setPayFor] = useState<any | null>(null);
+  const [pickFor, setPickFor] = useState<any | null>(null);
   const [matching, setMatching] = useState(false);
 
   const load = () => {
@@ -127,6 +140,9 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
         תשלום שאין מולו מסמך אינו הוצאה מוכרת, והמע״מ שבתוכו אינו בר־השבה — ולכן הסכום כאן, ולא
         מספר השורות, הוא מה שקובע אם שווה לרדוף אחרי הניירת.
         שורות שאין להן ספק משובץ (אק״ום, שכר אולם, צמידים) לא מגיעות לרשימה: אין ממי לבקש.
+        פתיחת שורה מציגה את ההצעות, ואפשר תמיד לבחור חשבונית ידנית — גם כזו שהמערכת לא קישרה
+        לספק. כדי שלא תצטרכו לעשות זאת פעמיים לאותו ספק, רשמו את השם שעל החשבונית שלו
+        ב<Link to="/moonlight/supplierNames" className="text-accent hover:underline">שמות בחשבוניות</Link>.
       </p>
 
       <Segmented
@@ -146,7 +162,7 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
         onRowClick={(p: any) => toggle(p.id)}
         isExpanded={(p: any) => expanded.has(p.id)}
         renderExpanded={(p: any) => (
-          <PaymentDetail payment={p} isOwner={isOwner} act={act} />
+          <PaymentDetail payment={p} isOwner={isOwner} act={act} onPick={() => setPickFor(p)} />
         )}
         columns={[
           {
@@ -206,15 +222,23 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
         onSaved={() => { setPayFor(null); load(); }}
         onError={onError}
       />
+
+      <PickDocumentModal
+        payment={pickFor}
+        onClose={() => setPickFor(null)}
+        onSaved={() => { setPickFor(null); load(); }}
+        onError={onError}
+      />
     </div>
   );
 }
 
 /** One payment opened up: what it settled, what answers for it, and what to do about it. */
-function PaymentDetail({ payment, isOwner, act }: {
+function PaymentDetail({ payment, isOwner, act, onPick }: {
   payment: any;
   isOwner: boolean;
   act: (fn: () => Promise<any>) => Promise<void>;
+  onPick: () => void;
 }) {
   const waiting = payment.doc_status === 'waiting';
   return (
@@ -269,28 +293,48 @@ function PaymentDetail({ payment, isOwner, act }: {
         {waiting && payment.suggestions?.length > 0 && (
           <div className="space-y-1.5 pt-1">
             <div className="text-[13px] text-muted">
-              הצעות — הוצאות מ־Morning של אותו ספק בטווח התאריכים
+              הצעות — מסמכים מ־Morning בטווח התאריכים של ההעברה
             </div>
-            {payment.suggestions.map((s: any) => (
-              <div key={s.id} className="flex items-center justify-between gap-2 text-sm bg-soft rounded-lg px-2.5 py-2">
-                <div className="min-w-0">
-                  <div className="truncate">
-                    {s.supplier_name} · <span className="num">{nisExact(s.total)}</span>
-                    {s.exact && <span className="text-pos text-xs"> · סכום מדויק</span>}
+            {payment.suggestions.map((s: any) => {
+              const reason = SUGGESTION_REASON[s.reason] ?? { label: '', className: '' };
+              return (
+                <div key={s.id} className="flex items-center justify-between gap-2 text-sm bg-soft rounded-lg px-2.5 py-2">
+                  <div className="min-w-0">
+                    <div className="truncate">
+                      {s.supplier_name} · <span className="num">{nisExact(s.available)}</span>
+                      {s.exact && <span className="text-pos text-xs"> · סכום מדויק</span>}
+                    </div>
+                    <div className="text-xs text-faint">
+                      {s.date} · {s.number || 'ללא מספר'}
+                      {reason.label && <> · <span className={reason.className}>{reason.label}</span></>}
+                    </div>
                   </div>
-                  <div className="text-xs text-faint">{s.date} · {s.number || 'ללא מספר'}</div>
+                  {isOwner && (
+                    <Button
+                      variant="ghost"
+                      onClick={() => act(() => post(`/moonlight/supplier-payments/${payment.id}/docs`, {
+                        expense_id: s.id,
+                        // A document the app could not place is one it will fail to place again
+                        // next month, so confirming it here is also where the name is learned.
+                        remember_alias: !s.alias_known,
+                      }))}
+                    >
+                      זו החשבונית
+                    </Button>
+                  )}
                 </div>
-                {isOwner && (
-                  <Button
-                    variant="ghost"
-                    onClick={() => act(() => post(`/moonlight/supplier-payments/${payment.id}/docs`, { expense_id: s.id }))}
-                  >
-                    זו החשבונית
-                  </Button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
+        )}
+
+        {/* Offered whether or not anything was suggested — the case this exists for is the one
+            where nothing was, and a screen that only offers what it already guessed leaves the
+            person with a red row and no way to close it. */}
+        {isOwner && waiting && (
+          <button className="text-sm text-accent hover:underline" onClick={onPick}>
+            {payment.suggestions?.length ? 'בחירת חשבונית אחרת…' : 'בחירת חשבונית ידנית…'}
+          </button>
         )}
 
         {isOwner && (
@@ -326,6 +370,143 @@ function PaymentDetail({ payment, isOwner, act }: {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Picking the invoice for a payment by hand — the way out of every case a rule cannot reach.
+ *
+ * The rules are good at the ordinary shape: same supplier, same money, same fortnight. What
+ * they cannot do is know that «א. כהן הפקות בע"מ» is אבי, that the invoice was issued in
+ * October for a July gig, or that one document covers two transfers. The person looking at the
+ * payment knows all three, so this offers everything Morning holds that still has value to
+ * give, searchable by name, by document number and by amount, and lets them say which it is.
+ *
+ * The checkbox is what stops it being a chore repeated monthly: confirming an invoice also
+ * records the name it arrived under, and from then on that supplier's documents match on their
+ * own — which is the whole difference between a manual escape hatch and a system that learns.
+ */
+function PickDocumentModal({ payment, onClose, onSaved, onError }: {
+  payment: any | null;
+  onClose: () => void;
+  onSaved: () => void;
+  onError: (message: string) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [docs, setDocs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [remember, setRemember] = useState(true);
+  const [linking, setLinking] = useState('');
+
+  useEffect(() => {
+    if (!payment) { setQuery(''); setDocs([]); setRemember(true); }
+  }, [payment?.id]);
+
+  useEffect(() => {
+    if (!payment) return;
+    setLoading(true);
+    // Typing is a filter over the same list, so each keystroke waits a moment for the next one
+    // rather than sending a request nobody will read.
+    const timer = setTimeout(() => {
+      get(`/moonlight/supplier-payments/${payment.id}/documents?q=${encodeURIComponent(query)}`)
+        .then((d) => setDocs(d.documents))
+        .catch((e) => onError(e.message))
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [payment?.id, query]);
+
+  const link = async (doc: any) => {
+    setLinking(doc.id);
+    onError('');
+    try {
+      const d = await post(`/moonlight/supplier-payments/${payment.id}/docs`, {
+        expense_id: doc.id,
+        remember_alias: remember && !doc.alias_known,
+      });
+      // The link stands either way; a name that could not be recorded is said out loud rather
+      // than left to look as though it had been.
+      if (d.alias?.error) onError(d.alias.error);
+      onSaved();
+    } catch (err: any) { onError(err.message); }
+    finally { setLinking(''); }
+  };
+
+  return (
+    <Modal
+      title={payment ? `בחירת חשבונית — ${payment.supplier_name}` : ''}
+      open={!!payment}
+      onClose={onClose}
+      size="lg"
+    >
+      {payment && (
+        <div className="space-y-3">
+          <p className="text-[13px] text-muted">
+            ההעברה מ־{payment.date} על <span className="num">{nisExact(payment.amount)}</span>, חסר
+            תיעוד <span className="num text-neg">{nisExact(payment.missing)}</span>. חפשו לפי שם,
+            מספר מסמך או סכום — הרשימה כוללת כל מסמך שנותר בו סכום לשייך, גם כזה שהמערכת לא זיהתה
+            למי הוא שייך.
+          </p>
+
+          <SearchInput
+            value={query}
+            onChange={setQuery}
+            placeholder="שם על החשבונית / מספר מסמך / סכום"
+          />
+
+          <label className="flex items-start gap-2 text-sm text-ink-2">
+            <input
+              type="checkbox"
+              className="accent-accent mt-0.5"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            <span>
+              לזכור שהשם על החשבונית שייך ל«{payment.supplier_name}»
+              <span className="block text-[12px] text-faint">
+                כך המסמך הבא שיגיע באותו שם ישויך לבד, בלי לחפש אותו שוב.
+              </span>
+            </span>
+          </label>
+
+          {loading && <div className="text-sm text-faint">מחפש…</div>}
+          {!loading && docs.length === 0 && (
+            <div className="text-sm text-faint">
+              אין מסמכים מתאימים. אם החשבונית עדיין לא נמשכה מ־Morning, סנכרנו אותה ונסו שוב.
+            </div>
+          )}
+
+          <div className="space-y-1.5 max-h-[45vh] overflow-y-auto">
+            {docs.map((doc) => (
+              <div
+                key={doc.id}
+                className="flex items-center justify-between gap-2 text-sm bg-soft rounded-lg px-2.5 py-2"
+              >
+                <div className="min-w-0">
+                  <div className="truncate">
+                    {doc.supplier_name || 'ללא שם'} · <span className="num">{nisExact(doc.available)}</span>
+                    {doc.available !== doc.total && (
+                      <span className="text-xs text-faint"> (מתוך {nisExact(doc.total)})</span>
+                    )}
+                  </div>
+                  <div className="text-xs text-faint truncate">
+                    {doc.date} · {doc.number || 'ללא מספר'}
+                    {doc.exact && <span className="text-pos"> · סכום זהה לחסר</span>}
+                    {doc.mine && <span className="text-pos"> · מזוהה כספק הזה</span>}
+                    {!doc.mine && doc.resolved_supplier_name && (
+                      <span className="text-warn"> · מזוהה כרגע כ«{doc.resolved_supplier_name}»</span>
+                    )}
+                  </div>
+                </div>
+                <Button variant="ghost" disabled={!!linking} onClick={() => link(doc)}>
+                  {linking === doc.id ? 'משייך…' : 'זו החשבונית'}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </Modal>
   );
 }
 

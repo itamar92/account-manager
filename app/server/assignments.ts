@@ -1,5 +1,6 @@
 import { db, uuid } from './db.js';
 import { ensureExpenseRow, expenseRowForEvent, recomputeEvent } from './moonlight.js';
+import { aliasTextBySupplier } from './supplierNames.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -20,8 +21,17 @@ export function isAssignmentRole(value: unknown): value is AssignmentRole {
 
 const normalizeEmail = (value: unknown): string => String(value || '').trim().toLowerCase();
 
+/**
+ * The suppliers, each carrying the invoice names it answers to.
+ *
+ * `aliases` is read from band_supplier_aliases rather than off the frozen column of the same
+ * name, so the one line the supplier dialog edits and the mapping screen's list are the same
+ * fact said two ways instead of two facts that can drift apart.
+ */
 export function listSuppliers(): any[] {
-  return db.prepare('SELECT * FROM band_suppliers ORDER BY role, name').all() as any[];
+  const aliases = aliasTextBySupplier();
+  return (db.prepare('SELECT * FROM band_suppliers ORDER BY role, name').all() as any[])
+    .map((supplier) => ({ ...supplier, aliases: aliases.get(supplier.id) || '' }));
 }
 
 /** The guest emails the calendar sync stored on a show; [] for shows entered by hand. */

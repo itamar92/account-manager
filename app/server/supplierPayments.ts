@@ -14,6 +14,9 @@
 import { db, uuid, getSetting, setSetting } from './db.js';
 import { expenseRowForEvent, recomputeEvent } from './moonlight.js';
 import { ASSIGNMENT_ROLES, type AssignmentRole, isAssignmentRole } from './assignments.js';
+import {
+  SIMILAR_ENOUGH, aliasMap, aliasNamesBySupplier, nameSimilarity, normalizeName,
+} from './supplierNames.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -322,41 +325,32 @@ function refreshPaymentAmount(paymentId: string) {
 // ============================== documents ==============================
 
 /**
- * Reduces a name to what two spellings of the same business have in common.
+ * How firmly a document was tied to a supplier, which is what decides whether to ask first.
  *
- * Quotes, geresh, the legal suffix and the punctuation around it are all noise here: «א. כהן
- * הפקות בע"מ» and «א כהן הפקות» are one supplier. This is deliberately only ever used as a
- * *weak* signal — it proposes a match for a person to confirm, and never links one by itself.
+ * 'id' and 'alias' are both certainties, from two different sources: an identity nobody can
+ * share, or a person having said that this is the name that supplier invoices under. 'name'
+ * is the app noticing that two strings look alike, which is a reason to ask and never a
+ * reason to link.
  */
-export function normalizeName(value: unknown): string {
-  return String(value || '')
-    .replace(/["'״׳`.,\-–—()]/g, ' ')
-    .replace(/\bבע\s*מ\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLowerCase();
-}
+type MatchStrength = 'id' | 'alias' | 'name' | null;
 
-const supplierAliases = (supplier: any): string[] =>
-  String(supplier.aliases || '')
-    .split(/[\n,]/)
-    .map(normalizeName)
-    .filter(Boolean);
-
-/** How firmly a document was tied to a supplier, which is what decides whether to ask first. */
-type MatchStrength = 'id' | 'name' | null;
+/** Evidence good enough to link a document without anybody being asked. */
+const isCertain = (strength: MatchStrength): boolean => strength === 'id' || strength === 'alias';
 
 /**
  * Which supplier issued this expense, and on what evidence.
  *
  * The Morning supplier id and the tax id are identities: no two businesses share either, so a
- * document carrying one belongs to that supplier and nothing else needs checking. A name is a
- * resemblance — the same person can appear as three spellings and two different people can
- * share one — so it is reported as the weaker answer rather than treated as the same fact.
+ * document carrying one belongs to that supplier and nothing else needs checking. A recorded
+ * invoice name (see supplierNames) is the same kind of fact by a different route — somebody
+ * who knows said so once, and saying it again for every document that name arrives on is
+ * exactly the work this app is meant to save. A bare resemblance between the two names is
+ * reported as the weaker answer rather than treated as either.
  */
 export function resolveSupplier(
   expense: any,
-  suppliers: any[]
+  suppliers: any[],
+  aliases: Map<string, string> = aliasMap()
 ): { supplier: any; strength: MatchStrength } | null {
   const morningId = String(expense.external_supplier_id || '').trim();
   if (morningId) {
@@ -370,9 +364,12 @@ export function resolveSupplier(
   }
   const name = normalizeName(expense.supplier_name);
   if (name) {
-    const match = suppliers.find(
-      (s) => normalizeName(s.name) === name || supplierAliases(s).includes(name)
-    );
+    const supplierId = aliases.get(name);
+    if (supplierId) {
+      const match = suppliers.find((s) => s.id === supplierId);
+      if (match) return { supplier: match, strength: 'alias' };
+    }
+    const match = suppliers.find((s) => normalizeName(s.name) === name);
     if (match) return { supplier: match, strength: 'name' };
   }
   return null;
@@ -397,18 +394,55 @@ export function paymentStatus(payment: any, documented: number): PaymentDocStatu
   return documented + TOLERANCE >= amount ? 'documented' : 'waiting';
 }
 
-/** The Morning expenses no payment claims yet — the pool every match is drawn from. */
-function unlinkedExpenses(): any[] {
+/**
+ * The Morning expenses that still have value left to answer with — the pool every match is
+ * drawn from.
+ *
+ * "Still have value" rather than "unclaimed": an invoice covering an advance and a balance is
+ * one of the four shapes this link table exists for, and a pool that dropped a document the
+ * moment it answered for anything made that shape unreachable — the second payment could
+ * never be closed except by hand, against a document the screen refused to offer.
+ *
+ * `exceptPaymentId` leaves out what one payment already claims, so a document being attached
+ * to the payment it is already on is measured against what it would be worth without that
+ * link, instead of against nothing.
+ */
+function availableExpenses(exceptPaymentId = ''): any[] {
   return db
     .prepare(
-      `SELECT * FROM expenses
-        WHERE id NOT IN (SELECT expense_id FROM supplier_payment_docs)
-        ORDER BY date DESC`
+      `SELECT e.*, ROUND(e.total - COALESCE(d.used, 0), 2) AS available
+         FROM expenses e
+         LEFT JOIN (
+              SELECT expense_id, SUM(allocated_amount) AS used
+                FROM supplier_payment_docs
+               WHERE payment_id != ?
+               GROUP BY expense_id
+         ) d ON d.expense_id = e.id
+        WHERE e.total - COALESCE(d.used, 0) > ?
+        ORDER BY e.date DESC`
     )
-    .all() as any[];
+    .all(exceptPaymentId, TOLERANCE) as any[];
 }
 
-/** Attaches one document to one payment, covering as much of it as is still open. */
+/** What one document has left to give, ignoring what `exceptPaymentId` already claims of it. */
+function availableOf(expense: any, exceptPaymentId = ''): number {
+  const row = db
+    .prepare(
+      `SELECT COALESCE(SUM(allocated_amount), 0) AS used
+         FROM supplier_payment_docs WHERE expense_id = ? AND payment_id != ?`
+    )
+    .get(expense.id, exceptPaymentId) as { used: number };
+  return round2(round2(Number(expense.total) || 0) - round2(row.used));
+}
+
+/**
+ * Attaches one document to one payment, covering as much of it as is still open.
+ *
+ * Both sides are bounded, and for the same reason: a payment cannot be documented past what
+ * was actually paid, and a document cannot answer for more money than it is worth. Refusing
+ * rather than linking ₪0 is what tells the person the screen offered them something that
+ * cannot help — a silent zero would look like it had worked and leave the payment red.
+ */
 export const linkDocument = db.transaction((
   paymentId: string,
   expenseId: string,
@@ -419,16 +453,27 @@ export const linkDocument = db.transaction((
   const expense = db.prepare('SELECT * FROM expenses WHERE id = ?').get(expenseId) as any;
   if (!expense) throw Object.assign(new Error('expense not found'), { status: 404 });
 
-  // What this document covers of *this* payment, which is not the same as what it is worth:
-  // a payment already answered for allocates nothing more, so a second document attached to
-  // it by mistake cannot inflate the coverage past what was actually paid.
-  const total = round2(Number(expense.total) || 0);
-  const allocated = Math.min(total, remainingOf(payment));
+  // Measured as if this link did not exist yet, so re-linking a document that is already on
+  // this payment recomputes the same figure instead of shrinking it to nothing.
+  const pair = db
+    .prepare('SELECT allocated_amount FROM supplier_payment_docs WHERE payment_id = ? AND expense_id = ?')
+    .get(paymentId, expenseId) as any;
+  const claimed = round2(documentedTotal(paymentId) - round2(Number(pair?.allocated_amount) || 0));
+  const remaining = round2(Math.max(0, round2(Number(payment.amount) || 0) - claimed));
+  if (remaining <= TOLERANCE) {
+    throw Object.assign(new Error('התשלום כבר מכוסה במלואו במסמכים'), { status: 409 });
+  }
+
+  const available = availableOf(expense, paymentId);
+  if (available <= TOLERANCE) {
+    throw Object.assign(new Error('המסמך כבר משויך במלואו לתשלומים אחרים'), { status: 409 });
+  }
+
   db.prepare(
     `INSERT INTO supplier_payment_docs (payment_id, expense_id, allocated_amount, matched_by)
      VALUES (?, ?, ?, ?)
      ON CONFLICT(payment_id, expense_id) DO UPDATE SET allocated_amount = excluded.allocated_amount`
-  ).run(paymentId, expenseId, round2(allocated), matchedBy);
+  ).run(paymentId, expenseId, round2(Math.min(available, remaining)), matchedBy);
 });
 
 export function unlinkDocument(paymentId: string, expenseId: string) {
@@ -450,49 +495,175 @@ export function paymentDocs(paymentId: string): any[] {
 }
 
 /**
- * The documents that could plausibly answer for a payment, closest figure first.
+ * Why a document is being offered for a payment, strongest first. Shown on the row, because
+ * «אותו ספק» and «סכום זהה, ספק לא מזוהה» are two very different things to be asked to confirm.
+ */
+export type SuggestionReason = 'supplier' | 'amount' | 'similar';
+
+/**
+ * One row of the suggestion list, and of the manual picker — the same shape either way.
+ *
+ * `supplierNames` is what the payment's supplier answers to, passed in rather than looked up:
+ * this runs once per candidate document, and a query per row would make a screen of twenty
+ * waiting payments a few thousand of them.
+ */
+function documentCard(
+  expense: any,
+  remaining: number,
+  supplier: any,
+  aliases: Map<string, string>,
+  suppliers: any[],
+  supplierNames: string[]
+) {
+  const available = round2(Number(expense.available ?? expense.total) || 0);
+  const resolved = resolveSupplier(expense, suppliers, aliases);
+  const similarity = Math.max(
+    nameSimilarity(expense.supplier_name, supplier?.name),
+    ...supplierNames.map((name) => nameSimilarity(expense.supplier_name, name)),
+    0
+  );
+  return {
+    id: expense.id,
+    number: expense.number,
+    date: expense.date,
+    supplier_name: expense.supplier_name,
+    description: expense.description,
+    total: round2(Number(expense.total) || 0),
+    available,
+    vat_amount: round2(Number(expense.vat_amount) || 0),
+    doc_type: expense.doc_type,
+    exact: Math.abs(available - remaining) <= TOLERANCE,
+    mine: resolved?.supplier.id === supplier?.id,
+    /** Who this document is currently taken to belong to, so a wrong pick can be seen coming. */
+    resolved_supplier_id: resolved?.supplier.id ?? null,
+    resolved_supplier_name: resolved?.supplier.name ?? null,
+    resolved_by: resolved?.strength ?? null,
+    /** Whether attaching it would teach the mapping something it does not already know. */
+    alias_known: !!normalizeName(expense.supplier_name)
+      && aliases.get(normalizeName(expense.supplier_name)) === supplier?.id,
+    similarity: Math.round(similarity * 100) / 100,
+  };
+}
+
+/**
+ * The documents that could plausibly answer for a payment, best first.
  *
  * Computed on demand rather than stored. A suggestion is a reading of two tables that both
- * keep changing — the next Morning pull adds documents, and linking one elsewhere removes a
+ * keep changing — the next Morning pull adds documents, and linking one elsewhere spends a
  * candidate — so a stored suggestion is a stale one, and there is nothing here worth the cost
  * of keeping it fresh.
+ *
+ * Three kinds of row are offered, and the reason is carried with each. A document that
+ * resolves to this supplier is the obvious one. But the case that made this list useless in
+ * practice is the supplier nothing resolves to at all — no tax id in Morning, an invoice
+ * headed with a company nobody has typed in — and for those the money speaks: an unplaced
+ * document for exactly what is still open, dated near the transfer, is worth putting in front
+ * of a person even though the app cannot say whose it is. A name that merely looks alike comes
+ * last. Nothing here links by itself; every row is a question.
+ *
+ * Documents that already belong to *another* supplier are never offered, at any strength: that
+ * supplier is where they answer, and offering them here is offering a wrong answer.
  */
-export function suggestionsFor(payment: any, suppliers?: any[], pool?: any[]): any[] {
+export function suggestionsFor(
+  payment: any,
+  suppliers?: any[],
+  pool?: any[],
+  aliases?: Map<string, string>,
+  aliasNames?: Map<string, string[]>
+): any[] {
   const all = suppliers || (db.prepare('SELECT * FROM band_suppliers').all() as any[]);
-  const candidates = pool || unlinkedExpenses();
+  const names = aliases || aliasMap();
+  const ownNames = (aliasNames || aliasNamesBySupplier()).get(payment.supplier_id) || [];
+  const candidates = pool || availableExpenses();
+  const supplier = all.find((s) => s.id === payment.supplier_id);
   const remaining = remainingOf(payment);
   const from = shiftDate(payment.date, -WINDOW_BEFORE_DAYS);
   const to = shiftDate(payment.date, WINDOW_AFTER_DAYS);
 
-  return candidates
-    .filter((expense) => {
-      const date = String(expense.date || '');
-      if (date < from || date > to) return false;
-      const resolved = resolveSupplier(expense, all);
-      return resolved?.supplier.id === payment.supplier_id;
-    })
-    .map((expense) => ({
-      id: expense.id,
-      number: expense.number,
-      date: expense.date,
-      supplier_name: expense.supplier_name,
-      total: round2(Number(expense.total) || 0),
-      vat_amount: round2(Number(expense.vat_amount) || 0),
-      doc_type: expense.doc_type,
-      exact: Math.abs(round2(Number(expense.total) || 0) - remaining) <= TOLERANCE,
-    }))
-    .sort((a, b) => Math.abs(a.total - remaining) - Math.abs(b.total - remaining))
-    .slice(0, 8);
+  const rows: Array<{ card: any; reason: SuggestionReason; rank: number }> = [];
+  for (const expense of candidates) {
+    const date = String(expense.date || '');
+    if (date < from || date > to) continue;
+    const card = documentCard(expense, remaining, supplier, names, all, ownNames);
+    if (card.resolved_supplier_id && !card.mine) continue;
+
+    const reason: SuggestionReason | null = card.mine ? 'supplier'
+      : card.exact ? 'amount'
+        : card.similarity >= SIMILAR_ENOUGH ? 'similar'
+          : null;
+    if (!reason) continue;
+
+    // Ordering, best first: the supplier's own document for exactly the open amount, then the
+    // rest of their documents, then an unplaced one whose figure matches to the agora, then a
+    // name that resembles theirs.
+    const rank = card.mine ? (card.exact ? 0 : 1) : reason === 'amount' ? 2 : 3;
+    rows.push({ card: { ...card, reason }, reason, rank });
+  }
+
+  return rows
+    .sort((a, b) => a.rank - b.rank
+      || Math.abs(a.card.available - remaining) - Math.abs(b.card.available - remaining))
+    .slice(0, 8)
+    .map((row) => row.card);
+}
+
+/**
+ * Every document a person may attach to a payment by hand, filtered by what they typed.
+ *
+ * This is the answer to the case no automatic rule can reach: the supplier invoices under a
+ * company nobody has recorded, the document is dated four months off because it was issued
+ * against the wrong month, the amount differs because two gigs were billed on one invoice.
+ * The app cannot guess any of those, and the person looking at the transfer knows all three —
+ * so the list is everything with value left to give, searchable, rather than only what a rule
+ * could vouch for.
+ *
+ * A query of digits searches the amount as well as the text, because «1755» is how somebody
+ * looks for the invoice they are holding.
+ */
+export function searchDocuments(paymentId: string, query: string, limit = 40): any[] {
+  const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(paymentId) as any;
+  if (!payment) throw Object.assign(new Error('payment not found'), { status: 404 });
+  const suppliers = db.prepare('SELECT * FROM band_suppliers').all() as any[];
+  const supplier = suppliers.find((s) => s.id === payment.supplier_id);
+  const aliases = aliasMap();
+  const ownNames = aliasNamesBySupplier().get(payment.supplier_id) || [];
+  const remaining = remainingOf(payment);
+
+  const q = String(query || '').trim().toLowerCase();
+  const asNumber = q && /^[\d.,]+$/.test(q) ? Number(q.replace(/,/g, '')) : NaN;
+
+  const cards = availableExpenses(paymentId)
+    .map((expense) => documentCard(expense, remaining, supplier, aliases, suppliers, ownNames))
+    .filter((card) => {
+      if (!q) return true;
+      if (!Number.isNaN(asNumber) && Math.abs(card.total - asNumber) <= 1) return true;
+      return [card.supplier_name, card.number, card.description, card.resolved_supplier_name]
+        .some((field) => String(field || '').toLowerCase().includes(q));
+    });
+
+  // Unsearched, the useful order is «what this payment is most likely to be»: its own
+  // supplier's documents first, then whatever matches the open amount, then by how far the
+  // document is dated from the transfer. A typed query keeps the same order — the person is
+  // narrowing the same list, not asking for a different one.
+  const distance = (date: string) => Math.abs(daysBetween(payment.date, date || payment.date));
+  return cards
+    .sort((a, b) =>
+      Number(b.mine) - Number(a.mine)
+      || Number(b.exact) - Number(a.exact)
+      || b.similarity - a.similarity
+      || distance(a.date) - distance(b.date))
+    .slice(0, limit);
 }
 
 /**
  * Links every document that can be tied to a payment beyond doubt, and leaves the rest alone.
  *
- * Beyond doubt means two things at once: the supplier was resolved by an identity rather than
- * by a name, and the document's gross total is what the payment still has open. Gross is the
- * side that matches — a show's cost lines are entered including מע"מ (`vat_summary` restates
- * what is inside them rather than adding to it), so `expenses.total` is the comparable figure
- * and `expenses.amount` would be short by the VAT on every מורשה supplier.
+ * Beyond doubt means two things at once: the supplier was resolved by something certain — an
+ * identity, or an invoice name a person has tied to them — rather than by two strings looking
+ * alike, and what the document has left to give is what the payment still has open. Gross is
+ * the side that matches — a show's cost lines are entered including מע"מ (`vat_summary`
+ * restates what is inside them rather than adding to it), so `expenses.total` is the
+ * comparable figure and `expenses.amount` would be short by the VAT on every מורשה supplier.
  *
  * Everything softer than that is returned as a suggestion for a person to confirm. A wrong
  * link is worse than an unmatched row: it closes a queue item that should still be open and
@@ -501,6 +672,7 @@ export function suggestionsFor(payment: any, suppliers?: any[], pool?: any[]): a
 export function runMatch(): { linked: number } {
   const suppliers = db.prepare('SELECT * FROM band_suppliers').all() as any[];
   if (!suppliers.length) return { linked: 0 };
+  const aliases = aliasMap();
 
   const open = db
     .prepare(
@@ -517,14 +689,15 @@ export function runMatch(): { linked: number } {
     const from = shiftDate(payment.date, -WINDOW_BEFORE_DAYS);
     const to = shiftDate(payment.date, WINDOW_AFTER_DAYS);
 
-    // Re-read inside the loop: a document linked to an earlier payment is no longer a
-    // candidate for this one, and one expense must never answer for two transfers.
-    const match = unlinkedExpenses().find((expense) => {
+    // Re-read inside the loop: what an earlier payment in this pass took of a document is
+    // gone, so the same shekels can never be claimed twice.
+    const match = availableExpenses().find((expense) => {
       const date = String(expense.date || '');
       if (date < from || date > to) return false;
-      const resolved = resolveSupplier(expense, suppliers);
-      if (resolved?.strength !== 'id' || resolved.supplier.id !== payment.supplier_id) return false;
-      return Math.abs(round2(Number(expense.total) || 0) - remaining) <= TOLERANCE;
+      const resolved = resolveSupplier(expense, suppliers, aliases);
+      if (!isCertain(resolved?.strength ?? null)) return false;
+      if (resolved!.supplier.id !== payment.supplier_id) return false;
+      return Math.abs(round2(Number(expense.available) || 0) - remaining) <= TOLERANCE;
     });
     if (!match) continue;
     linkDocument(payment.id, match.id, 'auto');
@@ -561,7 +734,9 @@ export function getPayment(id: string): any {
  */
 export function listPayments(): any[] {
   const suppliers = db.prepare('SELECT * FROM band_suppliers').all() as any[];
-  const pool = unlinkedExpenses();
+  const aliases = aliasMap();
+  const aliasNames = aliasNamesBySupplier();
+  const pool = availableExpenses();
   const rows = db.prepare('SELECT * FROM supplier_payments ORDER BY date DESC').all() as any[];
   const now = today();
 
@@ -571,7 +746,7 @@ export function listPayments(): any[] {
     return {
       ...full,
       age_days: Math.max(0, daysBetween(payment.date, now)),
-      suggestions: waiting ? suggestionsFor(payment, suppliers, pool) : [],
+      suggestions: waiting ? suggestionsFor(payment, suppliers, pool, aliases, aliasNames) : [],
     };
   });
 }

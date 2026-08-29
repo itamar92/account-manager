@@ -8,6 +8,7 @@ import { mcpHttpHandler } from './server/mcpServer.js';
 import { runSeed } from './server/seed.js';
 import { backfillMoonlight } from './server/moonlight.js';
 import { backfillSupplierPayments, pruneOrphanPayments } from './server/supplierPayments.js';
+import { backfillSupplierAliases } from './server/supplierNames.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -22,6 +23,9 @@ backfillMoonlight();
 backfillSupplierPayments();
 // Cheap, and a payment covering nothing would otherwise sit in the queue for ever.
 pruneOrphanPayments();
+// Moves the invoice names off the supplier's free-text column into the table that can be
+// edited from the screen that notices one is missing.
+backfillSupplierAliases();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
