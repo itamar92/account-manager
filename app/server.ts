@@ -7,7 +7,9 @@ import { router, apiV1 } from './server/routes.js';
 import { mcpHttpHandler } from './server/mcpServer.js';
 import { runSeed } from './server/seed.js';
 import { backfillMoonlight } from './server/moonlight.js';
-import { backfillSupplierPayments, pruneOrphanPayments } from './server/supplierPayments.js';
+import {
+  backfillMemberPayments, backfillSupplierPayments, pruneOrphanPayments,
+} from './server/supplierPayments.js';
 import { backfillSupplierAliases } from './server/supplierNames.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +23,9 @@ backfillMoonlight();
 // Gives every cost line already marked שולם the payment row it never had. Runs after the
 // backfill above, which is what guarantees each show has an expense row to read the fees from.
 backfillSupplierPayments();
+// And the members' shares of every show already settled with them: their invoices are owed
+// to the books exactly as a supplier's are, and were the larger half nobody was counting.
+backfillMemberPayments();
 // Cheap, and a payment covering nothing would otherwise sit in the queue for ever.
 pruneOrphanPayments();
 // Moves the invoice names off the supplier's free-text column into the table that can be

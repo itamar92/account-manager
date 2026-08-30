@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { del, get, post, put, nis } from '../../api';
 import { Button, DataTable, Input, Modal, PageHeader, fieldClass } from '../../ui';
-import { ASSIGNMENT_ROLES, roleName, type TabProps } from './shared';
+import { roleName, useSupplierRoles, type SupplierRole, type TabProps } from './shared';
 import { MembersPanel } from './MembersPanel';
 import { PaySupplierModal } from './SupplierPaymentsTab';
+import { SupplierRolesPanel } from './SupplierRolesPanel';
 
 /**
  * Who the band hires, and what it still owes them.
@@ -15,8 +16,13 @@ import { PaySupplierModal } from './SupplierPaymentsTab';
  * a staffed role — their standing fee, which staffing them writes onto the show, and their
  * open debt across every show they have already played.
  */
+/** A role's name out of a list that may still be loading — for a note about the one just picked. */
+const roleNameOf = (roles: SupplierRole[], key: string): string =>
+  roles.find((r) => r.key === key)?.name || key;
+
 export function SuppliersTab({ isOwner, onError }: TabProps) {
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const { roles: allRoles, active: roles, reload: reloadRoles } = useSupplierRoles();
   const [supplierModal, setSupplierModal] = useState<any | null>(null);
   const [debtsFor, setDebtsFor] = useState<any | null>(null);
   const [matching, setMatching] = useState(false);
@@ -81,6 +87,8 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
           who is in the band is the part the rest of the app reads back. */}
       <MembersPanel isOwner={isOwner} onError={onError} />
 
+      <SupplierRolesPanel isOwner={isOwner} onError={onError} onChange={() => { reloadRoles(); load(); }} />
+
       <div className="space-y-4">
       <PageHeader
         title="ספקים"
@@ -94,7 +102,7 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
                 {matching ? 'מתאים…' : 'התאמה מהיומן'}
               </Button>
             </span>
-            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '', default_amount: 0, tax_id: '', morning_supplier_id: '', aliases: '', expects_invoice: true })}>
+            <Button onClick={() => setSupplierModal({ name: '', email: '', role: roles[0]?.key || 'soundman', phone: '', notes: '', default_amount: 0, tax_id: '', morning_supplier_id: '', aliases: '', expects_invoice: true })}>
               + ספק
             </Button>
           </>
@@ -197,8 +205,24 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
               <select value={supplierModal.role}
                 onChange={(e) => setSupplierModal({ ...supplierModal, role: e.target.value })}
                 className={fieldClass}>
-                {ASSIGNMENT_ROLES.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
+                {roles.map((r: SupplierRole) => <option key={r.key} value={r.key}>{r.name}</option>)}
+                {/* The types the band has switched off are offered rather than hidden: needing
+                    one is exactly the moment you find out you hire for it, and hiring somebody
+                    turns it on. Hiding them made «הוסיפו ספק צמידים» a dead end. */}
+                {allRoles.filter((r: SupplierRole) => !r.active).length > 0 && (
+                  <optgroup label="סוגים שאינם פעילים — ייפתחו עם השמירה">
+                    {allRoles.filter((r: SupplierRole) => !r.active).map((r: SupplierRole) => (
+                      <option key={r.key} value={r.key}>{r.name}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
+              {allRoles.some((r: SupplierRole) => !r.active && r.key === supplierModal.role) && (
+                <span className="block text-[12px] text-faint mt-1.5">
+                  «{roleNameOf(allRoles, supplierModal.role)}» כבוי כרגע — שמירת הספק תפעיל אותו,
+                  ומעכשיו אפשר יהיה לשבץ אותו בהופעות ולשלם לו.
+                </span>
+              )}
             </label>
             <Input label="אימייל (להתאמה מול אורחי היומן)" type="email" dir="ltr" value={supplierModal.email || ''}
               onChange={(e) => setSupplierModal({ ...supplierModal, email: e.target.value })} />

@@ -4,7 +4,7 @@ import { clsx } from 'clsx';
 import { get, post, put, nis } from '../../api';
 import { PerShowChart } from '../../charts';
 import { Button, Card, Empty, FilterBar, Input, Modal, MonthSelect, PageHeader, YearSelect } from '../../ui';
-import { paymentStatusLabel, roleName, showHref } from './shared';
+import { paymentStatusLabel, roleName, showHref, useSupplierRoles } from './shared';
 import { DivisionTable } from './DivisionTable';
 import { FundExplainer } from './FundExplainer';
 
@@ -32,6 +32,8 @@ const SEGMENTS = ['#9A7CF0', '#BE9520', '#4A4170', '#6B45D6', '#C9A227'];
  */
 export function SummaryTab({ onError, isOwner }: { onError: (message: string) => void; isOwner: boolean }) {
   const thisYear = new Date().getFullYear();
+  // Mounted for the sake of the role names further down: they are the band's, not this file's.
+  useSupplierRoles();
   const location = useLocation();
   // The range lives in the URL, so a show opened from one of the lists below and then closed
   // comes back to the year that was on screen rather than to the year the page opens on. The

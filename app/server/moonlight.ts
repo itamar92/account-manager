@@ -33,15 +33,26 @@ export const EXPENSE_FIELDS = [
 ] as const;
 
 /**
- * The components that carry their own paid flag; the rest are settled when they are entered.
- * Exported because the show page settles them one at a time and all at once, and both have to
- * mean the same set of lines.
+ * The cost lines that are settled separately after the show, rather than the moment they are
+ * typed. Exported because the show page settles them one at a time and all at once, and both
+ * have to mean the same set of lines.
+ *
+ * The seven the app shipped with always settle: they were entered under that meaning, and a
+ * line that stopped carrying its flag would silently rewrite what every past show says about
+ * what is still owed. Beyond those, a line settles once the band hires somebody for it — a
+ * קמפיין line with a designer staffed on it is money owed to a person, and a קמפיין line
+ * without one is a card payment that was over when it was made.
  */
-export const PAID_EXPENSE_FIELDS = [
+const ALWAYS_SETTLED = [
   'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer',
-] as const;
+];
 
-const PAID_FLAGGED = new Set<string>(PAID_EXPENSE_FIELDS);
+export const PAID_EXPENSE_FIELDS = (): string[] => {
+  const staffed = db
+    .prepare('SELECT key FROM band_supplier_roles WHERE active = 1')
+    .all() as Array<{ key: string }>;
+  return [...new Set([...ALWAYS_SETTLED, ...staffed.map((r) => r.key)])];
+};
 
 export function expenseTotal(row: any): number {
   if (!row) return 0;
@@ -50,9 +61,10 @@ export function expenseTotal(row: any): number {
 
 export function expensePaidTotal(row: any): number {
   if (!row) return 0;
+  const settles = new Set(PAID_EXPENSE_FIELDS());
   return round2(
     EXPENSE_FIELDS.reduce(
-      (sum, f) => (PAID_FLAGGED.has(f) && !row[`${f}_paid`] ? sum : sum + (Number(row[f]) || 0)),
+      (sum, f) => (settles.has(f) && !row[`${f}_paid`] ? sum : sum + (Number(row[f]) || 0)),
       0
     )
   );

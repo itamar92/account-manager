@@ -67,19 +67,62 @@ export const paymentStatusLabel = (value: string) =>
   PAYMENT_STATUSES.find((s) => s.value === value)?.label || value;
 
 /**
- * The staffed roles of a show, in display order. The keys are the expense-row columns that
- * pay each role — the same names the server uses — so an assignment and its cost line up.
- * A sound company is only sometimes needed, so only its absence is not flagged.
+ * The kinds of supplier the band hires — read from the server, because the band decides them.
+ *
+ * A role is a cost line of a show wearing a name, so the set of possible roles is fixed by
+ * what a show can cost, but which of them the band actually hires for, and what it calls each,
+ * is data. `active` is the ones being used; everything else is a line the band has not put a
+ * name to yet.
  */
-export const ASSIGNMENT_ROLES = [
-  { key: 'lightman', name: 'תאורן', required: true },
-  { key: 'soundman', name: 'סאונדמן', required: true },
-  { key: 'singer', name: 'זמר/ת', required: true },
-  { key: 'sound_company', name: 'חברת הגברה', required: false },
-] as const;
+export interface SupplierRole {
+  key: string;
+  name: string;
+  required: number;
+  active: number;
+  sort_order: number;
+  /** How much the role already carries — what the roles screen shows before switching it off. */
+  suppliers?: number;
+  assignments?: number;
+}
 
-export const roleName = (key: string) =>
-  ASSIGNMENT_ROLES.find((r) => r.key === key)?.name || key;
+/**
+ * The names to fall back on before the roles have been fetched, and for a key the server no
+ * longer knows. They are the labels the app shipped with, so a screen rendered a moment early
+ * reads correctly rather than showing «sound_company».
+ */
+const DEFAULT_ROLE_NAMES: Record<string, string> = {
+  lightman: 'תאורן', soundman: 'סאונדמן', singer: 'זמר/ת', sound_company: 'חברת הגברה',
+  bracelets: 'צמידים', akom: 'אקו"ם', hall_fee: 'שכירות אולם', campaign: 'קמפיין',
+  refreshments: 'כיבוד', design: 'עיצוב', other: 'אחר', expense_amount: 'הוצאה נוספת',
+};
+
+/**
+ * The last roles any screen fetched, kept module-wide so `roleName` stays a plain function.
+ *
+ * Dozens of call sites label a role inside a table cell or a dropdown; threading a hook
+ * through all of them to look up a name would be a large change for a string. The cache is
+ * refreshed by `useSupplierRoles`, which every screen that shows roles mounts.
+ */
+let roleCache: SupplierRole[] = [];
+
+export const roleName = (key: string): string =>
+  roleCache.find((r) => r.key === key)?.name || DEFAULT_ROLE_NAMES[key] || key;
+
+/** The roles as the band has defined them; `active` is what a staffing dropdown should offer. */
+export function useSupplierRoles(): {
+  roles: SupplierRole[];
+  active: SupplierRole[];
+  reload: () => void;
+} {
+  const [roles, setRoles] = React.useState<SupplierRole[]>(roleCache);
+  const load = React.useCallback(() => {
+    get('/moonlight/supplier-roles')
+      .then((d) => { roleCache = d.roles || []; setRoles(roleCache); })
+      .catch(() => {});
+  }, []);
+  React.useEffect(load, [load]);
+  return { roles, active: roles.filter((r) => r.active), reload: load };
+}
 
 export interface TabProps {
   isOwner: boolean;
@@ -119,6 +162,13 @@ export interface BandMember {
   business_type: BusinessType;
   active: number;
   sort_order: number;
+  /** What the member's own invoices are identified by, where they issue any. */
+  tax_id?: string | null;
+  morning_supplier_id?: string | null;
+  /** What the band has paid them that no document answers for yet. */
+  missing_docs?: number;
+  missing_doc_payments?: number;
+  missing_docs_days?: number;
 }
 
 /**

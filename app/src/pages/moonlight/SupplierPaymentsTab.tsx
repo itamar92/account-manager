@@ -45,8 +45,8 @@ const DOC_STATUS: Record<string, { label: string; className: string }> = {
  * needs the person to look at the invoice itself before pressing anything.
  */
 const SUGGESTION_REASON: Record<string, { label: string; className: string }> = {
-  supplier: { label: 'של הספק הזה', className: 'text-pos' },
-  amount: { label: 'סכום זהה · ספק לא מזוהה', className: 'text-warn' },
+  supplier: { label: 'מזוהה כשלו', className: 'text-pos' },
+  amount: { label: 'סכום זהה · לא מזוהה למי שייך', className: 'text-warn' },
   similar: { label: 'שם דומה', className: 'text-muted' },
 };
 
@@ -102,7 +102,7 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
   return (
     <div className="space-y-5">
       <PageHeader
-        title="תשלומים לספקים"
+        title="תשלומים לספקים ולחברים"
         sub="כל העברה והשורות שהיא סגרה — וכל מה שעדיין לא חזרה עליו חשבונית"
         actions={isOwner && (
           <>
@@ -111,7 +111,7 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
                 {matching ? 'מתאים…' : 'התאמה מ־Morning'}
               </Button>
             </span>
-            <Button onClick={() => setPayFor({ supplier_id: '' })}>+ תשלום לספק</Button>
+            <Button onClick={() => setPayFor({ supplier_id: '' })}>+ תשלום</Button>
           </>
         )}
       />
@@ -139,7 +139,9 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
       <p className="text-[13px] text-muted">
         תשלום שאין מולו מסמך אינו הוצאה מוכרת, והמע״מ שבתוכו אינו בר־השבה — ולכן הסכום כאן, ולא
         מספר השורות, הוא מה שקובע אם שווה לרדוף אחרי הניירת.
-        שורות שאין להן ספק משובץ (אק״ום, שכר אולם, צמידים) לא מגיעות לרשימה: אין ממי לבקש.
+        שורות שאין להן ספק משובץ לא מגיעות לרשימה — אין ממי לבקש; כדי שיגיעו, הגדירו למי משלמים
+        אותן בסוגי הספקים. גם חלקי החברים כאן: חבר שהוא עוסק חייב חשבונית על חלקו, וחבר שאינו
+        רשום מסומן כמי שלא תגיע ממנו.
         פתיחת שורה מציגה את ההצעות, ואפשר תמיד לבחור חשבונית ידנית — גם כזו שהמערכת לא קישרה
         לספק. כדי שלא תצטרכו לעשות זאת פעמיים לאותו ספק, רשמו את השם שעל החשבונית שלו
         ב<Link to="/moonlight/supplierNames" className="text-accent hover:underline">שמות בחשבוניות</Link>.
@@ -166,10 +168,19 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
         )}
         columns={[
           {
-            key: 'supplier', header: 'ספק', mobile: 'title',
+            key: 'supplier', header: 'מקבל התשלום', mobile: 'title',
             sortValue: (p: any) => p.supplier_name,
             className: 'font-medium',
-            render: (p: any) => p.supplier_name,
+            render: (p: any) => (
+              <span className="flex items-center gap-2 whitespace-nowrap">
+                {p.supplier_name}
+                {p.payee_kind === 'member' && (
+                  <span className="bg-accent-soft text-accent-ink text-[11.5px] font-semibold px-2 py-0.5 rounded-full">
+                    חבר
+                  </span>
+                )}
+              </span>
+            ),
           },
           {
             key: 'date', header: 'תאריך תשלום', className: 'whitespace-nowrap',
@@ -253,7 +264,7 @@ function PaymentDetail({ payment, isOwner, act, onPick }: {
           >
             <div>
               <div className="font-medium">{line.venue}</div>
-              <div className="text-xs text-faint">{line.date} · {roleName(line.role)}</div>
+              <div className="text-xs text-faint">{line.date} · {line.label}</div>
             </div>
             <span className="num">{nis(line.amount)}</span>
           </Link>
@@ -275,8 +286,13 @@ function PaymentDetail({ payment, isOwner, act, onPick }: {
             <div className="min-w-0">
               <div className="truncate">{doc.supplier_name} · {doc.number || 'ללא מספר'}</div>
               <div className="text-xs text-faint">
-                {doc.date} · מכסה {nis(doc.allocated_amount)}
+                {doc.date} · מכסה {nis(doc.allocated_amount)} מתוך {nis(doc.total)}
                 {doc.matched_by === 'auto' && ' · שויך אוטומטית'}
+                {/* An invoice that covered two gigs is not spent when it answers for one of
+                    them, and the screen has to say so or the rest of it looks gone. */}
+                {doc.remaining > 0.5 && (
+                  <span className="text-accent"> · נותרו {nis(doc.remaining)} לשיוך לתשלום אחר</span>
+                )}
               </div>
             </div>
             {isOwner && (
@@ -511,7 +527,11 @@ function PickDocumentModal({ payment, onClose, onSaved, onError }: {
 }
 
 /**
- * Recording one transfer: a supplier, then the shows it covers.
+ * Recording one transfer: who was paid, then the shows it covers.
+ *
+ * The payee is a supplier or a member of the band, because both are people the band pays for a
+ * show and both owe it a document back. A member's line is their share of the show; a
+ * supplier's is the cost line they are staffed on.
  *
  * The total is the sum of the lines ticked and is never typed. The fees differ from show to
  * show, and a figure entered by hand could only ever disagree with the lines it claims to
@@ -519,13 +539,15 @@ function PickDocumentModal({ payment, onClose, onSaved, onError }: {
  */
 export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, onSaved, onError }: {
   open: boolean;
-  suppliers: any[];
+  /** Ignored when the payee list loads; kept so callers can pass what they already have. */
+  suppliers?: any[];
   initialSupplierId?: string;
   onClose: () => void;
   onSaved: () => void;
   onError: (message: string) => void;
 }) {
-  const [supplierId, setSupplierId] = useState(initialSupplierId || '');
+  const [payees, setPayees] = useState<any[]>([]);
+  const [payeeKey, setPayeeKey] = useState('');
   const [lines, setLines] = useState<any[]>([]);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
@@ -533,25 +555,29 @@ export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, 
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const lineKey = (line: any) => `${line.event_id}:${line.role || 'share'}`;
+
   useEffect(() => {
     if (!open) return;
-    setSupplierId(initialSupplierId || '');
+    setPayeeKey(initialSupplierId ? `s:${initialSupplierId}` : '');
     setDate(new Date().toISOString().slice(0, 10));
     setMethod('');
     setNotes('');
+    get('/moonlight/payees').then((d) => setPayees(d.payees)).catch((e) => onError(e.message));
   }, [open, initialSupplierId]);
 
   useEffect(() => {
-    if (!open || !supplierId) { setLines([]); setPicked(new Set()); return; }
-    get(`/moonlight/suppliers/${supplierId}/open-lines`)
+    if (!open || !payeeKey) { setLines([]); setPicked(new Set()); return; }
+    const [kind, id] = [payeeKey.startsWith('m:') ? 'member' : 'supplier', payeeKey.slice(2)];
+    get(`/moonlight/payees/${kind}/${encodeURIComponent(id)}/open-lines`)
       .then((d) => {
         setLines(d.lines);
         // Shows already played are pre-ticked; a fee sitting on next month's gig is money the
         // band will owe rather than money it owes, so paying it is a deliberate extra click.
-        setPicked(new Set(d.lines.filter((l: any) => !l.upcoming).map((l: any) => `${l.event_id}:${l.role}`)));
+        setPicked(new Set(d.lines.filter((l: any) => !l.upcoming).map(lineKey)));
       })
       .catch((e) => onError(e.message));
-  }, [open, supplierId]);
+  }, [open, payeeKey]);
 
   const toggle = (key: string) => setPicked((prev) => {
     const next = new Set(prev);
@@ -559,19 +585,19 @@ export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, 
     return next;
   });
 
-  const total = lines
-    .filter((l) => picked.has(`${l.event_id}:${l.role}`))
-    .reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  const chosen = lines.filter((l) => picked.has(lineKey(l)));
+  const total = chosen.reduce((sum, l) => sum + (Number(l.amount) || 0), 0);
+  const payee = payees.find((p) => p.key === payeeKey);
 
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    const chosen = lines.filter((l) => picked.has(`${l.event_id}:${l.role}`));
     if (!chosen.length) return onError('לא נבחרו שורות לתשלום');
     setSaving(true);
     onError('');
     try {
       await post('/moonlight/supplier-payments', {
-        supplier_id: supplierId, date, method: method || null, notes: notes || null,
+        payee_kind: payee?.kind, payee_id: payee?.id,
+        date, method: method || null, notes: notes || null,
         lines: chosen.map((l) => ({ event_id: l.event_id, role: l.role })),
       });
       onSaved();
@@ -579,26 +605,45 @@ export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, 
     finally { setSaving(false); }
   };
 
+  const suppliersList = payees.filter((p) => p.kind === 'supplier');
+  const membersList = payees.filter((p) => p.kind === 'member' && p.active);
+
   return (
-    <Modal title="תשלום לספק" open={open} onClose={onClose} size="lg">
+    <Modal title="תשלום" open={open} onClose={onClose} size="lg">
       <form onSubmit={save} className="space-y-4">
         <label className="block">
-          <span className="block text-[13px] text-muted mb-1.5">ספק *</span>
+          <span className="block text-[13px] text-muted mb-1.5">למי משלמים *</span>
           <select
-            value={supplierId}
-            onChange={(e) => setSupplierId(e.target.value)}
+            value={payeeKey}
+            onChange={(e) => setPayeeKey(e.target.value)}
             className={fieldClass}
             required
           >
-            <option value="">בחרו ספק…</option>
-            {suppliers.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} — {roleName(s.role)}</option>
-            ))}
+            <option value="">בחרו…</option>
+            <optgroup label="ספקים">
+              {suppliersList.map((p) => (
+                <option key={p.key} value={p.key}>{p.name} — {p.role_name || roleName(p.role)}</option>
+              ))}
+            </optgroup>
+            {/* Members are here because a share is a payment like any other, and the invoice
+                owed back for it is the band's deduction. */}
+            <optgroup label="חברי הלהקה">
+              {membersList.map((p) => (
+                <option key={p.key} value={p.key}>{p.name} — חלוקת רווח</option>
+              ))}
+            </optgroup>
           </select>
         </label>
 
-        {supplierId && lines.length === 0 && (
-          <p className="text-sm text-muted">אין לספק הזה שורות פתוחות.</p>
+        {payee?.kind === 'member' && !payee.expects_invoice && (
+          <p className="text-[13px] bg-soft text-muted rounded-xl px-3 py-2">
+            {payee.name} רשום כ«לא רשום» — התשלום יירשם, אך לא תיווצר עליו המתנה לחשבונית, כי
+            אין חשבונית שאפשר לקזז.
+          </p>
+        )}
+
+        {payeeKey && lines.length === 0 && (
+          <p className="text-sm text-muted">אין שורות פתוחות.</p>
         )}
 
         {lines.length > 0 && (
@@ -607,7 +652,7 @@ export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, 
               השורות שההעברה סוגרת — סמנו את כל ההופעות שאתם משלמים עליהן יחד
             </div>
             {lines.map((line) => {
-              const key = `${line.event_id}:${line.role}`;
+              const key = lineKey(line);
               return (
                 <label
                   key={key}
@@ -622,7 +667,7 @@ export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, 
                   <span className="flex-1 min-w-0">
                     <span className="font-medium">{line.venue}</span>
                     <span className="text-xs text-faint block">
-                      {line.date} · {roleName(line.role)}
+                      {line.date} · {line.label}
                       {line.upcoming && ' · הופעה עתידית'}
                     </span>
                   </span>
@@ -649,7 +694,7 @@ export function PaySupplierModal({ open, suppliers, initialSupplierId, onClose, 
         <Textarea label="הערות" value={notes} rows={2}
           onChange={(e) => setNotes(e.target.value)} />
 
-        <Button type="submit" className="w-full" disabled={saving || !supplierId || total === 0}>
+        <Button type="submit" className="w-full" disabled={saving || !payeeKey || total === 0}>
           {saving ? 'שומר…' : 'רישום התשלום'}
         </Button>
       </form>

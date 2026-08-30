@@ -1,5 +1,5 @@
 /**
- * Paying a supplier, and chasing the document that should come back for it.
+ * Paying somebody, and chasing the document that should come back for it.
  *
  * The band pays אבי once for four gigs. Before this module that transfer left four unrelated
  * `${role}_paid = 1` flags on four shows: no date, no amount, and nothing to ask «did his
@@ -7,16 +7,28 @@
  * off it, and the flags are kept in step as its consequence — so `expenseOutstanding`,
  * `supplierDebts` and every screen that reads them carry on unchanged.
  *
+ * "Somebody" is a supplier or a member of the band, because the question is the same for both.
+ * A member who is an עוסק invoices the band for their share of a show; until that invoice
+ * arrives the share is money paid out with nothing filed against it, exactly like a fee paid
+ * to a תאורן. The band's own members are usually its largest outgoing, so a queue that left
+ * them out was answering «what is undocumented?» with a fraction of the answer.
+ *
  * The chase matters for money rather than tidiness: a payment with no document behind it is
  * not deductible, and the מע"מ inside it cannot be reclaimed. That is why the queue reports
  * shekels rather than a count of chores.
  */
 import { db, uuid, getSetting, setSetting } from './db.js';
 import { expenseRowForEvent, recomputeEvent } from './moonlight.js';
-import { ASSIGNMENT_ROLES, type AssignmentRole, isAssignmentRole } from './assignments.js';
+import { allRoles, isAssignmentRole, roleName, roleNames } from './supplierRoles.js';
 import {
-  SIMILAR_ENOUGH, aliasMap, aliasNamesBySupplier, nameSimilarity, normalizeName,
+  keyOf, listPayees, payeeColumns, payeeKey, payeeRef, payeesByKey,
+  type Payee, type PayeeKind,
+} from './payees.js';
+import {
+  SIMILAR_ENOUGH, aliasMap, aliasNamesByPayee, nameSimilarity, normalizeName,
 } from './supplierNames.js';
+
+type AssignmentRole = string;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const today = () => new Date().toISOString().slice(0, 10);
@@ -46,15 +58,28 @@ export const PAYMENT_RESOLUTIONS: PaymentResolution[] = ['verified', 'not_requir
  */
 export type PaymentDocStatus = 'waiting' | 'documented' | 'verified' | 'not_required';
 
+/**
+ * One thing a payment can settle: a cost line of a show, or one member's share of it.
+ *
+ * Exactly one of `role` and `member_key` is set, the same way the payment itself names exactly
+ * one payee. `label` is what to call it on screen — the role's name as the band has defined
+ * it, or the fact that this is somebody's share — computed here so no screen has to know how
+ * to tell the two apart.
+ */
 export interface OpenLine {
   event_id: string;
   venue: string;
   date: string;
-  role: AssignmentRole;
+  role: AssignmentRole | null;
+  member_key: string | null;
+  label: string;
   amount: number;
   /** A fee on a show that has not happened yet is not a debt — see supplierDebts. */
   upcoming: boolean;
 }
+
+/** What a member's share of one show is called wherever a cost line would name its role. */
+const SHARE_LABEL = 'חלוקת רווח';
 
 const daysBetween = (from: string, to: string): number =>
   Math.round((Date.parse(to) - Date.parse(from)) / 86400000);
@@ -65,13 +90,46 @@ const shiftDate = (date: string, days: number): string =>
 // ============================== open lines and payments ==============================
 
 /**
- * The cost lines a supplier has not been paid for yet — what the pay dialog offers to settle.
+ * What this payee has not been paid for yet — what the pay dialog offers to settle.
+ *
+ * For a supplier: the cost lines of the shows they are staffed on. For a member: their share
+ * of each show, which the band pays them the same way and which nothing but this has ever
+ * tracked per member — «שולם לנגנים» was one flag for the whole band on one show.
  *
  * Upcoming shows are returned alongside the ones already played rather than filtered out: the
  * band does occasionally settle a booking in advance, and the caller is better placed to
  * decide than a query is. They are flagged, not hidden.
  */
-export function openLines(supplierId: string): OpenLine[] {
+export function openLines(payee: { kind: PayeeKind; id: string }): OpenLine[] {
+  const now = today();
+  const lines: OpenLine[] = [];
+
+  if (payee.kind === 'member') {
+    const rows = db
+      .prepare(
+        `SELECT s.event_id, s.amount, e.venue, e.date
+           FROM band_event_shares s
+           JOIN band_events e ON e.id = s.event_id
+          WHERE s.member_key = ?
+            AND NOT EXISTS (
+              SELECT 1 FROM supplier_payment_lines l
+               WHERE l.event_id = s.event_id AND l.member_key = s.member_key
+            )
+          ORDER BY e.date`
+      )
+      .all(payee.id) as any[];
+    for (const row of rows) {
+      const amount = round2(Number(row.amount) || 0);
+      if (!amount) continue;
+      lines.push({
+        event_id: row.event_id, venue: row.venue, date: row.date,
+        role: null, member_key: payee.id, label: SHARE_LABEL,
+        amount, upcoming: row.date > now,
+      });
+    }
+    return lines;
+  }
+
   const rows = db
     .prepare(
       `SELECT a.role, e.id AS event_id, e.venue, e.date
@@ -80,10 +138,8 @@ export function openLines(supplierId: string): OpenLine[] {
         WHERE a.supplier_id = ?
         ORDER BY e.date`
     )
-    .all(supplierId) as any[];
+    .all(payee.id) as any[];
 
-  const now = today();
-  const lines: OpenLine[] = [];
   for (const row of rows) {
     if (!isAssignmentRole(row.role)) continue;
     const expense = expenseRowForEvent(row.event_id);
@@ -91,7 +147,8 @@ export function openLines(supplierId: string): OpenLine[] {
     if (!amount || expense?.[`${row.role}_paid`]) continue;
     lines.push({
       event_id: row.event_id, venue: row.venue, date: row.date,
-      role: row.role, amount, upcoming: row.date > now,
+      role: row.role, member_key: null, label: roleName(row.role),
+      amount, upcoming: row.date > now,
     });
   }
   return lines;
@@ -99,9 +156,10 @@ export function openLines(supplierId: string): OpenLine[] {
 
 /** The lines one payment settled, for showing what a transfer was actually for. */
 export function paymentLines(paymentId: string): OpenLine[] {
+  const names = roleNames();
   return db
     .prepare(
-      `SELECT l.event_id, l.role, l.amount, e.venue, e.date
+      `SELECT l.event_id, l.role, l.member_key, l.amount, e.venue, e.date
          FROM supplier_payment_lines l
          JOIN band_events e ON e.id = l.event_id
         WHERE l.payment_id = ?
@@ -110,13 +168,12 @@ export function paymentLines(paymentId: string): OpenLine[] {
     .all(paymentId)
     .map((row: any) => ({
       event_id: row.event_id, venue: row.venue, date: row.date,
-      role: row.role as AssignmentRole, amount: round2(Number(row.amount) || 0),
+      role: row.role ?? null, member_key: row.member_key ?? null,
+      label: row.role ? (names.get(row.role) || row.role) : SHARE_LABEL,
+      amount: round2(Number(row.amount) || 0),
       upcoming: row.date > today(),
     }));
 }
-
-const supplierById = (id: string): any =>
-  db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(id);
 
 /** Turns the `${role}_paid` flags of one show into whatever the payment rows now say. */
 function applyPaidFlags(eventId: string, roles: AssignmentRole[], paid: boolean) {
@@ -129,12 +186,43 @@ function applyPaidFlags(eventId: string, roles: AssignmentRole[], paid: boolean)
   recomputeEvent(eventId);
 }
 
+/**
+ * Keeps «שולם לנגנים» saying what the member payments now say.
+ *
+ * The flag is one bit for a whole show, which is all it ever was: it cannot record that אמיר
+ * has been paid and יובל has not. The payment lines can, so they are the truth and the flag is
+ * their summary — on when every share of the show is covered, off while any is outstanding.
+ * Keeping it in step matters because the show page, the follow-up lists and the summary all
+ * still read it.
+ */
+function syncMembersPaidFlag(eventId: string) {
+  const shares = db
+    .prepare('SELECT member_key, amount FROM band_event_shares WHERE event_id = ?')
+    .all(eventId) as any[];
+  const owed = shares.filter((s) => round2(Number(s.amount) || 0) > 0);
+  const covered = new Set(
+    (db.prepare(
+      'SELECT member_key FROM supplier_payment_lines WHERE event_id = ? AND member_key IS NOT NULL'
+    ).all(eventId) as any[]).map((r) => r.member_key)
+  );
+  const allPaid = owed.length > 0 && owed.every((s) => covered.has(s.member_key));
+  const event = db.prepare('SELECT paid_to_musicians FROM band_events WHERE id = ?').get(eventId) as any;
+  if (!event || !!event.paid_to_musicians === allPaid) return;
+  db.prepare('UPDATE band_events SET paid_to_musicians = ? WHERE id = ?').run(allPaid ? 1 : 0, eventId);
+  recomputeEvent(eventId);
+}
+
 export interface RecordPaymentInput {
-  supplier_id: string;
+  payee: { kind: PayeeKind; id: string };
   date?: string;
   method?: string | null;
   notes?: string | null;
-  lines: Array<{ event_id: string; role: string }>;
+  /**
+   * What the transfer settles. A supplier's line names the role; a member's line names only
+   * the show, because the share it settles is theirs by definition — the payment already says
+   * who was paid, and asking the caller to repeat it would let the two disagree.
+   */
+  lines: Array<{ event_id: string; role?: string | null }>;
   source?: 'manual' | 'line' | 'backfill';
   resolution?: PaymentResolution | null;
   expects_invoice?: boolean;
@@ -149,8 +237,8 @@ export interface RecordPaymentInput {
  * to cover, and then no reader would know which of the two was the payment.
  */
 export const recordPayment = db.transaction((input: RecordPaymentInput): any => {
-  const supplier = supplierById(input.supplier_id);
-  if (!supplier) throw Object.assign(new Error('supplier not found'), { status: 404 });
+  const payee = listPayees().find((p) => p.kind === input.payee?.kind && p.id === input.payee?.id);
+  if (!payee) throw Object.assign(new Error('payee not found'), { status: 404 });
 
   const requested = Array.isArray(input.lines) ? input.lines : [];
   if (!requested.length) throw Object.assign(new Error('לא נבחרו שורות לתשלום'), { status: 400 });
@@ -158,53 +246,82 @@ export const recordPayment = db.transaction((input: RecordPaymentInput): any => 
   const assigned = db.prepare(
     'SELECT 1 FROM band_event_assignments WHERE event_id = ? AND role = ? AND supplier_id = ?'
   );
-  const taken = db.prepare(
+  const roleTaken = db.prepare(
     'SELECT payment_id FROM supplier_payment_lines WHERE event_id = ? AND role = ?'
   );
+  const memberTaken = db.prepare(
+    'SELECT payment_id FROM supplier_payment_lines WHERE event_id = ? AND member_key = ?'
+  );
+  const shareOf = db.prepare(
+    'SELECT amount FROM band_event_shares WHERE event_id = ? AND member_key = ?'
+  );
 
-  const lines: Array<{ event_id: string; role: AssignmentRole; amount: number }> = [];
+  const lines: Array<{ event_id: string; role: string | null; member_key: string | null; amount: number }> = [];
   const seen = new Set<string>();
   for (const line of requested) {
-    const role = String(line?.role || '');
     const eventId = String(line?.event_id || '');
+    if (!eventId) throw Object.assign(new Error('שורה ללא הופעה'), { status: 400 });
+
+    if (payee.kind === 'member') {
+      if (seen.has(eventId)) continue;
+      seen.add(eventId);
+      if (memberTaken.get(eventId, payee.id)) {
+        throw Object.assign(new Error('אחת השורות כבר שולמה בתשלום אחר'), { status: 409 });
+      }
+      const amount = round2(Number((shareOf.get(eventId, payee.id) as any)?.amount) || 0);
+      if (!amount) throw Object.assign(new Error('אין סכום בשורה שנבחרה'), { status: 400 });
+      lines.push({ event_id: eventId, role: null, member_key: payee.id, amount });
+      continue;
+    }
+
+    const role = String(line?.role || '');
     if (!isAssignmentRole(role)) throw Object.assign(new Error('תפקיד לא חוקי'), { status: 400 });
     const key = `${eventId}:${role}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    if (!assigned.get(eventId, role, supplier.id)) {
+    if (!assigned.get(eventId, role, payee.id)) {
       throw Object.assign(new Error('הספק אינו משובץ בתפקיד הזה בהופעה'), { status: 400 });
     }
-    if (taken.get(eventId, role)) {
+    if (roleTaken.get(eventId, role)) {
       throw Object.assign(new Error('אחת השורות כבר שולמה בתשלום אחר'), { status: 409 });
     }
     const expense = expenseRowForEvent(eventId);
     const amount = round2(Number(expense?.[role]) || 0);
     if (!amount) throw Object.assign(new Error('אין סכום בשורה שנבחרה'), { status: 400 });
-    lines.push({ event_id: eventId, role, amount });
+    lines.push({ event_id: eventId, role, member_key: null, amount });
   }
 
   const id = uuid();
   const amount = round2(lines.reduce((sum, l) => sum + l.amount, 0));
+  const columns = payeeColumns(payee);
   db.prepare(
     `INSERT INTO supplier_payments
-       (id, supplier_id, date, amount, method, notes, expects_invoice, resolution, source)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, supplier_id, member_key, date, amount, method, notes, expects_invoice, resolution, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, supplier.id, input.date || today(), amount, input.method || null, input.notes || null,
-    (input.expects_invoice ?? !!supplier.expects_invoice) ? 1 : 0,
+    id, columns.supplier_id, columns.member_key,
+    input.date || today(), amount, input.method || null, input.notes || null,
+    (input.expects_invoice ?? payee.expects_invoice) ? 1 : 0,
     input.resolution ?? null, input.source || 'manual'
   );
 
   const insertLine = db.prepare(
-    'INSERT INTO supplier_payment_lines (payment_id, event_id, role, amount) VALUES (?, ?, ?, ?)'
+    `INSERT INTO supplier_payment_lines (id, payment_id, event_id, role, member_key, amount)
+     VALUES (?, ?, ?, ?, ?, ?)`
   );
-  const byEvent = new Map<string, AssignmentRole[]>();
+  const rolesByEvent = new Map<string, AssignmentRole[]>();
+  const memberEvents = new Set<string>();
   for (const line of lines) {
-    insertLine.run(id, line.event_id, line.role, line.amount);
-    byEvent.set(line.event_id, [...(byEvent.get(line.event_id) || []), line.role]);
+    insertLine.run(uuid(), id, line.event_id, line.role, line.member_key, line.amount);
+    if (line.role) {
+      rolesByEvent.set(line.event_id, [...(rolesByEvent.get(line.event_id) || []), line.role]);
+    } else {
+      memberEvents.add(line.event_id);
+    }
   }
-  for (const [eventId, roles] of byEvent) applyPaidFlags(eventId, roles, true);
+  for (const [eventId, roles] of rolesByEvent) applyPaidFlags(eventId, roles, true);
+  for (const eventId of memberEvents) syncMembersPaidFlag(eventId);
 
   return getPayment(id);
 });
@@ -221,12 +338,18 @@ export const deletePayment = db.transaction((id: string) => {
   const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(id) as any;
   if (!payment) throw Object.assign(new Error('payment not found'), { status: 404 });
 
-  const byEvent = new Map<string, AssignmentRole[]>();
+  const rolesByEvent = new Map<string, AssignmentRole[]>();
+  const memberEvents = new Set<string>();
   for (const line of paymentLines(id)) {
-    byEvent.set(line.event_id, [...(byEvent.get(line.event_id) || []), line.role]);
+    if (line.role) {
+      rolesByEvent.set(line.event_id, [...(rolesByEvent.get(line.event_id) || []), line.role]);
+    } else {
+      memberEvents.add(line.event_id);
+    }
   }
   db.prepare('DELETE FROM supplier_payments WHERE id = ?').run(id);
-  for (const [eventId, roles] of byEvent) applyPaidFlags(eventId, roles, false);
+  for (const [eventId, roles] of rolesByEvent) applyPaidFlags(eventId, roles, false);
+  for (const eventId of memberEvents) syncMembersPaidFlag(eventId);
 });
 
 /**
@@ -239,9 +362,14 @@ export const deletePayment = db.transaction((id: string) => {
  * payment back. Without it the queue would quietly miss every payment made the quick way,
  * which is the failure this whole feature exists to prevent.
  *
- * A line with no supplier staffed on it (א.ק.ו.ם, the hall, the bracelets) produces no
- * payment: there is nobody to chase a document from, and inventing a payee would put a row in
- * the queue that can never close.
+ * A line with nobody staffed on it produces no payment: there is nobody to chase a document
+ * from, and inventing a payee would put a row in the queue that can never close. Which lines
+ * can have somebody on them is now the band's decision — see supplierRoles — so אק״ום, the
+ * hall and the bracelets are only unstaffed until the band says who supplies them.
+ *
+ * The members' shares are kept in step the same way, off «שולם לנגנים»: the flag says the
+ * band settled with everybody that night, and this turns that into one payment per member so
+ * each of them can be asked for their invoice separately.
  */
 export const syncLinePayments = db.transaction((eventId: string): void => {
   const expense = expenseRowForEvent(eventId);
@@ -256,7 +384,10 @@ export const syncLinePayments = db.transaction((eventId: string): void => {
     assignments.filter((a) => a.supplier_id).map((a) => [a.role, a.supplier_id])
   );
 
-  for (const role of ASSIGNMENT_ROLES) {
+  // Every role, not only the active ones: a line staffed under a role the band has since
+  // retired is still money that was paid, and skipping it would freeze its payment out of step
+  // with the flag on the show.
+  for (const role of allRoles().map((r) => r.key)) {
     const amount = round2(Number(expense[role]) || 0);
     const paid = !!expense[`${role}_paid`];
     const existing = db
@@ -271,7 +402,7 @@ export const syncLinePayments = db.transaction((eventId: string): void => {
       const supplierId = supplierFor.get(role);
       if (!supplierId) continue;
       recordPayment({
-        supplier_id: supplierId,
+        payee: { kind: 'supplier', id: supplierId },
         // The flag was flipped now, so now is when the money moved. A show settled on the
         // night is ticked on the night; one ticked later is dated when somebody said so,
         // which is the best evidence there is.
@@ -305,7 +436,67 @@ export const syncLinePayments = db.transaction((eventId: string): void => {
       refreshPaymentAmount(existing.payment_id);
     }
   }
+
+  syncSharePayments(eventId, event);
 });
+
+/**
+ * The same for the members' shares, driven by «שולם לנגנים».
+ *
+ * A member with no share on the show gets nothing, and neither does one whose share is zero:
+ * a ₪0 payment is not a transfer, and it would sit in the queue asking for an invoice for
+ * nothing. A member registered as לא רשום does get a payment — the money did move — but it is
+ * recorded as expecting no document, because none can be issued.
+ */
+function syncSharePayments(eventId: string, event: any) {
+  const paid = !!event.paid_to_musicians;
+  const shares = db
+    .prepare(
+      `SELECT s.member_key, s.amount, m.business_type
+         FROM band_event_shares s
+         LEFT JOIN band_members m ON m.member_key = s.member_key
+        WHERE s.event_id = ?`
+    )
+    .all(eventId) as any[];
+
+  for (const share of shares) {
+    const amount = round2(Number(share.amount) || 0);
+    const existing = db
+      .prepare(
+        `SELECT l.payment_id, l.amount
+           FROM supplier_payment_lines l
+          WHERE l.event_id = ? AND l.member_key = ?`
+      )
+      .get(eventId, share.member_key) as any;
+
+    if (paid && amount > 0 && !existing) {
+      recordPayment({
+        payee: { kind: 'member', id: share.member_key },
+        date: today(),
+        lines: [{ event_id: eventId }],
+        source: 'line',
+      });
+      continue;
+    }
+    if (!existing) continue;
+
+    if (!paid || amount === 0) {
+      db.prepare('DELETE FROM supplier_payment_lines WHERE payment_id = ? AND event_id = ? AND member_key = ?')
+        .run(existing.payment_id, eventId, share.member_key);
+      refreshPaymentAmount(existing.payment_id);
+      continue;
+    }
+
+    // The division was recomputed after the band was marked paid. Same rule as a corrected
+    // fee: adopt the better figure while nothing has been matched against the old one.
+    if (round2(Number(existing.amount) || 0) !== amount && !hasDocs(existing.payment_id)) {
+      db.prepare(
+        'UPDATE supplier_payment_lines SET amount = ? WHERE payment_id = ? AND event_id = ? AND member_key = ?'
+      ).run(amount, existing.payment_id, eventId, share.member_key);
+      refreshPaymentAmount(existing.payment_id);
+    }
+  }
+}
 
 const hasDocs = (paymentId: string): boolean =>
   !!db.prepare('SELECT 1 FROM supplier_payment_docs WHERE payment_id = ?').get(paymentId);
@@ -338,39 +529,42 @@ type MatchStrength = 'id' | 'alias' | 'name' | null;
 const isCertain = (strength: MatchStrength): boolean => strength === 'id' || strength === 'alias';
 
 /**
- * Which supplier issued this expense, and on what evidence.
+ * Who issued this expense, and on what evidence.
  *
  * The Morning supplier id and the tax id are identities: no two businesses share either, so a
- * document carrying one belongs to that supplier and nothing else needs checking. A recorded
+ * document carrying one belongs to that payee and nothing else needs checking. A recorded
  * invoice name (see supplierNames) is the same kind of fact by a different route — somebody
  * who knows said so once, and saying it again for every document that name arrives on is
  * exactly the work this app is meant to save. A bare resemblance between the two names is
  * reported as the weaker answer rather than treated as either.
+ *
+ * Members are in the same pool as suppliers, because a member's invoice reaches Morning the
+ * same way a supplier's does and nothing on it says which of the two the issuer is.
  */
-export function resolveSupplier(
+export function resolvePayee(
   expense: any,
-  suppliers: any[],
+  payees: Payee[],
   aliases: Map<string, string> = aliasMap()
-): { supplier: any; strength: MatchStrength } | null {
+): { payee: Payee; strength: MatchStrength } | null {
   const morningId = String(expense.external_supplier_id || '').trim();
   if (morningId) {
-    const match = suppliers.find((s) => String(s.morning_supplier_id || '').trim() === morningId);
-    if (match) return { supplier: match, strength: 'id' };
+    const match = payees.find((p) => String(p.morning_supplier_id || '').trim() === morningId);
+    if (match) return { payee: match, strength: 'id' };
   }
   const taxId = String(expense.supplier_tax_id || '').replace(/\D/g, '');
   if (taxId) {
-    const match = suppliers.find((s) => String(s.tax_id || '').replace(/\D/g, '') === taxId);
-    if (match) return { supplier: match, strength: 'id' };
+    const match = payees.find((p) => String(p.tax_id || '').replace(/\D/g, '') === taxId);
+    if (match) return { payee: match, strength: 'id' };
   }
   const name = normalizeName(expense.supplier_name);
   if (name) {
-    const supplierId = aliases.get(name);
-    if (supplierId) {
-      const match = suppliers.find((s) => s.id === supplierId);
-      if (match) return { supplier: match, strength: 'alias' };
+    const key = aliases.get(name);
+    if (key) {
+      const match = payees.find((p) => keyOf(p) === key);
+      if (match) return { payee: match, strength: 'alias' };
     }
-    const match = suppliers.find((s) => normalizeName(s.name) === name);
-    if (match) return { supplier: match, strength: 'name' };
+    const match = payees.find((p) => normalizeName(p.name) === name);
+    if (match) return { payee: match, strength: 'name' };
   }
   return null;
 }
@@ -481,12 +675,23 @@ export function unlinkDocument(paymentId: string, expenseId: string) {
     .run(paymentId, expenseId);
 }
 
-/** The documents already answering for a payment, for showing under it. */
+/**
+ * The documents already answering for a payment, for showing under it.
+ *
+ * `remaining` is what the document still has to give *anywhere* — its total less everything it
+ * covers, on this payment and on any other. An invoice that covered two gigs and has been
+ * attached to one of them is not spent, and a screen that showed only what it covers here
+ * would leave the person believing the other half of it is gone.
+ */
 export function paymentDocs(paymentId: string): any[] {
   return db
     .prepare(
       `SELECT e.id, e.number, e.date, e.supplier_name, e.total, e.vat_amount, e.doc_type,
-              d.allocated_amount, d.matched_by
+              d.allocated_amount, d.matched_by,
+              ROUND(e.total - (
+                SELECT COALESCE(SUM(allocated_amount), 0)
+                  FROM supplier_payment_docs WHERE expense_id = e.id
+              ), 2) AS remaining
          FROM supplier_payment_docs d JOIN expenses e ON e.id = d.expense_id
         WHERE d.payment_id = ?
         ORDER BY e.date`
@@ -503,23 +708,24 @@ export type SuggestionReason = 'supplier' | 'amount' | 'similar';
 /**
  * One row of the suggestion list, and of the manual picker — the same shape either way.
  *
- * `supplierNames` is what the payment's supplier answers to, passed in rather than looked up:
- * this runs once per candidate document, and a query per row would make a screen of twenty
- * waiting payments a few thousand of them.
+ * `payeeNames` is what the payment's payee answers to, passed in rather than looked up: this
+ * runs once per candidate document, and a query per row would make a screen of twenty waiting
+ * payments a few thousand of them.
  */
 function documentCard(
   expense: any,
   remaining: number,
-  supplier: any,
+  payee: Payee | undefined,
   aliases: Map<string, string>,
-  suppliers: any[],
-  supplierNames: string[]
+  payees: Payee[],
+  payeeNames: string[]
 ) {
   const available = round2(Number(expense.available ?? expense.total) || 0);
-  const resolved = resolveSupplier(expense, suppliers, aliases);
+  const resolved = resolvePayee(expense, payees, aliases);
+  const mineKey = payee ? keyOf(payee) : '';
   const similarity = Math.max(
-    nameSimilarity(expense.supplier_name, supplier?.name),
-    ...supplierNames.map((name) => nameSimilarity(expense.supplier_name, name)),
+    nameSimilarity(expense.supplier_name, payee?.name),
+    ...payeeNames.map((name) => nameSimilarity(expense.supplier_name, name)),
     0
   );
   return {
@@ -533,14 +739,14 @@ function documentCard(
     vat_amount: round2(Number(expense.vat_amount) || 0),
     doc_type: expense.doc_type,
     exact: Math.abs(available - remaining) <= TOLERANCE,
-    mine: resolved?.supplier.id === supplier?.id,
+    mine: !!resolved && keyOf(resolved.payee) === mineKey,
     /** Who this document is currently taken to belong to, so a wrong pick can be seen coming. */
-    resolved_supplier_id: resolved?.supplier.id ?? null,
-    resolved_supplier_name: resolved?.supplier.name ?? null,
+    resolved_payee_key: resolved ? keyOf(resolved.payee) : null,
+    resolved_supplier_name: resolved?.payee.name ?? null,
     resolved_by: resolved?.strength ?? null,
     /** Whether attaching it would teach the mapping something it does not already know. */
     alias_known: !!normalizeName(expense.supplier_name)
-      && aliases.get(normalizeName(expense.supplier_name)) === supplier?.id,
+      && aliases.get(normalizeName(expense.supplier_name)) === mineKey,
     similarity: Math.round(similarity * 100) / 100,
   };
 }
@@ -566,16 +772,17 @@ function documentCard(
  */
 export function suggestionsFor(
   payment: any,
-  suppliers?: any[],
+  payees?: Payee[],
   pool?: any[],
   aliases?: Map<string, string>,
   aliasNames?: Map<string, string[]>
 ): any[] {
-  const all = suppliers || (db.prepare('SELECT * FROM band_suppliers').all() as any[]);
+  const all = payees || listPayees();
   const names = aliases || aliasMap();
-  const ownNames = (aliasNames || aliasNamesBySupplier()).get(payment.supplier_id) || [];
+  const ref = payeeRef(payment);
+  const payee = ref ? all.find((p) => p.kind === ref.kind && p.id === ref.id) : undefined;
+  const ownNames = (payee && (aliasNames || aliasNamesByPayee()).get(keyOf(payee))) || [];
   const candidates = pool || availableExpenses();
-  const supplier = all.find((s) => s.id === payment.supplier_id);
   const remaining = remainingOf(payment);
   const from = shiftDate(payment.date, -WINDOW_BEFORE_DAYS);
   const to = shiftDate(payment.date, WINDOW_AFTER_DAYS);
@@ -584,8 +791,8 @@ export function suggestionsFor(
   for (const expense of candidates) {
     const date = String(expense.date || '');
     if (date < from || date > to) continue;
-    const card = documentCard(expense, remaining, supplier, names, all, ownNames);
-    if (card.resolved_supplier_id && !card.mine) continue;
+    const card = documentCard(expense, remaining, payee, names, all, ownNames);
+    if (card.resolved_payee_key && !card.mine) continue;
 
     const reason: SuggestionReason | null = card.mine ? 'supplier'
       : card.exact ? 'amount'
@@ -623,17 +830,18 @@ export function suggestionsFor(
 export function searchDocuments(paymentId: string, query: string, limit = 40): any[] {
   const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(paymentId) as any;
   if (!payment) throw Object.assign(new Error('payment not found'), { status: 404 });
-  const suppliers = db.prepare('SELECT * FROM band_suppliers').all() as any[];
-  const supplier = suppliers.find((s) => s.id === payment.supplier_id);
+  const payees = listPayees();
+  const ref = payeeRef(payment);
+  const payee = ref ? payees.find((p) => p.kind === ref.kind && p.id === ref.id) : undefined;
   const aliases = aliasMap();
-  const ownNames = aliasNamesBySupplier().get(payment.supplier_id) || [];
+  const ownNames = (payee && aliasNamesByPayee().get(keyOf(payee))) || [];
   const remaining = remainingOf(payment);
 
   const q = String(query || '').trim().toLowerCase();
   const asNumber = q && /^[\d.,]+$/.test(q) ? Number(q.replace(/,/g, '')) : NaN;
 
   const cards = availableExpenses(paymentId)
-    .map((expense) => documentCard(expense, remaining, supplier, aliases, suppliers, ownNames))
+    .map((expense) => documentCard(expense, remaining, payee, aliases, payees, ownNames))
     .filter((card) => {
       if (!q) return true;
       if (!Number.isNaN(asNumber) && Math.abs(card.total - asNumber) <= 1) return true;
@@ -670,8 +878,8 @@ export function searchDocuments(paymentId: string, query: string, limit = 40): a
  * puts a document against money it has nothing to do with.
  */
 export function runMatch(): { linked: number } {
-  const suppliers = db.prepare('SELECT * FROM band_suppliers').all() as any[];
-  if (!suppliers.length) return { linked: 0 };
+  const payees = listPayees();
+  if (!payees.length) return { linked: 0 };
   const aliases = aliasMap();
 
   const open = db
@@ -694,9 +902,10 @@ export function runMatch(): { linked: number } {
     const match = availableExpenses().find((expense) => {
       const date = String(expense.date || '');
       if (date < from || date > to) return false;
-      const resolved = resolveSupplier(expense, suppliers, aliases);
+      const resolved = resolvePayee(expense, payees, aliases);
       if (!isCertain(resolved?.strength ?? null)) return false;
-      if (resolved!.supplier.id !== payment.supplier_id) return false;
+      const ref = payeeRef(payment);
+      if (!ref || keyOf(resolved!.payee) !== payeeKey(ref.kind, ref.id)) return false;
       return Math.abs(round2(Number(expense.available) || 0) - remaining) <= TOLERANCE;
     });
     if (!match) continue;
@@ -708,14 +917,24 @@ export function runMatch(): { linked: number } {
 
 // ============================== reading it back ==============================
 
-export function getPayment(id: string): any {
+export function getPayment(id: string, payees?: Map<string, Payee>): any {
   const payment = db.prepare('SELECT * FROM supplier_payments WHERE id = ?').get(id) as any;
   if (!payment) return null;
   const documented = documentedTotal(id);
+  const ref = payeeRef(payment);
+  const payee = ref
+    ? (payees || payeesByKey()).get(payeeKey(ref.kind, ref.id))
+    : undefined;
   return {
     ...payment,
     expects_invoice: !!payment.expects_invoice,
-    supplier_name: supplierById(payment.supplier_id)?.name ?? '?',
+    payee_kind: ref?.kind ?? null,
+    payee_id: ref?.id ?? null,
+    payee_key: ref ? payeeKey(ref.kind, ref.id) : null,
+    // `supplier_name` is the name every screen already reads; it is the payee's name whichever kind
+    // they are, so a member's payment reads as naturally in the queue as a supplier's.
+    supplier_name: payee?.name ?? '?',
+    payee_name: payee?.name ?? '?',
     amount: round2(Number(payment.amount) || 0),
     documented,
     missing: round2(Math.max(0, round2(Number(payment.amount) || 0) - documented)),
@@ -733,20 +952,21 @@ export function getPayment(id: string): any {
  * twenty passes over the same table.
  */
 export function listPayments(): any[] {
-  const suppliers = db.prepare('SELECT * FROM band_suppliers').all() as any[];
+  const payees = listPayees();
+  const byKey = payeesByKey(payees);
   const aliases = aliasMap();
-  const aliasNames = aliasNamesBySupplier();
+  const aliasNames = aliasNamesByPayee();
   const pool = availableExpenses();
   const rows = db.prepare('SELECT * FROM supplier_payments ORDER BY date DESC').all() as any[];
   const now = today();
 
   return rows.map((payment) => {
-    const full = getPayment(payment.id);
+    const full = getPayment(payment.id, byKey);
     const waiting = full.doc_status === 'waiting';
     return {
       ...full,
       age_days: Math.max(0, daysBetween(payment.date, now)),
-      suggestions: waiting ? suggestionsFor(payment, suppliers, pool, aliases, aliasNames) : [],
+      suggestions: waiting ? suggestionsFor(payment, payees, pool, aliases, aliasNames) : [],
     };
   });
 }
@@ -781,16 +1001,16 @@ export function invoiceQueue(vatPercent: number): {
   };
 }
 
-/** Per supplier: how much they have been paid that no document answers for yet. */
+/** Per payee, keyed as in payees.ts: what they have been paid that no document answers for. */
 export function supplierInvoiceGaps(): Map<string, { missing: number; payments: number; oldest_days: number }> {
   const gaps = new Map<string, { missing: number; payments: number; oldest_days: number }>();
   for (const row of listPayments()) {
-    if (row.doc_status !== 'waiting') continue;
-    const entry = gaps.get(row.supplier_id) || { missing: 0, payments: 0, oldest_days: 0 };
+    if (row.doc_status !== 'waiting' || !row.payee_key) continue;
+    const entry = gaps.get(row.payee_key) || { missing: 0, payments: 0, oldest_days: 0 };
     entry.missing = round2(entry.missing + row.missing);
     entry.payments += 1;
     entry.oldest_days = Math.max(entry.oldest_days, row.age_days);
-    gaps.set(row.supplier_id, entry);
+    gaps.set(row.payee_key, entry);
   }
   return gaps;
 }
@@ -896,11 +1116,72 @@ export function backfillSupplierPayments(): number {
         row.date <= VERIFIED_THROUGH ? 'הועבר מהסימון «שולם» — חשבונית טופלה לפני המעקב' : null
       );
       db.prepare(
-        'INSERT INTO supplier_payment_lines (payment_id, event_id, role, amount) VALUES (?, ?, ?, ?)'
-      ).run(id, row.event_id, row.role, amount);
+        `INSERT INTO supplier_payment_lines (id, payment_id, event_id, role, member_key, amount)
+         VALUES (?, ?, ?, ?, NULL, ?)`
+      ).run(uuid(), id, row.event_id, row.role, amount);
       n++;
     }
     setSetting('moonlight_supplier_payments_v1', 'done');
+    return n;
+  })();
+
+  return created;
+}
+
+/**
+ * The same for the members' shares of every show already marked «שולם לנגנים».
+ *
+ * A member's share was money that left the band with no record of whose invoice was owed for
+ * it, so the ledger starts with one payment per member per settled show — which is what makes
+ * the queue's total the band's real undocumented spend rather than the part of it that went to
+ * outsiders.
+ *
+ * Shows through the same cut-off enter closed for the same reason the suppliers' do: that
+ * paperwork was dealt with before any of this existed, and rows arriving red would be asking
+ * for invoices that came and went a year ago. A member registered as לא רשום is recorded as
+ * expecting nothing, whenever the show was.
+ */
+export function backfillMemberPayments(): number {
+  if (getSetting('moonlight_member_payments_v1', '') === 'done') return 0;
+
+  const created = db.transaction((): number => {
+    const rows = db
+      .prepare(
+        `SELECT s.event_id, s.member_key, s.amount, e.date, m.business_type
+           FROM band_event_shares s
+           JOIN band_events e ON e.id = s.event_id
+           LEFT JOIN band_members m ON m.member_key = s.member_key
+          WHERE e.paid_to_musicians = 1
+          ORDER BY e.date`
+      )
+      .all() as any[];
+
+    let n = 0;
+    for (const row of rows) {
+      const amount = round2(Number(row.amount) || 0);
+      if (!amount) continue;
+      if (db.prepare('SELECT 1 FROM supplier_payment_lines WHERE event_id = ? AND member_key = ?')
+        .get(row.event_id, row.member_key)) continue;
+
+      const id = uuid();
+      const settled = row.date <= VERIFIED_THROUGH;
+      db.prepare(
+        `INSERT INTO supplier_payments
+           (id, supplier_id, member_key, date, amount, expects_invoice, resolution, source, notes)
+         VALUES (?, NULL, ?, ?, ?, ?, ?, 'backfill', ?)`
+      ).run(
+        id, row.member_key, row.date, amount,
+        row.business_type && row.business_type !== 'none' ? 1 : 0,
+        settled ? 'verified' : null,
+        settled ? 'הועבר מהסימון «שולם לנגנים» — חשבונית טופלה לפני המעקב' : null
+      );
+      db.prepare(
+        `INSERT INTO supplier_payment_lines (id, payment_id, event_id, role, member_key, amount)
+         VALUES (?, ?, ?, NULL, ?, ?)`
+      ).run(uuid(), id, row.event_id, row.member_key, amount);
+      n++;
+    }
+    setSetting('moonlight_member_payments_v1', 'done');
     return n;
   })();
 

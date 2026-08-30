@@ -1,5 +1,5 @@
 /**
- * What the band calls a supplier, and what that supplier's invoices are headed with.
+ * What the band calls somebody, and what their invoices are headed with.
  *
  * These are almost never the same string. אבי is «אבי סאונד» in the diary and «א. כהן הפקות
  * בע"מ» on the document; the hall is booked by its stage name and invoices under the company
@@ -12,6 +12,9 @@
  * somebody who knows having said so.
  */
 import { db, uuid, getSetting, setSetting } from './db.js';
+import {
+  keyOf, listPayees, payeeColumns, payeeKey, payeeRef, type Payee, type PayeeKind,
+} from './payees.js';
 
 /**
  * Reduces a name to what two spellings of the same business have in common.
@@ -66,39 +69,55 @@ export type AliasSource = 'manual' | 'link' | 'migration';
 
 export interface SupplierAlias {
   id: string;
-  supplier_id: string;
+  supplier_id: string | null;
+  member_key: string | null;
   alias: string;
   normalized: string;
   source: AliasSource;
   created_at: string;
 }
 
-export const aliasesFor = (supplierId: string): SupplierAlias[] =>
+export const aliasesFor = (kind: PayeeKind, id: string): SupplierAlias[] =>
   db
-    .prepare('SELECT * FROM band_supplier_aliases WHERE supplier_id = ? ORDER BY alias')
-    .all(supplierId) as SupplierAlias[];
+    .prepare(
+      `SELECT * FROM band_supplier_aliases
+        WHERE ${kind === 'member' ? 'member_key' : 'supplier_id'} = ? ORDER BY alias`
+    )
+    .all(id) as SupplierAlias[];
+
+export const aliasesForPayee = (payee: { kind: PayeeKind; id: string }): SupplierAlias[] =>
+  aliasesFor(payee.kind, payee.id);
 
 export const allAliases = (): SupplierAlias[] =>
   db.prepare('SELECT * FROM band_supplier_aliases ORDER BY alias').all() as SupplierAlias[];
 
-/** Normalized invoice name → supplier id. One pass, for the loops that resolve many documents. */
+/** Normalized invoice name → payee key. One pass, for the loops that resolve many documents. */
 export function aliasMap(): Map<string, string> {
-  return new Map(allAliases().map((row) => [row.normalized, row.supplier_id]));
+  const map = new Map<string, string>();
+  for (const row of allAliases()) {
+    const ref = payeeRef(row);
+    if (ref) map.set(row.normalized, payeeKey(ref.kind, ref.id));
+  }
+  return map;
 }
 
-/** Supplier id → the names it answers to. One pass, for loops that ask about many documents. */
-export function aliasNamesBySupplier(): Map<string, string[]> {
-  const bySupplier = new Map<string, string[]>();
+/** Payee key → the names they answer to. One pass, for loops that ask about many documents. */
+export function aliasNamesByPayee(): Map<string, string[]> {
+  const byPayee = new Map<string, string[]>();
   for (const row of allAliases()) {
-    bySupplier.set(row.supplier_id, [...(bySupplier.get(row.supplier_id) || []), row.alias]);
+    const ref = payeeRef(row);
+    if (!ref) continue;
+    const key = payeeKey(ref.kind, ref.id);
+    byPayee.set(key, [...(byPayee.get(key) || []), row.alias]);
   }
-  return bySupplier;
+  return byPayee;
 }
 
 /** The alias list of each supplier as one editable line — what the supplier dialog shows. */
 export function aliasTextBySupplier(): Map<string, string> {
   const bySupplier = new Map<string, string[]>();
   for (const row of allAliases()) {
+    if (!row.supplier_id) continue;
     bySupplier.set(row.supplier_id, [...(bySupplier.get(row.supplier_id) || []), row.alias]);
   }
   return new Map([...bySupplier].map(([id, names]) => [id, names.join(', ')]));
@@ -112,31 +131,37 @@ export function aliasTextBySupplier(): Map<string, string> {
  * anybody being told. Re-adding a name the supplier already has is a no-op, so the same
  * document can be confirmed twice without complaint.
  */
-export function addAlias(supplierId: string, alias: string, source: AliasSource = 'manual'): SupplierAlias {
+export function addAlias(
+  payee: { kind: PayeeKind; id: string },
+  alias: string,
+  source: AliasSource = 'manual'
+): SupplierAlias {
   const text = String(alias || '').trim();
   const normalized = normalizeName(text);
   if (!normalized) throw Object.assign(new Error('שם חלופי ריק'), { status: 400 });
 
-  const supplier = db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(supplierId) as any;
-  if (!supplier) throw Object.assign(new Error('supplier not found'), { status: 404 });
+  const owner = listPayees().find((p) => p.kind === payee.kind && p.id === payee.id);
+  if (!owner) throw Object.assign(new Error('payee not found'), { status: 404 });
 
   const existing = db
     .prepare('SELECT * FROM band_supplier_aliases WHERE normalized = ?')
     .get(normalized) as SupplierAlias | undefined;
   if (existing) {
-    if (existing.supplier_id === supplierId) return existing;
-    const owner = db.prepare('SELECT name FROM band_suppliers WHERE id = ?')
-      .get(existing.supplier_id) as any;
+    const ref = payeeRef(existing);
+    if (ref && ref.kind === payee.kind && ref.id === payee.id) return existing;
+    const taken = ref && listPayees().find((p) => p.kind === ref.kind && p.id === ref.id);
     throw Object.assign(
-      new Error(`השם «${text}» כבר משויך לספק «${owner?.name ?? '?'}»`),
+      new Error(`השם «${text}» כבר משויך ל«${taken?.name ?? '?'}»`),
       { status: 409 }
     );
   }
 
   const id = uuid();
+  const columns = payeeColumns(payee);
   db.prepare(
-    'INSERT INTO band_supplier_aliases (id, supplier_id, alias, normalized, source) VALUES (?, ?, ?, ?, ?)'
-  ).run(id, supplierId, text, normalized, source);
+    `INSERT INTO band_supplier_aliases (id, supplier_id, member_key, alias, normalized, source)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(id, columns.supplier_id, columns.member_key, text, normalized, source);
   return db.prepare('SELECT * FROM band_supplier_aliases WHERE id = ?').get(id) as SupplierAlias;
 }
 
@@ -153,7 +178,10 @@ export function removeAlias(id: string): void {
  * so an alias learned from a document does not lose how it came to be there because somebody
  * corrected the spelling of a different one.
  */
-export const setAliasesFromText = db.transaction((supplierId: string, text: unknown): void => {
+export const setAliasesFromText = db.transaction((
+  payee: { kind: PayeeKind; id: string },
+  text: unknown
+): void => {
   const wanted = String(text ?? '')
     .split(/[\n,]/)
     .map((part) => part.trim())
@@ -164,42 +192,43 @@ export const setAliasesFromText = db.transaction((supplierId: string, text: unkn
     const normalized = normalizeName(alias);
     if (!normalized || keep.has(normalized)) continue;
     keep.add(normalized);
-    addAlias(supplierId, alias, 'manual');
+    addAlias(payee, alias, 'manual');
   }
 
-  for (const row of aliasesFor(supplierId)) {
+  for (const row of aliasesFor(payee.kind, payee.id)) {
     if (!keep.has(row.normalized)) removeAlias(row.id);
   }
 });
 
 /**
- * Every invoice name Morning has sent that no supplier answers to — the queue of this screen.
+ * Every invoice name Morning has sent that nobody answers to — the queue of this screen.
  *
  * A document nobody can place is the reason a payment sits waiting with no suggestion under
  * it, so the fix belongs here beside the mapping rather than only inside one payment: naming
- * the supplier once places every document that name has ever arrived on, and every one still
- * to come.
+ * the payee once places every document that name has ever arrived on, and every one still to
+ * come. Members are offered alongside suppliers, because a member who invoices the band for
+ * their share is a name on a document exactly like anybody else.
  *
  * Names are grouped by their normalized form so three spellings of one business are three
  * rows only if they really do differ; what is shown is the spelling that arrived most
  * recently, because that is the one the next document will most likely carry.
  */
-export function unknownInvoiceNames(suppliers: any[]): Array<{
+export function unknownInvoiceNames(payees: Payee[]): Array<{
   name: string;
   normalized: string;
   docs: number;
   total: number;
   last_date: string;
-  suggestion: { supplier_id: string; name: string; score: number } | null;
+  suggestion: { kind: PayeeKind; id: string; name: string; score: number } | null;
 }> {
   const known = aliasMap();
-  const byId = new Map<string, any>();
-  for (const supplier of suppliers) {
-    const morningId = String(supplier.morning_supplier_id || '').trim();
-    if (morningId) byId.set(`m:${morningId}`, supplier);
-    const taxId = String(supplier.tax_id || '').replace(/\D/g, '');
-    if (taxId) byId.set(`t:${taxId}`, supplier);
-    byId.set(`n:${normalizeName(supplier.name)}`, supplier);
+  const byIdentity = new Map<string, Payee>();
+  for (const payee of payees) {
+    const morningId = String(payee.morning_supplier_id || '').trim();
+    if (morningId) byIdentity.set(`m:${morningId}`, payee);
+    const taxId = String(payee.tax_id || '').replace(/\D/g, '');
+    if (taxId) byIdentity.set(`t:${taxId}`, payee);
+    byIdentity.set(`n:${normalizeName(payee.name)}`, payee);
   }
 
   const rows = db
@@ -218,11 +247,11 @@ export function unknownInvoiceNames(suppliers: any[]): Array<{
     // Anything already placed — by an identity, by its own name, or by a mapping made here —
     // is not a gap. Only what nothing at all answers to belongs on this list.
     if (known.has(normalized)) continue;
-    if (byId.has(`n:${normalized}`)) continue;
+    if (byIdentity.has(`n:${normalized}`)) continue;
     const morningId = String(row.external_supplier_id || '').trim();
-    if (morningId && byId.has(`m:${morningId}`)) continue;
+    if (morningId && byIdentity.has(`m:${morningId}`)) continue;
     const taxId = String(row.supplier_tax_id || '').replace(/\D/g, '');
-    if (taxId && byId.has(`t:${taxId}`)) continue;
+    if (taxId && byIdentity.has(`t:${taxId}`)) continue;
 
     const entry = groups.get(normalized) || {
       name: row.supplier_name, normalized, docs: 0, total: 0, last_date: '',
@@ -235,18 +264,18 @@ export function unknownInvoiceNames(suppliers: any[]): Array<{
     groups.set(normalized, entry);
   }
 
-  const names = aliasNamesBySupplier();
+  const names = aliasNamesByPayee();
   return [...groups.values()]
     .map((entry) => {
-      let best: { supplier_id: string; name: string; score: number } | null = null;
-      for (const supplier of suppliers) {
+      let best: { kind: PayeeKind; id: string; name: string; score: number } | null = null;
+      for (const payee of payees) {
         const score = Math.max(
-          nameSimilarity(entry.name, supplier.name),
-          ...(names.get(supplier.id) || []).map((alias) => nameSimilarity(entry.name, alias)),
+          nameSimilarity(entry.name, payee.name),
+          ...(names.get(keyOf(payee)) || []).map((alias) => nameSimilarity(entry.name, alias)),
           0
         );
         if (score >= SIMILAR_ENOUGH && (!best || score > best.score)) {
-          best = { supplier_id: supplier.id, name: supplier.name, score: Math.round(score * 100) / 100 };
+          best = { kind: payee.kind, id: payee.id, name: payee.name, score: Math.round(score * 100) / 100 };
         }
       }
       return { ...entry, suggestion: best };
@@ -276,7 +305,7 @@ export function backfillSupplierAliases(): number {
         const alias = raw.trim();
         if (!alias) continue;
         try {
-          addAlias(supplier.id, alias, 'migration');
+          addAlias({ kind: 'supplier', id: supplier.id }, alias, 'migration');
           n++;
         } catch (err: any) {
           console.warn(`[aliases] ${err.message}`);

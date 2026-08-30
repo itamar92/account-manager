@@ -53,6 +53,8 @@ import {
 import {
   addAlias, aliasesFor, removeAlias, setAliasesFromText, unknownInvoiceNames,
 } from './supplierNames.js';
+import { keyOf, listPayees, payeeKey, type PayeeKind } from './payees.js';
+import { allRoles, roleUsage, updateRole } from './supplierRoles.js';
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
@@ -1283,7 +1285,7 @@ router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, re
   const event = getEvent(req.params.id);
   if (!event) return res.status(404).json({ error: 'event not found' });
   const row = ensureExpenseRow(event);
-  const paid = PAID_EXPENSE_FIELDS.filter((f) => Number(row[f]) > 0);
+  const paid = PAID_EXPENSE_FIELDS().filter((f) => Number(row[f]) > 0);
   if (paid.length) {
     db.prepare(
       `UPDATE band_event_expenses SET ${paid.map((f) => `${f}_paid = 1`).join(', ')} WHERE id = ?`
@@ -1576,15 +1578,32 @@ function suppliersWithDebts() {
     upcoming: debts.get(s.id)?.upcoming ?? 0,
     upcoming_shows: debts.get(s.id)?.upcoming_shows ?? [],
     // The mirror of `owed`: money that has already left, with nothing filed against it yet.
-    missing_docs: gaps.get(s.id)?.missing ?? 0,
-    missing_doc_payments: gaps.get(s.id)?.payments ?? 0,
-    missing_docs_days: gaps.get(s.id)?.oldest_days ?? 0,
+    missing_docs: gaps.get(payeeKey('supplier', s.id))?.missing ?? 0,
+    missing_doc_payments: gaps.get(payeeKey('supplier', s.id))?.payments ?? 0,
+    missing_docs_days: gaps.get(payeeKey('supplier', s.id))?.oldest_days ?? 0,
+  }));
+}
+
+/**
+ * The band, each member carrying what the books are still waiting on from them.
+ *
+ * A member's share is deductible only against the invoice they issue for it, so «what has
+ * אמיר not sent yet» is a question about the band's tax, not about tidiness. Somebody
+ * registered as לא רשום never appears here with a gap: nothing is expected from them.
+ */
+function membersWithGaps() {
+  const gaps = supplierInvoiceGaps();
+  return listBandMembers().map((m) => ({
+    ...m,
+    missing_docs: gaps.get(payeeKey('member', m.member_key))?.missing ?? 0,
+    missing_doc_payments: gaps.get(payeeKey('member', m.member_key))?.payments ?? 0,
+    missing_docs_days: gaps.get(payeeKey('member', m.member_key))?.oldest_days ?? 0,
   }));
 }
 
 // ---- the band itself ----
 router.get('/moonlight/members', requireAuth, handle((_req, res) => {
-  res.json({ members: listBandMembers(), business_types: BUSINESS_TYPES });
+  res.json({ members: membersWithGaps(), business_types: BUSINESS_TYPES });
 }));
 
 router.post('/moonlight/members', requireOwner, handle((req, res) => {
@@ -1677,11 +1696,17 @@ router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
 
   db.prepare(
     `UPDATE band_members
-       SET name = ?, email = ?, role = ?, is_manager = ?, business_type = ?, active = ?
+       SET name = ?, email = ?, role = ?, is_manager = ?, business_type = ?, active = ?,
+           tax_id = ?, morning_supplier_id = ?
      WHERE member_key = ?`
   ).run(
     name, email || null, String(b.role ?? '').trim() || null,
-    b.is_manager ? 1 : 0, b.business_type, b.active ? 1 : 0, req.params.key
+    b.is_manager ? 1 : 0, b.business_type, b.active ? 1 : 0,
+    // The identity their invoices carry — the same fact a supplier's ח.פ is, and what lets a
+    // member's document be matched without anybody being asked.
+    String(b.tax_id ?? '').trim() || null,
+    String(b.morning_supplier_id ?? '').trim() || null,
+    req.params.key
   );
   res.json({ member: bandMemberByKey(req.params.key) });
 }));
@@ -1693,10 +1718,23 @@ router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
 /** A supplier's standing fee. Negative is meaningless, and 0 means "no standing rate". */
 const supplierAmount = (value: unknown): number => round2(Math.max(0, Number(value) || 0));
 
+/**
+ * Naming somebody for a role the band has switched off turns that role back on.
+ *
+ * Hiring a bracelets company *is* the decision that the band hires for צמידים; making the
+ * person go and find a settings panel first, on pain of a supplier they cannot staff anywhere,
+ * is asking them to say the same thing twice in two places.
+ */
+function activateRoleFor(role: string) {
+  const existing = allRoles().find((r) => r.key === role);
+  if (existing && !existing.active) updateRole(role, { active: 1 });
+}
+
 router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   const { name, email, role, phone, notes, default_amount } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  activateRoleFor(role);
   const id = uuid();
   const b = req.body || {};
   try {
@@ -1723,7 +1761,7 @@ router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   // A name already claimed by another supplier throws, and it takes the new supplier with it:
   // better than a half-entered mapping nobody was told about.
   try {
-    setAliasesFromText(id, b.aliases);
+    setAliasesFromText({ kind: 'supplier', id }, b.aliases);
   } catch (err: any) {
     db.prepare('DELETE FROM band_suppliers WHERE id = ?').run(id);
     return res.status(err.status || 400).json({ error: err.message });
@@ -1739,6 +1777,7 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   const b = { ...existing, ...(req.body || {}) };
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(b.role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  activateRoleFor(b.role);
   try {
     db.prepare(
       `UPDATE band_suppliers
@@ -1762,7 +1801,7 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   // normalized form survives the edit keep the row they had.
   if (req.body?.aliases !== undefined) {
     try {
-      setAliasesFromText(req.params.id, req.body.aliases);
+      setAliasesFromText({ kind: 'supplier', id: req.params.id }, req.body.aliases);
     } catch (err: any) {
       return res.status(err.status || 400).json({ error: err.message });
     }
@@ -1805,7 +1844,7 @@ router.get('/moonlight/assignments', requireAuth, handle((req, res) => {
       };
     }
     const amounts: Record<string, { amount: number; paid: boolean }> = {};
-    for (const role of ASSIGNMENT_ROLES) {
+    for (const role of ASSIGNMENT_ROLES()) {
       amounts[role] = { amount: round2(Number(expense?.[role]) || 0), paid: !!expense?.[`${role}_paid`] };
     }
     return {
@@ -1829,19 +1868,44 @@ router.post('/moonlight/assignments/auto-match', requireOwner, handle((_req, res
   res.json({ assigned: autoAssignAll() });
 }));
 
-// ---- paying suppliers, and the invoices owed back for it ----
+// ---- paying suppliers and members, and the invoices owed back for it ----
+
+/** The payee named by a request, or null — one reading for every route that takes one. */
+function payeeFromRequest(body: any): { kind: PayeeKind; id: string } | null {
+  const kind: PayeeKind = body?.payee_kind === 'member' ? 'member' : 'supplier';
+  const id = String(
+    (kind === 'member' ? body?.member_key ?? body?.payee_id : body?.supplier_id ?? body?.payee_id) || ''
+  );
+  if (!id) return null;
+  return listPayees().some((p) => p.kind === kind && p.id === id) ? { kind, id } : null;
+}
+
+/** Everybody the band can pay: the suppliers it hires and its own members. */
+router.get('/moonlight/payees', requireAuth, handle((_req, res) => {
+  res.json({ payees: listPayees().map((p) => ({ ...p, key: keyOf(p) })) });
+}));
 
 /**
- * The lines this supplier has not been paid for yet — what the pay dialog is built from.
+ * What this payee has not been paid for yet — what the pay dialog is built from.
  *
  * Every show at once rather than one show's worth, because that is how the band actually
- * pays: one transfer to אבי covering the four gigs he did since the last one.
+ * pays: one transfer to אבי covering the four gigs he did since the last one, and one to
+ * אמיר covering his share of the same four.
  */
+router.get('/moonlight/payees/:kind/:id/open-lines', requireAuth, handle((req, res) => {
+  const payee = payeeFromRequest({
+    payee_kind: req.params.kind, payee_id: req.params.id,
+  });
+  if (!payee) return res.status(404).json({ error: 'payee not found' });
+  res.json({ lines: openLines(payee) });
+}));
+
+/** The address the pay dialog used before members could be paid; kept for old links. */
 router.get('/moonlight/suppliers/:id/open-lines', requireAuth, handle((req, res) => {
   if (!db.prepare('SELECT id FROM band_suppliers WHERE id = ?').get(req.params.id)) {
     return res.status(404).json({ error: 'supplier not found' });
   }
-  res.json({ lines: openLines(req.params.id) });
+  res.json({ lines: openLines({ kind: 'supplier', id: req.params.id }) });
 }));
 
 /** Every recorded payment with what answers for it, plus the aged total still undocumented. */
@@ -1854,12 +1918,13 @@ router.get('/moonlight/supplier-payments', requireAuth, handle((_req, res) => {
  * is never read off the request — see recordPayment.
  */
 router.post('/moonlight/supplier-payments', requireOwner, handle((req, res) => {
-  const { supplier_id, date, method, notes, lines } = req.body || {};
-  if (!supplier_id) return res.status(400).json({ error: 'ספק חובה' });
+  const { date, method, notes, lines } = req.body || {};
+  const payee = payeeFromRequest(req.body);
+  if (!payee) return res.status(400).json({ error: 'מקבל התשלום חובה' });
   if (!Array.isArray(lines) || !lines.length) {
     return res.status(400).json({ error: 'לא נבחרו שורות לתשלום' });
   }
-  res.json({ payment: recordPayment({ supplier_id, date, method, notes, lines }) });
+  res.json({ payment: recordPayment({ payee, date, method, notes, lines }) });
 }));
 
 router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res) => {
@@ -1896,13 +1961,16 @@ router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, 
 
   let alias: { added: boolean; name?: string; error?: string } = { added: false };
   if (req.body?.remember_alias) {
-    const payment = db.prepare('SELECT supplier_id FROM supplier_payments WHERE id = ?')
+    const payment = db.prepare('SELECT supplier_id, member_key FROM supplier_payments WHERE id = ?')
       .get(req.params.id) as any;
     const expense = db.prepare('SELECT supplier_name FROM expenses WHERE id = ?').get(expenseId) as any;
     const name = String(expense?.supplier_name || '').trim();
-    if (payment && name) {
+    const payee = payment?.member_key
+      ? { kind: 'member' as PayeeKind, id: payment.member_key }
+      : payment?.supplier_id ? { kind: 'supplier' as PayeeKind, id: payment.supplier_id } : null;
+    if (payee && name) {
       try {
-        addAlias(payment.supplier_id, name, 'link');
+        addAlias(payee, name, 'link');
         alias = { added: true, name };
       } catch (err: any) {
         alias = { added: false, error: err.message };
@@ -1941,48 +2009,78 @@ router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, re
   res.json({ ...runMatch(), payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
 }));
 
-// ---- the names a supplier's invoices arrive under ----
+// ---- the names an invoice arrives under, and who they belong to ----
 
 /**
- * The mapping screen: every supplier with the invoice names it answers to, and — the half
- * that makes it a working screen rather than a settings page — every name Morning has sent
- * that nothing answers to at all.
+ * The mapping screen: everybody the band pays with the invoice names they answer to, and —
+ * the half that makes it a working screen rather than a settings page — every name Morning
+ * has sent that nothing answers to at all.
  *
  * Those unplaced names are the reason a payment sits waiting with no suggestion under it, so
- * they are shown where they can be fixed, worth most first, each with the supplier they most
- * resemble already proposed.
+ * they are shown where they can be fixed, worth most first, each with the payee they most
+ * resemble already proposed. Members are listed beside the suppliers because an invoice from
+ * a member is a document like any other, and until this screen knows their business name it
+ * cannot place theirs either.
  */
 router.get('/moonlight/supplier-names', requireAuth, handle((_req, res) => {
-  const suppliers = listSuppliers();
+  const payees = listPayees();
   res.json({
-    suppliers: suppliers.map((s) => ({
-      id: s.id, name: s.name, role: s.role, tax_id: s.tax_id,
-      morning_supplier_id: s.morning_supplier_id, expects_invoice: !!s.expects_invoice,
-      names: aliasesFor(s.id),
+    payees: payees.map((p) => ({
+      kind: p.kind, id: p.id, key: keyOf(p), name: p.name, role: p.role, role_name: p.role_name,
+      business_type: p.business_type, tax_id: p.tax_id,
+      morning_supplier_id: p.morning_supplier_id, expects_invoice: p.expects_invoice,
+      active: p.active,
+      names: aliasesFor(p.kind, p.id),
     })),
-    unknown: unknownInvoiceNames(suppliers),
+    unknown: unknownInvoiceNames(payees),
   });
 }));
 
 /**
- * Ties one invoice name to one supplier, and immediately re-runs the matcher.
+ * Ties one invoice name to one payee, and immediately re-runs the matcher.
  *
  * The re-run is the point of saying it: the documents that name has already arrived on are
  * sitting in the table unmatched, and a mapping that only affected the future would leave the
  * person to go and link them one at a time anyway.
  */
 router.post('/moonlight/supplier-names', requireOwner, handle((req, res) => {
-  const supplierId = String(req.body?.supplier_id || '');
+  const payee = payeeFromRequest(req.body);
   const alias = String(req.body?.alias || '');
-  if (!supplierId) return res.status(400).json({ error: 'ספק חובה' });
+  if (!payee) return res.status(400).json({ error: 'מקבל התשלום חובה' });
   if (!alias.trim()) return res.status(400).json({ error: 'שם החשבונית חובה' });
-  const created = addAlias(supplierId, alias, 'manual');
+  const created = addAlias(payee, alias, 'manual');
   res.json({ alias: created, ...runMatch() });
 }));
 
 router.delete('/moonlight/supplier-names/:id', requireOwner, handle((req, res) => {
   removeAlias(req.params.id);
   res.json({ ok: true });
+}));
+
+// ---- the kinds of supplier the band hires ----
+
+/**
+ * The roles, each with what it already carries.
+ *
+ * The counts are what a person needs before switching one off: a role with suppliers hired
+ * under it and shows staffed on it is not a checkbox, it is part of the band's history.
+ */
+router.get('/moonlight/supplier-roles', requireAuth, handle((_req, res) => {
+  res.json({
+    roles: allRoles().map((role) => ({ ...role, ...roleUsage(role.key) })),
+  });
+}));
+
+/**
+ * Renames a role, turns it on or off, or changes whether a show is nagged for it.
+ *
+ * There is no create and no delete. A role is one of the show's cost lines wearing a name, so
+ * the set is fixed by what a show can cost — and switching one off is what "deleting" means
+ * here, with every show that used it left exactly as it was.
+ */
+router.put('/moonlight/supplier-roles/:key', requireOwner, handle((req, res) => {
+  const { name, required, active } = req.body || {};
+  res.json({ role: { ...updateRole(req.params.key, { name, required, active }), ...roleUsage(req.params.key) } });
 }));
 
 // ====== integrations: Morning (Green Invoice) + Google Calendar + Meta ads (owner) ======
