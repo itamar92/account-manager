@@ -928,11 +928,16 @@ function seedDefaultCalendarRules() {
  * Seeded once and then owned by the band — one row per cost line a show has, so hiring
  * somebody for any of them is a decision made on a screen rather than a change to this file.
  *
- * The four the app shipped with stay active with the same required flags they had, so nothing
- * about an existing show changes on the day this lands. צמידים, אק״ום and שכר אולם arrive
- * switched off — they are real payees, but turning them on changes what every show asks for,
- * and that is the band's decision to make on the screen rather than this file's to make for
- * them.
+ * The four the app shipped with keep the required flags they had. צמידים, אק״ום and שכר אולם
+ * are on beside them, because they are the lines a band actually hands money to somebody for —
+ * they already sit on every show and are already settled separately, so switching them on adds
+ * a name beside the amount and takes nothing away. None of the three is required, so no show is
+ * ever nagged for one.
+ *
+ * The rest — קמפיין, כיבוד, עיצוב, אחר, הוצאה נוספת — arrive off. Those are usually a card
+ * payment that was over when it was made, and turning one on changes when its line counts as
+ * settled; that is a decision for the band to take on the screen, and taking it here for them
+ * would rewrite what every show says it still owes.
  */
 /**
  * Gives every cost line the paid flag the settled ones always had.
@@ -970,9 +975,9 @@ function seedSupplierRoles() {
     ['soundman', 'סאונדמן', 1, 1],
     ['singer', 'זמר/ת', 1, 1],
     ['sound_company', 'חברת הגברה', 0, 1],
-    ['bracelets', 'צמידים', 0, 0],
-    ['akom', 'אקו"ם', 0, 0],
-    ['hall_fee', 'שכירות אולם', 0, 0],
+    ['bracelets', 'צמידים', 0, 1],
+    ['akom', 'אקו"ם', 0, 1],
+    ['hall_fee', 'שכירות אולם', 0, 1],
     ['campaign', 'קמפיין', 0, 0],
     ['refreshments', 'כיבוד', 0, 0],
     ['design', 'עיצוב', 0, 0],
@@ -1136,6 +1141,21 @@ function migratePayeeTables() {
 
   const broken = db.pragma('foreign_key_check') as unknown[];
   if (broken.length) console.warn(`[payees] foreign_key_check reported ${broken.length} rows`);
+}
+
+/**
+ * Turns on the three payee lines that a first cut of this feature seeded switched off.
+ *
+ * They shipped off out of caution and the caution was wrong: the band cannot name a supplier
+ * for a role that is not active, so «add the bracelets company» dead-ended in a dialog that
+ * offered four roles and no way to reach a fifth. Once, and guarded, so a band that has since
+ * decided it does not hire for one of them keeps that decision.
+ */
+if (getSetting('moonlight_supplier_roles_v2', '') !== 'done') {
+  db.prepare(
+    "UPDATE band_supplier_roles SET active = 1 WHERE key IN ('bracelets','akom','hall_fee')"
+  ).run();
+  setSetting('moonlight_supplier_roles_v2', 'done');
 }
 
 migratePayeeTables();

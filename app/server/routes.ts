@@ -1718,10 +1718,23 @@ router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
 /** A supplier's standing fee. Negative is meaningless, and 0 means "no standing rate". */
 const supplierAmount = (value: unknown): number => round2(Math.max(0, Number(value) || 0));
 
+/**
+ * Naming somebody for a role the band has switched off turns that role back on.
+ *
+ * Hiring a bracelets company *is* the decision that the band hires for צמידים; making the
+ * person go and find a settings panel first, on pain of a supplier they cannot staff anywhere,
+ * is asking them to say the same thing twice in two places.
+ */
+function activateRoleFor(role: string) {
+  const existing = allRoles().find((r) => r.key === role);
+  if (existing && !existing.active) updateRole(role, { active: 1 });
+}
+
 router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   const { name, email, role, phone, notes, default_amount } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  activateRoleFor(role);
   const id = uuid();
   const b = req.body || {};
   try {
@@ -1764,6 +1777,7 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   const b = { ...existing, ...(req.body || {}) };
   if (!String(b.name || '').trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(b.role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
+  activateRoleFor(b.role);
   try {
     db.prepare(
       `UPDATE band_suppliers

@@ -16,9 +16,13 @@ import { SupplierRolesPanel } from './SupplierRolesPanel';
  * a staffed role — their standing fee, which staffing them writes onto the show, and their
  * open debt across every show they have already played.
  */
+/** A role's name out of a list that may still be loading — for a note about the one just picked. */
+const roleNameOf = (roles: SupplierRole[], key: string): string =>
+  roles.find((r) => r.key === key)?.name || key;
+
 export function SuppliersTab({ isOwner, onError }: TabProps) {
   const [suppliers, setSuppliers] = useState<any[]>([]);
-  const { active: roles, reload: reloadRoles } = useSupplierRoles();
+  const { roles: allRoles, active: roles, reload: reloadRoles } = useSupplierRoles();
   const [supplierModal, setSupplierModal] = useState<any | null>(null);
   const [debtsFor, setDebtsFor] = useState<any | null>(null);
   const [matching, setMatching] = useState(false);
@@ -202,7 +206,23 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
                 onChange={(e) => setSupplierModal({ ...supplierModal, role: e.target.value })}
                 className={fieldClass}>
                 {roles.map((r: SupplierRole) => <option key={r.key} value={r.key}>{r.name}</option>)}
+                {/* The types the band has switched off are offered rather than hidden: needing
+                    one is exactly the moment you find out you hire for it, and hiring somebody
+                    turns it on. Hiding them made «הוסיפו ספק צמידים» a dead end. */}
+                {allRoles.filter((r: SupplierRole) => !r.active).length > 0 && (
+                  <optgroup label="סוגים שאינם פעילים — ייפתחו עם השמירה">
+                    {allRoles.filter((r: SupplierRole) => !r.active).map((r: SupplierRole) => (
+                      <option key={r.key} value={r.key}>{r.name}</option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
+              {allRoles.some((r: SupplierRole) => !r.active && r.key === supplierModal.role) && (
+                <span className="block text-[12px] text-faint mt-1.5">
+                  «{roleNameOf(allRoles, supplierModal.role)}» כבוי כרגע — שמירת הספק תפעיל אותו,
+                  ומעכשיו אפשר יהיה לשבץ אותו בהופעות ולשלם לו.
+                </span>
+              )}
             </label>
             <Input label="אימייל (להתאמה מול אורחי היומן)" type="email" dir="ltr" value={supplierModal.email || ''}
               onChange={(e) => setSupplierModal({ ...supplierModal, email: e.target.value })} />
