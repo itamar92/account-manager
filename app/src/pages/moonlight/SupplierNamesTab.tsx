@@ -18,7 +18,7 @@ import { roleName, type TabProps } from './shared';
  * already picked. The bottom half is the mapping itself, for reading back and correcting.
  */
 export function SupplierNamesTab({ isOwner, onError }: TabProps) {
-  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [payees, setPayees] = useState<any[]>([]);
   const [unknown, setUnknown] = useState<any[]>([]);
   const [choice, setChoice] = useState<Record<string, string>>({});
   const [adding, setAdding] = useState<Record<string, string>>({});
@@ -28,29 +28,34 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
   const load = () => {
     get('/moonlight/supplier-names')
       .then((d) => {
-        setSuppliers(d.suppliers);
+        setPayees(d.payees);
         setUnknown(d.unknown);
         // The proposal is pre-selected rather than only shown: it is right most of the time,
         // and a select that starts empty makes every row a decision from scratch.
         setChoice(Object.fromEntries(
-          d.unknown.map((row: any) => [row.normalized, row.suggestion?.supplier_id || ''])
+          d.unknown.map((row: any) => [
+            row.normalized,
+            row.suggestion ? `${row.suggestion.kind === 'member' ? 'm' : 's'}:${row.suggestion.id}` : '',
+          ])
         ));
       })
       .catch((e) => onError(e.message));
   };
   useEffect(load, []);
 
-  const tie = async (supplierId: string, alias: string, key: string) => {
-    if (!supplierId) return onError('בחרו ספק');
+  const tie = async (payeeKey: string, alias: string, key: string) => {
+    if (!payeeKey) return onError('בחרו למי שייך השם');
     setBusy(key);
     onError('');
     setNotice('');
+    const payee = payees.find((p) => p.key === payeeKey);
     try {
-      const d = await post('/moonlight/supplier-names', { supplier_id: supplierId, alias });
-      const supplier = suppliers.find((s) => s.id === supplierId);
+      const d = await post('/moonlight/supplier-names', {
+        payee_kind: payee?.kind, payee_id: payee?.id, alias,
+      });
       setNotice(d.linked
-        ? `«${alias}» שויך ל«${supplier?.name ?? ''}» — ${d.linked} תשלומים נסגרו בעקבות זה`
-        : `«${alias}» שויך ל«${supplier?.name ?? ''}»`);
+        ? `«${alias}» שויך ל«${payee?.name ?? ''}» — ${d.linked} תשלומים נסגרו בעקבות זה`
+        : `«${alias}» שויך ל«${payee?.name ?? ''}»`);
       load();
     } catch (err: any) { onError(err.message); }
     finally { setBusy(''); }
@@ -68,15 +73,16 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="שמות ספקים בחשבוניות"
-        sub="איך קוראים לספק כאן, ואיך הוא חתום על החשבונית שלו"
+        title="שמות בחשבוניות"
+        sub="איך קוראים לו כאן, ואיך הוא חתום על החשבונית שלו"
       />
 
       <p className="text-[13px] text-muted">
         המערכת מזהה חשבונית לפי ח.פ/ת.ז או לפי מזהה הספק ב־Morning. כשאין אף אחד מהם — וזה המצב
         הרגיל אצל ספק קטן — נשאר רק השם, והשם על החשבונית כמעט אף פעם אינו השם שאתם קוראים לו.
-        שם שנרשם כאן שקול לזיהוי ודאי: כל מסמך שיגיע בו ישויך לספק לבד, וגם מסמכים שכבר נמצאים
-        במערכת ייבדקו מחדש ברגע שתשמרו. ראו <Link to="/moonlight/supplierPayments" className="text-accent hover:underline">תשלומים לספקים</Link>.
+        שם שנרשם כאן שקול לזיהוי ודאי: כל מסמך שיגיע בו ישויך לבד, וגם מסמכים שכבר נמצאים
+        במערכת ייבדקו מחדש ברגע שתשמרו. גם חברי הלהקה כאן — מי שמוציא חשבונית על חלקו חתום
+        עליה בשם העסק שלו, לא בשמו בלהקה. ראו <Link to="/moonlight/supplierPayments" className="text-accent hover:underline">תשלומים לספקים</Link>.
       </p>
 
       {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
@@ -91,12 +97,12 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
           )}
         </h3>
         <p className="text-[13px] text-muted">
-          שמות שהופיעו על מסמכים מ־Morning ואינם מוכרים לאף ספק. כל עוד הם כאן, המסמכים שלהם לא
-          ישויכו לאף תשלום.
+          שמות שהופיעו על מסמכים מ־Morning ואינם מוכרים לאף ספק ולאף חבר. כל עוד הם כאן,
+          המסמכים שלהם לא ישויכו לאף תשלום.
         </p>
 
         <DataTable
-          empty="כל שם על מסמכי הספקים מזוהה 🎉"
+          empty="כל שם על המסמכים מזוהה 🎉"
           rows={unknown}
           rowKey={(row: any) => row.normalized}
           columns={[
@@ -121,7 +127,7 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
               render: (row: any) => row.last_date || '—',
             },
             isOwner && {
-              key: 'tie', header: 'שייכו לספק', mobile: 'actions' as const,
+              key: 'tie', header: 'שייכו למי שהוציא', mobile: 'actions' as const,
               render: (row: any) => (
                 <div className="flex items-center gap-2 justify-end">
                   <select
@@ -129,10 +135,17 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
                     onChange={(e) => setChoice({ ...choice, [row.normalized]: e.target.value })}
                     className={`${fieldClass} w-44`}
                   >
-                    <option value="">בחרו ספק…</option>
-                    {suppliers.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} — {roleName(s.role)}</option>
-                    ))}
+                    <option value="">בחרו…</option>
+                    <optgroup label="ספקים">
+                      {payees.filter((p) => p.kind === 'supplier').map((p) => (
+                        <option key={p.key} value={p.key}>{p.name} — {p.role_name || roleName(p.role)}</option>
+                      ))}
+                    </optgroup>
+                    <optgroup label="חברי הלהקה">
+                      {payees.filter((p) => p.kind === 'member').map((p) => (
+                        <option key={p.key} value={p.key}>{p.name} — חלוקת רווח</option>
+                      ))}
+                    </optgroup>
                   </select>
                   <Button
                     variant="ghost"
@@ -148,25 +161,29 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
         />
         {unknown.some((row: any) => row.suggestion) && (
           <p className="text-[12px] text-faint">
-            הספק שנבחר מראש הוא ניחוש לפי דמיון בשם — בדקו אותו לפני השמירה.
+            מי שנבחר מראש הוא ניחוש לפי דמיון בשם — בדקו אותו לפני השמירה.
           </p>
         )}
       </div>
 
       <div className="space-y-3">
-        <h3 className="ser text-lg">השמות של כל ספק</h3>
+        <h3 className="ser text-lg">השמות של כל מקבל תשלום</h3>
         <div className="space-y-2">
-          {suppliers.map((supplier) => (
-            <div key={supplier.id} className="border border-line rounded-xl px-4 py-3 space-y-2">
+          {payees.map((supplier) => (
+            <div key={supplier.key} className="border border-line rounded-xl px-4 py-3 space-y-2">
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
                   <span className="font-medium">{supplier.name}</span>
-                  <span className="text-[13px] text-muted"> · {roleName(supplier.role)}</span>
+                  <span className="text-[13px] text-muted">
+                    {' · '}{supplier.kind === 'member' ? 'חבר להקה' : roleName(supplier.role)}
+                  </span>
                 </div>
                 <div className="text-[12px] text-faint">
                   {supplier.tax_id
                     ? <>ח.פ/ת.ז <span dir="ltr">{supplier.tax_id}</span> · זיהוי ודאי</>
-                    : 'אין ח.פ/ת.ז — הזיהוי נשען על השמות שכאן'}
+                    : supplier.kind === 'member' && !supplier.expects_invoice
+                      ? 'לא רשום — לא מצפים ממנו לחשבונית'
+                      : 'אין ח.פ/ת.ז — הזיהוי נשען על השמות שכאן'}
                 </div>
               </div>
 
@@ -193,19 +210,19 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
                   className="flex items-center gap-2"
                   onSubmit={(e) => {
                     e.preventDefault();
-                    const value = (adding[supplier.id] || '').trim();
+                    const value = (adding[supplier.key] || '').trim();
                     if (!value) return;
-                    tie(supplier.id, value, supplier.id);
-                    setAdding({ ...adding, [supplier.id]: '' });
+                    tie(supplier.key, value, supplier.key);
+                    setAdding({ ...adding, [supplier.key]: '' });
                   }}
                 >
                   <input
                     className={`${fieldClass} max-w-xs`}
                     placeholder="שם נוסף שמופיע על החשבונית"
-                    value={adding[supplier.id] || ''}
-                    onChange={(e) => setAdding({ ...adding, [supplier.id]: e.target.value })}
+                    value={adding[supplier.key] || ''}
+                    onChange={(e) => setAdding({ ...adding, [supplier.key]: e.target.value })}
                   />
-                  <Button type="submit" variant="ghost" disabled={busy === supplier.id}>
+                  <Button type="submit" variant="ghost" disabled={busy === supplier.key}>
                     {busy === supplier.id ? 'שומר…' : 'הוספה'}
                   </Button>
                 </form>

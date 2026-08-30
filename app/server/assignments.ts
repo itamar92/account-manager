@@ -1,23 +1,24 @@
 import { db, uuid } from './db.js';
 import { ensureExpenseRow, expenseRowForEvent, recomputeEvent } from './moonlight.js';
 import { aliasTextBySupplier } from './supplierNames.js';
+import { isAssignmentRole, requiredRoleKeys, roleKeys, type AssignmentRole } from './supplierRoles.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
+export { isAssignmentRole, type AssignmentRole };
+
 /**
- * The staffed roles of a show. The keys are exactly the expense-row columns that pay them,
- * which is what lets a supplier's open debt be read straight off the shows they are
- * assigned to — per show, not one global "soundman" figure.
+ * The staffed roles of a show, as the band has defined them. The keys are exactly the
+ * expense-row columns that pay them, which is what lets a supplier's open debt be read
+ * straight off the shows they are assigned to — per show, not one global "soundman" figure.
+ *
+ * A function rather than the constant it used to be: the band decides which lines it hires
+ * for, so the answer is whatever the roles table says at the moment of asking.
  */
-export const ASSIGNMENT_ROLES = ['lightman', 'soundman', 'singer', 'sound_company'] as const;
-export type AssignmentRole = (typeof ASSIGNMENT_ROLES)[number];
+export const ASSIGNMENT_ROLES = (): string[] => roleKeys();
 
-/** A show without one of these is understaffed; a sound company is only sometimes needed. */
-export const REQUIRED_ROLES: AssignmentRole[] = ['lightman', 'soundman', 'singer'];
-
-export function isAssignmentRole(value: unknown): value is AssignmentRole {
-  return ASSIGNMENT_ROLES.includes(value as AssignmentRole);
-}
+/** A show without one of these is understaffed. */
+export const REQUIRED_ROLES = (): string[] => requiredRoleKeys();
 
 const normalizeEmail = (value: unknown): string => String(value || '').trim().toLowerCase();
 
@@ -100,7 +101,7 @@ export function autoAssignEvent(eventId: string): number {
 
   const invited = listSuppliers().filter((s) => s.email && emails.includes(normalizeEmail(s.email)));
   let assigned = 0;
-  for (const role of ASSIGNMENT_ROLES) {
+  for (const role of ASSIGNMENT_ROLES()) {
     const match = invited.find((s) => s.role === role);
     if (!match) continue;
     const existing = db
@@ -248,5 +249,5 @@ export function supplierDebts(): Map<string, SupplierDebt> {
 /** The required roles nobody has decided about yet — the "you forgot someone" signal. */
 export function missingRoles(eventId: string): AssignmentRole[] {
   const covered = new Set(assignmentsForEvent(eventId).map((a) => a.role));
-  return REQUIRED_ROLES.filter((role) => !covered.has(role));
+  return REQUIRED_ROLES().filter((role) => !covered.has(role));
 }

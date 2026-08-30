@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { del, post, put } from '../../api';
+import { Link } from 'react-router-dom';
+import { del, post, put, nis } from '../../api';
 import { Button, DataTable, Input, Modal, fieldClass } from '../../ui';
 import { BUSINESS_TYPES, businessTypeLabel, useBandMembers, type BandMember } from './shared';
 
@@ -103,6 +104,27 @@ export function MembersPanel({ isOwner, onError }: {
             ),
           },
           {
+            // The consequence of the column before it: a member who is an עוסק owes the band an
+            // invoice for every share it has paid them, and until it arrives that share is not
+            // a deductible expense.
+            key: 'missing_docs', header: 'חסרות חשבוניות',
+            sortValue: (m: BandMember) => Number(m.missing_docs) || 0,
+            render: (m: BandMember) => {
+              if (m.business_type === 'none') {
+                return <span className="text-faint" title="לא רשום — אין חשבונית לצפות לה">—</span>;
+              }
+              if (!(Number(m.missing_docs) > 0)) return <span className="text-pos">—</span>;
+              return (
+                <Link to="/moonlight/supplierPayments" className="flex flex-col items-start gap-0.5 hover:underline">
+                  <span className="num text-warn font-medium">{nis(m.missing_docs)}</span>
+                  <span className="text-[11.5px] text-faint whitespace-nowrap">
+                    {m.missing_doc_payments} תשלומים · הוותיק לפני {m.missing_docs_days} ימים
+                  </span>
+                </Link>
+              );
+            },
+          },
+          {
             key: 'email', header: 'אימייל', sortValue: (m: BandMember) => m.email || '',
             render: (m: BandMember) => <span dir="ltr">{m.email || '—'}</span>,
           },
@@ -174,9 +196,28 @@ export function MembersPanel({ isOwner, onError }: {
               </select>
               <span className="block text-[12px] text-faint mt-1.5">
                 קובע אם החשבונית שהחבר מוציא על חלקו מזכה בקיזוז מע"מ, מוכרת ללא מע"מ, או אינה
-                הוצאה מוכרת כלל.
+                הוצאה מוכרת כלל. «לא רשום» גם אומר שלא נחכה לחשבונית על חלקו.
               </span>
             </label>
+            {editing.business_type !== 'none' && (
+              <div className="border-t border-line pt-3 space-y-3">
+                <p className="text-[12px] text-faint">
+                  זיהוי החשבוניות שהחבר מוציא על חלקו — בדיוק כמו אצל ספק. השם על החשבונית הוא
+                  שם העסק שלו ולא שמו בלהקה, ואותו רושמים בלשונית «שמות בחשבוניות».
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="ח.פ / ת.ז" dir="ltr" value={editing.tax_id || ''}
+                    onChange={(e) => setEditing({ ...editing, tax_id: e.target.value })}
+                  />
+                  <Input
+                    label="מזהה ספק ב־Morning" dir="ltr"
+                    value={editing.morning_supplier_id || ''}
+                    onChange={(e) => setEditing({ ...editing, morning_supplier_id: e.target.value })}
+                  />
+                </div>
+              </div>
+            )}
             <label className="flex items-center gap-2 text-sm text-ink-2">
               <input
                 type="checkbox" checked={!!editing.is_manager} className="accent-accent"

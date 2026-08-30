@@ -6,22 +6,24 @@ import { useAuth } from '../../AuthContext';
 import { Button, Empty, Input, Modal, MoneyInput, SelectCell, fieldClass } from '../../ui';
 import {
   FUND_TRANSFERRED, PAYMENT_STATUSES, RETURN_PARAM, divisionSplitLabel, moneyReceived, roleName,
-  showReturn, useBandMembers,
+  showReturn, useBandMembers, useSupplierRoles,
 } from './shared';
 import { fetchTransferRates, splitTransfer } from './transfer';
 
 /**
  * Every cost line of a show, in the order the page lists them.
  *
- * `role` marks the four that somebody is staffed on — those get a supplier picker beside the
- * amount, because who did it and what they cost are one fact, not two. `settles` marks the
- * lines paid separately after the show; the rest are settled the moment they are entered.
+ * `settles` marks the lines paid separately after the show — those carry a paid flag; the rest
+ * are settled the moment they are entered. Which lines have somebody staffed on them is not
+ * decided here any more: the band names the roles it hires for (see סוגי ספקים), and any line
+ * carrying an active role gets a supplier picker beside its amount, because who did it and
+ * what they cost are one fact rather than two.
  */
-const COST_LINES: Array<{ key: string; label: string; role?: string; settles?: boolean }> = [
-  { key: 'lightman', label: 'תאורן', role: 'lightman', settles: true },
-  { key: 'soundman', label: 'סאונדמן', role: 'soundman', settles: true },
-  { key: 'singer', label: 'זמר/ת', role: 'singer', settles: true },
-  { key: 'sound_company', label: 'חברת הגברה', role: 'sound_company', settles: true },
+const COST_LINES: Array<{ key: string; label: string; settles?: boolean }> = [
+  { key: 'lightman', label: 'תאורן', settles: true },
+  { key: 'soundman', label: 'סאונדמן', settles: true },
+  { key: 'singer', label: 'זמר/ת', settles: true },
+  { key: 'sound_company', label: 'חברת הגברה', settles: true },
   { key: 'hall_fee', label: 'שכירות אולם', settles: true },
   { key: 'bracelets', label: 'צמידים', settles: true },
   { key: 'akom', label: 'אקו"ם', settles: true },
@@ -55,6 +57,7 @@ export function ShowDetail() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const { user } = useAuth();
+  const { active: activeRoles } = useSupplierRoles();
   // The list this show was opened from, filters and all. Absent — a bookmark, a link somebody
   // was sent — the shows list is the sensible place to be put down.
   const back = showReturn(searchParams.get(RETURN_PARAM));
@@ -293,28 +296,32 @@ export function ShowDetail() {
             {COST_LINES.map((line) => {
               const amount = Number(expenses[line.key]) || 0;
               const paid = !!expenses[`${line.key}_paid`];
-              const staffed = line.role ? assignments[line.role] : undefined;
+              // A line is staffed if the band hires for it. The role also names the line, so
+              // «צמידים» renamed to «חברת הצמידים» reads that way here too.
+              const role = activeRoles.find((r) => r.key === line.key);
+              const staffed = role ? assignments[role.key] : undefined;
+              const settles = line.settles || !!role;
               return (
                 <div key={line.key} className="flex items-center gap-2.5 py-2.5 flex-wrap">
-                  <span className="text-muted w-[5.5rem] shrink-0">{line.label}</span>
+                  <span className="text-muted w-[5.5rem] shrink-0">{role?.name || line.label}</span>
 
-                  {line.role ? (
+                  {role ? (
                     <SelectCell
                       value={staffed?.not_needed ? 'none' : staffed?.supplier_id || ''}
                       disabled={!isOwner}
                       className="w-[9.5rem] font-medium"
-                      onSave={(v) => assign(line.role!, v)}
+                      onSave={(v) => assign(role.key, v)}
                       options={[
                         { value: '', label: 'לא נבחר' },
                         { value: 'none', label: 'לא נדרש' },
                         ...suppliers
-                          .filter((s: any) => s.role === line.role)
+                          .filter((s: any) => s.role === role.key)
                           .map((s: any) => ({ value: s.id, label: s.name })),
                       ]}
                     />
                   ) : <span className="w-[9.5rem] shrink-0" />}
 
-                  {line.settles && amount > 0 && (
+                  {settles && amount > 0 && (
                     <button
                       disabled={!isOwner}
                       onClick={() => saveCost({ [`${line.key}_paid`]: paid ? 0 : 1 })}
@@ -331,7 +338,7 @@ export function ShowDetail() {
                     <CostAmount
                       value={amount}
                       disabled={!isOwner}
-                      settled={!line.settles || paid}
+                      settled={!settles || paid}
                       onSave={(v) => saveCost({ [line.key]: v })}
                     />
                   </div>

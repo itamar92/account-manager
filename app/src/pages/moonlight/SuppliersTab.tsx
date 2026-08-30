@@ -2,9 +2,10 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { del, get, post, put, nis } from '../../api';
 import { Button, DataTable, Input, Modal, PageHeader, fieldClass } from '../../ui';
-import { ASSIGNMENT_ROLES, roleName, type TabProps } from './shared';
+import { roleName, useSupplierRoles, type SupplierRole, type TabProps } from './shared';
 import { MembersPanel } from './MembersPanel';
 import { PaySupplierModal } from './SupplierPaymentsTab';
+import { SupplierRolesPanel } from './SupplierRolesPanel';
 
 /**
  * Who the band hires, and what it still owes them.
@@ -17,6 +18,7 @@ import { PaySupplierModal } from './SupplierPaymentsTab';
  */
 export function SuppliersTab({ isOwner, onError }: TabProps) {
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const { active: roles, reload: reloadRoles } = useSupplierRoles();
   const [supplierModal, setSupplierModal] = useState<any | null>(null);
   const [debtsFor, setDebtsFor] = useState<any | null>(null);
   const [matching, setMatching] = useState(false);
@@ -81,6 +83,8 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
           who is in the band is the part the rest of the app reads back. */}
       <MembersPanel isOwner={isOwner} onError={onError} />
 
+      <SupplierRolesPanel isOwner={isOwner} onError={onError} onChange={() => { reloadRoles(); load(); }} />
+
       <div className="space-y-4">
       <PageHeader
         title="ספקים"
@@ -94,7 +98,7 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
                 {matching ? 'מתאים…' : 'התאמה מהיומן'}
               </Button>
             </span>
-            <Button onClick={() => setSupplierModal({ name: '', email: '', role: 'soundman', phone: '', notes: '', default_amount: 0, tax_id: '', morning_supplier_id: '', aliases: '', expects_invoice: true })}>
+            <Button onClick={() => setSupplierModal({ name: '', email: '', role: roles[0]?.key || 'soundman', phone: '', notes: '', default_amount: 0, tax_id: '', morning_supplier_id: '', aliases: '', expects_invoice: true })}>
               + ספק
             </Button>
           </>
@@ -197,7 +201,7 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
               <select value={supplierModal.role}
                 onChange={(e) => setSupplierModal({ ...supplierModal, role: e.target.value })}
                 className={fieldClass}>
-                {ASSIGNMENT_ROLES.map((r) => <option key={r.key} value={r.key}>{r.name}</option>)}
+                {roles.map((r: SupplierRole) => <option key={r.key} value={r.key}>{r.name}</option>)}
               </select>
             </label>
             <Input label="אימייל (להתאמה מול אורחי היומן)" type="email" dir="ltr" value={supplierModal.email || ''}

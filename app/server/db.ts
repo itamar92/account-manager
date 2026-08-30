@@ -287,11 +287,35 @@ CREATE TABLE IF NOT EXISTS band_general_expenses (
 -- The band's regular suppliers: who answers to each email, and in what role. The role keys
 -- are the expense-row columns that pay them (lightman, soundman, singer, sound_company),
 -- which is what ties an assignment to the money it costs.
+-- The kinds of supplier the band hires, decided by the band rather than by this file.
+--
+-- A role is a cost line on a show wearing a name: staffing somebody on it says who that line
+-- pays, which is what lets one transfer settle four gigs and wait for one invoice. The four
+-- roles this app shipped with — תאורן, סאונדמן, זמר/ת, חברת הגברה — were a list in the source,
+-- so the bracelets company, א.ק.ו.ם and the hall could be *costs* but never *somebody you pay*:
+-- no supplier, no payment, no invoice chased. They are rows now, and so is anything else the
+-- band decides to hire.
+--
+-- The key is the expense-row column the role is paid out of, which is why a role cannot be
+-- invented from nothing: the money has to land somewhere that already exists. «required» is
+-- the "you forgot someone" signal on a show; «active» is whether the band uses this role at
+-- all — deactivating hides it from the staffing without touching a single show that already
+-- used it.
+CREATE TABLE IF NOT EXISTS band_supplier_roles (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  required INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS band_suppliers (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   email TEXT COLLATE NOCASE,
-  role TEXT NOT NULL CHECK (role IN ('lightman','soundman','singer','sound_company')),
+  -- The role's key in band_supplier_roles. No foreign key: a role that is renamed or retired
+  -- must not take the suppliers hired under it with it.
+  role TEXT NOT NULL,
   phone TEXT,
   notes TEXT,
   -- What this supplier usually charges for one show. Staffing them on a role writes it into
@@ -323,11 +347,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_band_suppliers_email
 -- from the aliases column this table replaced.
 CREATE TABLE IF NOT EXISTS band_supplier_aliases (
   id TEXT PRIMARY KEY,
-  supplier_id TEXT NOT NULL REFERENCES band_suppliers(id) ON DELETE CASCADE,
+  -- Whose name this is: a supplier, or a member of the band invoicing their own share.
+  supplier_id TEXT REFERENCES band_suppliers(id) ON DELETE CASCADE,
+  member_key TEXT,
   alias TEXT NOT NULL,
   normalized TEXT NOT NULL,
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','link','migration')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  CHECK ((supplier_id IS NOT NULL) + (member_key IS NOT NULL) = 1)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_band_supplier_aliases_normalized
@@ -384,7 +411,7 @@ CREATE TABLE IF NOT EXISTS band_members (
 CREATE TABLE IF NOT EXISTS band_event_assignments (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('lightman','soundman','singer','sound_company')),
+  role TEXT NOT NULL,
   supplier_id TEXT,
   not_needed INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','calendar')),
@@ -406,9 +433,17 @@ CREATE TABLE IF NOT EXISTS band_event_assignments (
 -- an open payment is either covered by its linked documents or waiting for them. Without
 -- these two the queue would fill with rows that can never close, and a list that is
 -- permanently red is a list nobody opens.
+--
+-- Who was paid is either a supplier or a member of the band, and exactly one of the two
+-- columns says which. A member's share is money leaving the band for somebody who, if they are
+-- an עוסק, owes it an invoice back — the same question about the same money, so it belongs in
+-- the same queue rather than in a parallel one that would have to be read beside it.
 CREATE TABLE IF NOT EXISTS supplier_payments (
   id TEXT PRIMARY KEY,
-  supplier_id TEXT NOT NULL REFERENCES band_suppliers(id) ON DELETE CASCADE,
+  supplier_id TEXT REFERENCES band_suppliers(id) ON DELETE CASCADE,
+  -- band_members.member_key. No foreign key, deliberately: a member who leaves is marked
+  -- inactive rather than deleted, and the payments the band made them are its own history.
+  member_key TEXT,
   date TEXT NOT NULL,
   amount REAL NOT NULL DEFAULT 0,
   method TEXT,
@@ -421,7 +456,10 @@ CREATE TABLE IF NOT EXISTS supplier_payments (
   -- created when a cost line was ticked paid on a show; 'backfill' is one the migration
   -- synthesised from a line that was already paid before payments were recorded at all.
   source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','line','backfill')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- Exactly one payee. A table constraint rather than a column one, because it is a
+  -- fact about the pair; SQLite wants those after every column has been declared.
+  CHECK ((supplier_id IS NOT NULL) + (member_key IS NOT NULL) = 1)
 );
 
 -- Which cost lines one transfer settled — the multi-show part. The amount is stored per line
@@ -431,16 +469,22 @@ CREATE TABLE IF NOT EXISTS supplier_payments (
 -- The unique index is the invariant that keeps the two representations honest: a cost line is
 -- settled by at most one payment, so a show's per-role paid flag and a line row here can never
 -- disagree about who paid for what.
+-- A line is one show's cost line (role) or one member's share of that show (member_key),
+-- exactly one of the two — the same distinction the payment itself carries.
 CREATE TABLE IF NOT EXISTS supplier_payment_lines (
+  id TEXT PRIMARY KEY,
   payment_id TEXT NOT NULL REFERENCES supplier_payments(id) ON DELETE CASCADE,
   event_id TEXT NOT NULL REFERENCES band_events(id) ON DELETE CASCADE,
-  role TEXT NOT NULL CHECK (role IN ('lightman','soundman','singer','sound_company')),
+  role TEXT,
+  member_key TEXT,
   amount REAL NOT NULL DEFAULT 0,
-  PRIMARY KEY (payment_id, event_id, role)
+  CHECK ((role IS NOT NULL) + (member_key IS NOT NULL) = 1)
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_payment_lines_line
-  ON supplier_payment_lines(event_id, role);
+-- The indexes this table needs are created after the migration below rather than here: one of
+-- them is on member_key, and this statement also runs against a database whose lines table
+-- has not been rebuilt yet — where indexing a column that does not exist is a hard error
+-- before the migration gets its chance.
 
 -- The documents that answer for a payment: rows of the Morning expense table, linked.
 --
@@ -688,6 +732,12 @@ addColumnIfMissing('band_suppliers', 'aliases', 'TEXT');
 // reaches Morning under another name would otherwise sit in the queue for ever.
 addColumnIfMissing('band_suppliers', 'expects_invoice', 'INTEGER NOT NULL DEFAULT 1');
 
+// What ties a member to the documents they issue, exactly as for a supplier. A member who is
+// an עוסק invoices the band for their share, and that invoice is headed with their business —
+// which is neither their name in the band nor the mailbox the calendar knows them by.
+addColumnIfMissing('band_members', 'tax_id', 'TEXT');
+addColumnIfMissing('band_members', 'morning_supplier_id', 'TEXT');
+
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a
 // category, in the list and in the filter. Cleared rows read as ללא סיווג until re-synced.
@@ -871,6 +921,242 @@ function seedDefaultCalendarRules() {
     null, 1, 0, 1
   );
 }
+
+/**
+ * The cost lines a supplier can be hired for, and what the band calls each.
+ *
+ * Seeded once and then owned by the band — one row per cost line a show has, so hiring
+ * somebody for any of them is a decision made on a screen rather than a change to this file.
+ *
+ * The four the app shipped with stay active with the same required flags they had, so nothing
+ * about an existing show changes on the day this lands. צמידים, אק״ום and שכר אולם arrive
+ * switched off — they are real payees, but turning them on changes what every show asks for,
+ * and that is the band's decision to make on the screen rather than this file's to make for
+ * them.
+ */
+/**
+ * Gives every cost line the paid flag the settled ones always had.
+ *
+ * קמפיין, כיבוד, עיצוב, אחר and הוצאה נוספת were costs nobody was ever staffed on, so they
+ * were treated as settled the moment they were typed — there was no flag to say otherwise.
+ * A band that hires a designer needs the same "have they been paid, did the invoice arrive"
+ * for עיצוב as for תאורן, and that needs somewhere to record it.
+ *
+ * Everything already entered is marked paid: those costs were settled long before this column
+ * existed, and a column that arrived claiming they were all outstanding would invent a debt
+ * out of a schema change. New rows start unpaid, which only ever shows up once the band turns
+ * a role on for that line — see expensePaidTotal, which asks the roles which lines settle.
+ */
+function addCostLinePaidFlags() {
+  const columns = db.prepare('PRAGMA table_info(band_event_expenses)').all() as Array<{ name: string }>;
+  const has = new Set(columns.map((c) => c.name));
+  for (const field of ['campaign', 'refreshments', 'design', 'other', 'expense_amount']) {
+    if (has.has(`${field}_paid`)) continue;
+    db.exec(`ALTER TABLE band_event_expenses ADD COLUMN ${field}_paid INTEGER NOT NULL DEFAULT 0`);
+    db.exec(`UPDATE band_event_expenses SET ${field}_paid = 1`);
+  }
+}
+
+addCostLinePaidFlags();
+
+function seedSupplierRoles() {
+  const seeded = db.prepare('SELECT COUNT(*) AS n FROM band_supplier_roles').get() as { n: number };
+  if (seeded.n) return;
+  const insert = db.prepare(
+    'INSERT INTO band_supplier_roles (key, name, required, active, sort_order) VALUES (?, ?, ?, ?, ?)'
+  );
+  const rows: Array<[string, string, number, number]> = [
+    ['lightman', 'תאורן', 1, 1],
+    ['soundman', 'סאונדמן', 1, 1],
+    ['singer', 'זמר/ת', 1, 1],
+    ['sound_company', 'חברת הגברה', 0, 1],
+    ['bracelets', 'צמידים', 0, 0],
+    ['akom', 'אקו"ם', 0, 0],
+    ['hall_fee', 'שכירות אולם', 0, 0],
+    ['campaign', 'קמפיין', 0, 0],
+    ['refreshments', 'כיבוד', 0, 0],
+    ['design', 'עיצוב', 0, 0],
+    ['other', 'אחר', 0, 0],
+    ['expense_amount', 'הוצאה נוספת', 0, 0],
+  ];
+  rows.forEach(([key, name, required, active], i) => insert.run(key, name, required, active, i));
+}
+
+seedSupplierRoles();
+
+/**
+ * Rewrites the supplier tables that were shaped around exactly four roles and exactly one kind
+ * of payee.
+ *
+ * Four CHECK constraints named the roles in the schema itself, and `supplier_payments` could
+ * only point at a supplier — so «who do you hire» and «who does the band pay» were both
+ * decided here rather than by the band. SQLite cannot drop a CHECK or relax a NOT NULL in
+ * place, so each table is rebuilt: created empty in its new shape, copied into, and swapped.
+ *
+ * Foreign keys are turned off for the duration. With them on, dropping a table cascades into
+ * everything that references it — the payments would take their lines and documents with them
+ * and the copy would restore rows into an empty world. The ids are preserved exactly, so what
+ * is switched back on at the end refers to the same rows it did at the start.
+ */
+function migratePayeeTables() {
+  const schemaOf = (table: string): string =>
+    ((db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) as
+      | { sql: string }
+      | undefined)?.sql) ?? '';
+
+  const jobs: Array<{ table: string; stale: (sql: string) => boolean; create: string; copy: string }> = [
+    {
+      table: 'band_suppliers',
+      stale: (sql) => sql.includes("CHECK (role IN ('lightman'"),
+      create: `CREATE TABLE band_suppliers_migrating (
+        id TEXT PRIMARY KEY, name TEXT NOT NULL, email TEXT COLLATE NOCASE, role TEXT NOT NULL,
+        phone TEXT, notes TEXT, default_amount REAL NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        tax_id TEXT, morning_supplier_id TEXT, aliases TEXT,
+        expects_invoice INTEGER NOT NULL DEFAULT 1
+      )`,
+      copy: `INSERT INTO band_suppliers_migrating
+               (id, name, email, role, phone, notes, default_amount, created_at,
+                tax_id, morning_supplier_id, aliases, expects_invoice)
+             SELECT id, name, email, role, phone, notes, default_amount, created_at,
+                tax_id, morning_supplier_id, aliases, expects_invoice FROM band_suppliers`,
+    },
+    {
+      table: 'band_event_assignments',
+      stale: (sql) => sql.includes("CHECK (role IN ('lightman'"),
+      create: `CREATE TABLE band_event_assignments_migrating (
+        id TEXT PRIMARY KEY,
+        event_id TEXT NOT NULL REFERENCES band_events(id) ON DELETE CASCADE,
+        role TEXT NOT NULL, supplier_id TEXT, not_needed INTEGER NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','calendar')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )`,
+      copy: `INSERT INTO band_event_assignments_migrating
+               (id, event_id, role, supplier_id, not_needed, source, created_at)
+             SELECT id, event_id, role, supplier_id, not_needed, source, created_at
+               FROM band_event_assignments`,
+    },
+    {
+      table: 'supplier_payments',
+      stale: (sql) => !sql.includes('member_key'),
+      create: `CREATE TABLE supplier_payments_migrating (
+        id TEXT PRIMARY KEY,
+        supplier_id TEXT REFERENCES band_suppliers(id) ON DELETE CASCADE,
+        member_key TEXT,
+        date TEXT NOT NULL, amount REAL NOT NULL DEFAULT 0, method TEXT, notes TEXT,
+        expects_invoice INTEGER NOT NULL DEFAULT 1,
+        resolution TEXT CHECK (resolution IN ('verified','not_required')),
+        source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','line','backfill')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK ((supplier_id IS NOT NULL) + (member_key IS NOT NULL) = 1)
+      )`,
+      copy: `INSERT INTO supplier_payments_migrating
+               (id, supplier_id, member_key, date, amount, method, notes, expects_invoice,
+                resolution, source, created_at)
+             SELECT id, supplier_id, NULL, date, amount, method, notes, expects_invoice,
+                resolution, source, created_at FROM supplier_payments`,
+    },
+    {
+      table: 'supplier_payment_lines',
+      stale: (sql) => !sql.includes('member_key'),
+      create: `CREATE TABLE supplier_payment_lines_migrating (
+        id TEXT PRIMARY KEY,
+        payment_id TEXT NOT NULL REFERENCES supplier_payments(id) ON DELETE CASCADE,
+        event_id TEXT NOT NULL REFERENCES band_events(id) ON DELETE CASCADE,
+        role TEXT, member_key TEXT,
+        amount REAL NOT NULL DEFAULT 0,
+        CHECK ((role IS NOT NULL) + (member_key IS NOT NULL) = 1)
+      )`,
+      // The line rows had no id of their own — they were keyed by what they settle. One is
+      // minted here from the payment and the line it covers, which is unique by that same key.
+      copy: `INSERT INTO supplier_payment_lines_migrating
+               (id, payment_id, event_id, role, member_key, amount)
+             SELECT payment_id || ':' || event_id || ':' || role, payment_id, event_id, role,
+                NULL, amount FROM supplier_payment_lines`,
+    },
+    {
+      table: 'band_supplier_aliases',
+      stale: (sql) => !sql.includes('member_key'),
+      create: `CREATE TABLE band_supplier_aliases_migrating (
+        id TEXT PRIMARY KEY,
+        supplier_id TEXT REFERENCES band_suppliers(id) ON DELETE CASCADE,
+        member_key TEXT,
+        alias TEXT NOT NULL, normalized TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','link','migration')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        CHECK ((supplier_id IS NOT NULL) + (member_key IS NOT NULL) = 1)
+      )`,
+      copy: `INSERT INTO band_supplier_aliases_migrating
+               (id, supplier_id, member_key, alias, normalized, source, created_at)
+             SELECT id, supplier_id, NULL, alias, normalized, source, created_at
+               FROM band_supplier_aliases`,
+    },
+  ];
+
+  const due = jobs.filter((job) => {
+    const sql = schemaOf(job.table);
+    return sql && job.stale(sql);
+  });
+  if (!due.length) return;
+
+  db.pragma('foreign_keys = OFF');
+  try {
+    db.transaction(() => {
+      for (const job of due) {
+        db.exec(job.create);
+        db.exec(job.copy);
+        db.exec(`DROP TABLE ${job.table}`);
+        db.exec(`ALTER TABLE ${job.table}_migrating RENAME TO ${job.table}`);
+      }
+      // The indexes went with the tables they were on.
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_band_suppliers_email
+          ON band_suppliers(email) WHERE email IS NOT NULL AND email != '';
+        CREATE INDEX IF NOT EXISTS idx_band_event_assignments_event
+          ON band_event_assignments(event_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_band_event_assignments_role
+          ON band_event_assignments(event_id, role);
+        CREATE INDEX IF NOT EXISTS idx_supplier_payments_supplier
+          ON supplier_payments(supplier_id, date);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_payment_lines_role
+          ON supplier_payment_lines(event_id, role) WHERE role IS NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_payment_lines_member
+          ON supplier_payment_lines(event_id, member_key) WHERE member_key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_supplier_payment_lines_payment
+          ON supplier_payment_lines(payment_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_band_supplier_aliases_normalized
+          ON band_supplier_aliases(normalized);
+        CREATE INDEX IF NOT EXISTS idx_band_supplier_aliases_supplier
+          ON band_supplier_aliases(supplier_id);
+      `);
+    })();
+  } finally {
+    db.pragma('foreign_keys = ON');
+  }
+
+  const broken = db.pragma('foreign_key_check') as unknown[];
+  if (broken.length) console.warn(`[payees] foreign_key_check reported ${broken.length} rows`);
+}
+
+migratePayeeTables();
+
+/**
+ * The payment-line invariants: a show's cost line is settled by at most one payment, and so is
+ * one member's share of one show.
+ *
+ * Partial indexes rather than a composite primary key, because the column that is NULL for a
+ * line of the other kind must not take part in the uniqueness. Created here, after the
+ * migration, so they are applied to the rebuilt table in an existing database and to the
+ * freshly created one in a new database alike.
+ */
+db.exec(`
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_payment_lines_role
+    ON supplier_payment_lines(event_id, role) WHERE role IS NOT NULL;
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_payment_lines_member
+    ON supplier_payment_lines(event_id, member_key) WHERE member_key IS NOT NULL;
+  CREATE INDEX IF NOT EXISTS idx_supplier_payment_lines_payment
+    ON supplier_payment_lines(payment_id);
+`);
 
 seedDefaultCalendarRules();
 
