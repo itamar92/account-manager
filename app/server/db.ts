@@ -304,6 +304,37 @@ CREATE TABLE IF NOT EXISTS band_suppliers (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_band_suppliers_email
   ON band_suppliers(email) WHERE email IS NOT NULL AND email != '';
 
+-- The names a supplier's documents actually arrive under.
+--
+-- The band calls somebody «אבי סאונד»; the invoice is headed «א. כהן הפקות בע"מ», and nothing
+-- in either name tells a computer they are one business. This table is where a person says so
+-- once, so every document that supplier ever issues is recognised without being asked about
+-- again — which is the whole reason it is a table of its own rather than a free-text field:
+-- the mapping is the thing being maintained, and it needs to be listable, addable from the
+-- place the mistake shows up, and unique.
+--
+-- normalized is what the match is made on (see normalizeName): quotes, geresh, the legal
+-- suffix and the punctuation around them dropped. It is unique across every supplier, because
+-- one invoice name pointing at two suppliers is not a mapping — it is a coin toss, and the
+-- link it produces would put a document against money it has nothing to do with.
+--
+-- source records who said so: 'manual' typed into the names screen or the supplier dialog,
+-- 'link' learned when a document was attached to a payment by hand, 'migration' carried over
+-- from the aliases column this table replaced.
+CREATE TABLE IF NOT EXISTS band_supplier_aliases (
+  id TEXT PRIMARY KEY,
+  supplier_id TEXT NOT NULL REFERENCES band_suppliers(id) ON DELETE CASCADE,
+  alias TEXT NOT NULL,
+  normalized TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','link','migration')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_band_supplier_aliases_normalized
+  ON band_supplier_aliases(normalized);
+CREATE INDEX IF NOT EXISTS idx_band_supplier_aliases_supplier
+  ON band_supplier_aliases(supplier_id);
+
 -- The band itself: who is in it, what they do, and — the part the money cares about — what
 -- kind of business each one runs. A member who is an עוסק מורשה hands back a חשבונית מס whose
 -- מע"מ can be reclaimed; an עוסק פטור hands back an invoice that is deductible but carries
@@ -641,9 +672,14 @@ addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0'
 // them off the calendar is not the same identifier: an invoice carries a business, not a
 // mailbox. The tax id is the strong match — two businesses cannot share one — and the Morning
 // supplier id is stronger still where Morning has one, so a document matched on either is
-// safe to link without asking. `aliases` is the weak one, for the gap between what the band
-// calls somebody and what their invoice is headed with: newline- or comma-separated names,
-// compared case- and whitespace-insensitively, and never enough on its own to auto-link.
+// safe to link without asking.
+//
+// The names an invoice may be headed with moved out to band_supplier_aliases, where one of
+// them can be added from the screen that noticed it was missing and can never point at two
+// suppliers at once. The `aliases` column is frozen rather than dropped: it is what the
+// migration read from, and keeping it is the way back if a mapping ever looks wrong. Nothing
+// reads it any more — moonlight_supplier_aliases_v1 in settings marks when it stopped being
+// the truth.
 addColumnIfMissing('band_suppliers', 'tax_id', 'TEXT');
 addColumnIfMissing('band_suppliers', 'morning_supplier_id', 'TEXT');
 addColumnIfMissing('band_suppliers', 'aliases', 'TEXT');

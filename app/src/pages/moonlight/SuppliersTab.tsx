@@ -105,7 +105,9 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
         אימייל של ספק הוא מה שהופך אורח ביומן לשיבוץ, ותעריף קבוע נכנס לבד לשורת העלות כששיבצתם אותו.
         החוב נספר רק מהופעות שכבר היו. «תשלום» כאן סוגר כמה הופעות בהעברה אחת, וההעברה היא מה
         שממתין לחשבונית — ראו <Link to="/moonlight/supplierPayments" className="text-accent hover:underline">תשלומים לספקים</Link>.
-        ח.פ/ת.ז הוא מה שמאפשר לשייך חשבונית מ־Morning לתשלום בוודאות.
+        ח.פ/ת.ז הוא מה שמאפשר לשייך חשבונית מ־Morning לתשלום בוודאות, וכשאין —{' '}
+        <Link to="/moonlight/supplierNames" className="text-accent hover:underline">שם החשבונית</Link>{' '}
+        עושה את אותה עבודה.
       </p>
 
       {missingDocsTotal > 0 && (
@@ -227,6 +229,10 @@ export function SuppliersTab({ isOwner, onError }: TabProps) {
                 value={supplierModal.aliases || ''}
                 onChange={(e) => setSupplierModal({ ...supplierModal, aliases: e.target.value })}
               />
+              <p className="text-[12px] text-faint -mt-1">
+                שם שנרשם כאן מספיק לשיוך אוטומטי, בדיוק כמו ח.פ. את כל השמות יחד — ואת השמות
+                שהגיעו על מסמכים ואינם מוכרים לאף ספק — רואים בלשונית «שמות בחשבוניות».
+              </p>
               <label className="flex items-center gap-2 text-sm text-ink-2">
                 <input
                   type="checkbox"

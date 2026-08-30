@@ -46,10 +46,13 @@ import {
 } from './assignments.js';
 import {
   deletePayment, invoiceQueue, linkDocument, listPayments, openLines, recordPayment,
-  pruneOrphanPayments, setResolution, runMatch, supplierInvoiceGaps, syncLinePayments,
-  unlinkDocument,
+  pruneOrphanPayments, setResolution, runMatch, searchDocuments, supplierInvoiceGaps,
+  syncLinePayments, unlinkDocument,
   PAYMENT_RESOLUTIONS, type PaymentResolution,
 } from './supplierPayments.js';
+import {
+  addAlias, aliasesFor, removeAlias, setAliasesFromText, unknownInvoiceNames,
+} from './supplierNames.js';
 import {
   getCreditPoints, getVatFrequency, incomeTaxReport, monthlyPnl, pnlTotals, saveFiling, vatReport,
 } from './reports.js';
@@ -1707,7 +1710,9 @@ router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
       supplierAmount(default_amount),
       String(b.tax_id ?? '').trim() || null,
       String(b.morning_supplier_id ?? '').trim() || null,
-      String(b.aliases ?? '').trim() || null,
+      // The frozen column, left empty: the names live in band_supplier_aliases, written below
+      // once the supplier row exists for them to point at.
+      null,
       // Defaulting on: most suppliers do invoice, and a supplier wrongly expected to is one
       // visible row to dismiss, where one wrongly not expected to is money silently untracked.
       b.expects_invoice === undefined || b.expects_invoice ? 1 : 0
@@ -1715,9 +1720,17 @@ router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   } catch {
     return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
   }
+  // A name already claimed by another supplier throws, and it takes the new supplier with it:
+  // better than a half-entered mapping nobody was told about.
+  try {
+    setAliasesFromText(id, b.aliases);
+  } catch (err: any) {
+    db.prepare('DELETE FROM band_suppliers WHERE id = ?').run(id);
+    return res.status(err.status || 400).json({ error: err.message });
+  }
   // A new email may belong to guests already on synced shows — match them right away.
   autoAssignAll();
-  res.json({ supplier: db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(id) });
+  res.json({ supplier: listSuppliers().find((s) => s.id === id) });
 }));
 
 router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
@@ -1737,12 +1750,22 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
       supplierAmount(b.default_amount),
       String(b.tax_id ?? '').trim() || null,
       String(b.morning_supplier_id ?? '').trim() || null,
-      String(b.aliases ?? '').trim() || null,
+      existing.aliases ?? null,
       b.expects_invoice ? 1 : 0,
       req.params.id
     );
   } catch {
     return res.status(409).json({ error: 'כבר קיים ספק עם האימייל הזה' });
+  }
+  // Only when the caller sent the line: an update touching one field must not silently drop
+  // every invoice name the supplier answers to. Sending it unchanged is a no-op — names whose
+  // normalized form survives the edit keep the row they had.
+  if (req.body?.aliases !== undefined) {
+    try {
+      setAliasesFromText(req.params.id, req.body.aliases);
+    } catch (err: any) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
   }
   // A changed role invalidates calendar matches made under the old one; redo them.
   if (b.role !== existing.role) {
@@ -1750,7 +1773,7 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
       .run(req.params.id);
   }
   autoAssignAll();
-  res.json({ supplier: db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(req.params.id) });
+  res.json({ supplier: listSuppliers().find((s) => s.id === req.params.id) });
 }));
 
 router.delete('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
@@ -1844,12 +1867,53 @@ router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res
   res.json({ ok: true });
 }));
 
-/** Attaches a Morning expense to a payment — the manual half of the matcher. */
+/**
+ * The documents a person may attach to this payment by hand, filtered by `q`.
+ *
+ * Separate from the suggestions on the row because it answers a different question. The
+ * suggestions say «here is what this probably is»; this says «here is everything, you know
+ * which one it is» — for the supplier who invoices under a company nobody recorded, the
+ * document dated four months out, the invoice that covers two transfers at once. No rule
+ * reaches those, and the person holding the invoice does.
+ */
+router.get('/moonlight/supplier-payments/:id/documents', requireAuth, handle((req, res) => {
+  res.json({ documents: searchDocuments(req.params.id, String(req.query.q || '')) });
+}));
+
+/**
+ * Attaches a Morning expense to a payment — the manual half of the matcher.
+ *
+ * `remember_alias` is the half that makes it worth doing once: attaching «א. כהן הפקות בע"מ»
+ * to a payment to אבי says what that company is, and recording it means the next document it
+ * issues is matched without anybody being asked. It is reported rather than assumed — a name
+ * already spoken for by another supplier is not overwritten by a link, and the person is told
+ * the mapping did not take while the link itself stands.
+ */
 router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, res) => {
   const expenseId = String(req.body?.expense_id || '');
   if (!expenseId) return res.status(400).json({ error: 'מסמך חובה' });
   linkDocument(req.params.id, expenseId, 'user');
-  res.json({ payment: listPayments().find((p) => p.id === req.params.id) ?? null });
+
+  let alias: { added: boolean; name?: string; error?: string } = { added: false };
+  if (req.body?.remember_alias) {
+    const payment = db.prepare('SELECT supplier_id FROM supplier_payments WHERE id = ?')
+      .get(req.params.id) as any;
+    const expense = db.prepare('SELECT supplier_name FROM expenses WHERE id = ?').get(expenseId) as any;
+    const name = String(expense?.supplier_name || '').trim();
+    if (payment && name) {
+      try {
+        addAlias(payment.supplier_id, name, 'link');
+        alias = { added: true, name };
+      } catch (err: any) {
+        alias = { added: false, error: err.message };
+      }
+    }
+  }
+
+  res.json({
+    payment: listPayments().find((p) => p.id === req.params.id) ?? null,
+    alias,
+  });
 }));
 
 router.delete('/moonlight/supplier-payments/:id/docs/:expenseId', requireOwner, handle((req, res) => {
@@ -1875,6 +1939,50 @@ router.post('/moonlight/supplier-payments/:id/resolve', requireOwner, handle((re
 /** Runs the matcher over everything Morning has sent since the last time. */
 router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, res) => {
   res.json({ ...runMatch(), payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
+}));
+
+// ---- the names a supplier's invoices arrive under ----
+
+/**
+ * The mapping screen: every supplier with the invoice names it answers to, and — the half
+ * that makes it a working screen rather than a settings page — every name Morning has sent
+ * that nothing answers to at all.
+ *
+ * Those unplaced names are the reason a payment sits waiting with no suggestion under it, so
+ * they are shown where they can be fixed, worth most first, each with the supplier they most
+ * resemble already proposed.
+ */
+router.get('/moonlight/supplier-names', requireAuth, handle((_req, res) => {
+  const suppliers = listSuppliers();
+  res.json({
+    suppliers: suppliers.map((s) => ({
+      id: s.id, name: s.name, role: s.role, tax_id: s.tax_id,
+      morning_supplier_id: s.morning_supplier_id, expects_invoice: !!s.expects_invoice,
+      names: aliasesFor(s.id),
+    })),
+    unknown: unknownInvoiceNames(suppliers),
+  });
+}));
+
+/**
+ * Ties one invoice name to one supplier, and immediately re-runs the matcher.
+ *
+ * The re-run is the point of saying it: the documents that name has already arrived on are
+ * sitting in the table unmatched, and a mapping that only affected the future would leave the
+ * person to go and link them one at a time anyway.
+ */
+router.post('/moonlight/supplier-names', requireOwner, handle((req, res) => {
+  const supplierId = String(req.body?.supplier_id || '');
+  const alias = String(req.body?.alias || '');
+  if (!supplierId) return res.status(400).json({ error: 'ספק חובה' });
+  if (!alias.trim()) return res.status(400).json({ error: 'שם החשבונית חובה' });
+  const created = addAlias(supplierId, alias, 'manual');
+  res.json({ alias: created, ...runMatch() });
+}));
+
+router.delete('/moonlight/supplier-names/:id', requireOwner, handle((req, res) => {
+  removeAlias(req.params.id);
+  res.json({ ok: true });
 }));
 
 // ====== integrations: Morning (Green Invoice) + Google Calendar + Meta ads (owner) ======
