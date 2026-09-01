@@ -32,7 +32,7 @@ automation wrote the row, `updated_at` ISO timestamp.
 |--------|------|-------|
 | id | text | Green Invoice document id |
 | doc_number | text | e.g. 40222 |
-| doc_type | number | 300 / 305 / 320 (Green Invoice type codes) |
+| doc_type | number | 300 חשבון עסקה / 305 חשבונית מס / 320 חשבונית מס קבלה (Green Invoice codes) |
 | date | date | |
 | client_name | text | |
 | client_id | text | GI client id |

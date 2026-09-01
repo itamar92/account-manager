@@ -1,7 +1,8 @@
 import { db, uuid, getVatPercent, getMorningSyncDays, setSetting, getSetting } from './db.js';
 import {
   REVENUE_DOC_TYPES, CREDIT_DOC_TYPES, isRevenueDoc, DOC_TYPE,
-  ISSUABLE_DOC_TYPES, issuableDocTypeOptions,
+  ISSUABLE_DOC_TYPES, issuableDocTypeOptions, requiresPayment,
+  PAYMENT_TYPE, PAYMENT_TYPES, paymentTypeOptions,
 } from './docTypes.js';
 import { computeDueDate, createInvoice } from './invoiceService.js';
 import { getBusinessDetails, type BusinessDetails } from './business.js';
@@ -207,6 +208,12 @@ export interface PushInvoiceOptions {
   remarks?: string;
   clientEmail?: string;
   sendEmail?: boolean;
+  /**
+   * How the money came in, for a document that also receipts it (חשבונית מס קבלה, קבלה).
+   * Ignored for the types that only bill. Defaults to a bank transfer on the document date.
+   */
+  paymentType?: number;
+  paymentDate?: string;
 }
 
 type InvoiceRow = {
@@ -348,6 +355,11 @@ export interface MorningDraft {
   business: BusinessDetails;
   docType: number;
   docTypes: Array<{ value: number; label: string }>;
+  /** Of `docTypes`, the ones Morning will not issue without a payment row. */
+  paymentDocTypes: number[];
+  paymentTypes: Array<{ value: number; label: string }>;
+  paymentType: number;
+  paymentDate: string;
   date: string;
   dueDate: string;
   paymentTermsDays: number;
@@ -390,6 +402,12 @@ function assembleDraft(base: {
     business: getBusinessDetails(),
     docType: ISSUABLE_DOC_TYPES.includes(base.docType) ? base.docType : DOC_TYPE.TAX_INVOICE,
     docTypes: issuableDocTypeOptions(),
+    paymentDocTypes: ISSUABLE_DOC_TYPES.filter(requiresPayment),
+    paymentTypes: paymentTypeOptions(),
+    paymentType: PAYMENT_TYPE.BANK_TRANSFER,
+    // A receipt says money has already arrived, so its payment cannot be dated ahead of
+    // today even when the document itself is.
+    paymentDate: defaultPaymentDate(base.date),
     date: base.date,
     dueDate: base.dueDate || computeDueDate(base.date, base.termsDays),
     paymentTermsDays: base.termsDays,
@@ -584,6 +602,43 @@ export async function issueWorksToMorning(
   };
 }
 
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * When a receipt says the money arrived.
+ *
+ * The document's own date, except that Morning refuses a payment dated in the future — so a
+ * document post-dated to the end of the month receipts today instead.
+ */
+function defaultPaymentDate(documentDate: string): string {
+  const now = todayIso();
+  return documentDate > now ? now : documentDate;
+}
+
+/**
+ * The `payment` array Morning requires on a receipt-bearing document, or none at all.
+ *
+ * A חשבונית מס קבלה is an invoice *and* a receipt: issuing one without saying how the money
+ * came in is what Morning rejects, and what every issue from this app used to hit. The whole
+ * document is receipted in one row — the app has no notion of a part payment, and a row that
+ * did not add up to the total would leave the document open for a remainder nobody owes.
+ */
+function resolvePayment(
+  docType: number,
+  documentDate: string,
+  options: PushInvoiceOptions
+): { type: number; date: string } | null {
+  if (!requiresPayment(docType)) return null;
+
+  const type = options.paymentType ?? PAYMENT_TYPE.BANK_TRANSFER;
+  if (!PAYMENT_TYPES.includes(type)) throw new MorningError(`אמצעי תשלום ${type} לא מוכר`, 400);
+
+  const date = options.paymentDate || defaultPaymentDate(documentDate);
+  if (date > todayIso()) throw new MorningError('תאריך התשלום על קבלה לא יכול להיות עתידי', 400);
+
+  return { type, date };
+}
+
 /** The document's own fields, validated before anything is sent to Morning. */
 function resolveDocumentFields(
   base: { docType: number; date: string; dueDate: string | null; termsDays: number; clientEmail: string | null },
@@ -610,6 +665,9 @@ function resolveDocumentFields(
     remarks: (options.remarks || '').trim(),
     description: (options.description || '').trim(),
     sendEmail: Boolean(options.sendEmail),
+    // `null` on the types that only bill — Morning rejects a payment row on those as
+    // firmly as it rejects a missing one on a receipt.
+    payment: resolvePayment(docType, date, options),
   };
 }
 
@@ -622,6 +680,8 @@ async function issueDocument(input: {
   fields: DocumentFields;
 }): Promise<MorningDocument> {
   const { client, works, fields } = input;
+  // What the client hands over is the total with VAT, not the pre-VAT figure the lines carry.
+  const totalWithVat = round2(works.reduce((sum, w) => sum + (Number(w.total) || 0), 0));
   const doc = await createDocument({
     type: fields.docType,
     clientName: client.name,
@@ -633,6 +693,7 @@ async function issueDocument(input: {
     remarks: fields.remarks || undefined,
     sendEmail: fields.sendEmail,
     lines: works.map((w) => ({ description: morningLineDescription(w), price: w.amount })),
+    ...(fields.payment ? { payment: [{ ...fields.payment, price: totalWithVat }] } : {}),
   });
   if (!doc?.id) throw new MorningError('Morning לא החזיר מזהה מסמך');
   return doc;

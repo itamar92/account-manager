@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS clients (
 CREATE TABLE IF NOT EXISTS invoices (
   id TEXT PRIMARY KEY,
   number TEXT NOT NULL,
-  doc_type INTEGER NOT NULL DEFAULT 320,
+  doc_type INTEGER NOT NULL DEFAULT 305, -- חשבונית מס; see server/docTypes.ts
   client_id TEXT NOT NULL REFERENCES clients(id),
   date TEXT NOT NULL,
   due_date TEXT,
@@ -1157,6 +1157,25 @@ if (getSetting('moonlight_supplier_roles_v2', '') !== 'done') {
   ).run();
   setSetting('moonlight_supplier_roles_v2', 'done');
 }
+
+/**
+ * Corrects the document type on invoices that never left this app.
+ *
+ * Morning's codes are 305 = חשבונית מס and 320 = חשבונית מס קבלה; this app had the two
+ * swapped, so every local invoice raised as "חשבונית מס" was stored as 320 and would now
+ * read as a receipt it never was. Rows carrying a Morning `external_id` are left alone —
+ * their type came from Morning and was always right — and so is anything but 320, which
+ * nothing here could have mislabelled.
+ */
+function correctSwappedLocalDocTypes() {
+  if (getSetting('doc_type_305_320_swap_fixed', '')) return;
+  db.prepare(
+    "UPDATE invoices SET doc_type = 305 WHERE doc_type = 320 AND (external_id IS NULL OR external_id = '')"
+  ).run();
+  setSetting('doc_type_305_320_swap_fixed', 'done');
+}
+
+correctSwappedLocalDocTypes();
 
 migratePayeeTables();
 

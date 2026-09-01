@@ -32,6 +32,10 @@ interface Draft {
   business: Business;
   docType: number;
   docTypes: Array<{ value: number; label: string }>;
+  paymentDocTypes: number[];
+  paymentTypes: Array<{ value: number; label: string }>;
+  paymentType: number;
+  paymentDate: string;
   date: string;
   dueDate: string;
   paymentTermsDays: number;
@@ -53,7 +57,22 @@ interface Form {
   remarks: string;
   client_email: string;
   send_email: boolean;
+  /** Only read for the document types that also receipt the money — see `needsPayment`. */
+  payment_type: number;
+  payment_date: string;
 }
+
+/**
+ * Whether the chosen type receipts the money as well as billing it.
+ *
+ * A חשבונית מס קבלה states that the payment has already arrived, and Morning will not issue
+ * one without saying how — so the dialog has to ask before the document is sent, not after
+ * it is refused.
+ */
+const needsPayment = (draft: Draft, docType: number) => draft.paymentDocTypes.includes(docType);
+
+/** Morning refuses a receipt dated ahead of today, whatever the document's own date says. */
+const today = () => new Date().toISOString().slice(0, 10);
 
 /**
  * "שוטף + N" — mirrors `computeDueDate` on the server so the field can follow the document
@@ -113,6 +132,7 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
   const [form, setForm] = useState<Form | null>(null);
   const [step, setStep] = useState<'form' | 'preview'>('form');
   const [dueTouched, setDueTouched] = useState(false);
+  const [paymentTouched, setPaymentTouched] = useState(false);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
 
@@ -125,6 +145,7 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
     setForm(null);
     setStep('form');
     setDueTouched(false);
+    setPaymentTouched(false);
     setError('');
     const load = pending
       ? post('/invoices/morning-draft', { client_id: pending.clientId, work_ids: pending.workIds })
@@ -141,6 +162,8 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
           remarks: dr.remarks,
           client_email: dr.client.email,
           send_email: false,
+          payment_type: dr.paymentType,
+          payment_date: dr.paymentDate,
         });
       })
       .catch((e) => setError(e.message));
@@ -151,10 +174,20 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
   const setField = <K extends keyof Form>(key: K, value: Form[K]) =>
     setForm((f) => (f ? { ...f, [key]: value } : f));
 
-  /** The due date trails the document date until it is set by hand. */
+  /**
+   * The due date trails the document date until it is set by hand, and so does the payment
+   * date on a receipt — except that the payment cannot be dated later than today.
+   */
   const setDate = (date: string) =>
     setForm((f) =>
-      f ? { ...f, date, due_date: dueTouched ? f.due_date : computeDueDate(date, draft?.paymentTermsDays ?? 30) } : f
+      f
+        ? {
+            ...f,
+            date,
+            due_date: dueTouched ? f.due_date : computeDueDate(date, draft?.paymentTermsDays ?? 30),
+            payment_date: paymentTouched ? f.payment_date : (date > today() ? today() : date),
+          }
+        : f
     );
 
   const issue = async () => {
@@ -222,6 +255,7 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
           setField={setField}
           setDate={setDate}
           onDueChange={(v) => { setDueTouched(true); setField('due_date', v); }}
+          onPaymentDateChange={(v) => { setPaymentTouched(true); setField('payment_date', v); }}
           onResetDue={() => { setDueTouched(false); setField('due_date', computeDueDate(form.date, draft.paymentTermsDays)); }}
           onContinue={() => { setError(''); setStep('preview'); }}
         />
@@ -259,12 +293,13 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
 }
 
 /** The document's fields, in the order they sit on the document itself. */
-function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, onContinue }: {
+function IssueForm({ draft, form, setField, setDate, onDueChange, onPaymentDateChange, onResetDue, onContinue }: {
   draft: Draft;
   form: Form;
   setField: <K extends keyof Form>(key: K, value: Form[K]) => void;
   setDate: (date: string) => void;
   onDueChange: (value: string) => void;
+  onPaymentDateChange: (value: string) => void;
   onResetDue: () => void;
   onContinue: () => void;
 }) {
@@ -311,6 +346,35 @@ function IssueForm({ draft, form, setField, setDate, onDueChange, onResetDue, on
           </button>
         </div>
       </div>
+
+      {needsPayment(draft, form.doc_type) && (
+        <div className="bg-soft border border-line rounded-xl p-3 space-y-3">
+          <div className="text-[13px] text-muted">
+            פרטי התשלום — חובה במסמך שהוא גם קבלה
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block">
+              <span className="block text-[13px] text-muted mb-1.5">אמצעי תשלום *</span>
+              <select
+                value={form.payment_type}
+                onChange={(e) => setField('payment_type', parseInt(e.target.value, 10))}
+                className={fieldClass}
+              >
+                {draft.paymentTypes.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </label>
+            <Input
+              label="תאריך קבלת התשלום *" type="date" max={today()}
+              value={form.payment_date}
+              onChange={(e) => onPaymentDateChange(e.target.value)}
+              required
+            />
+          </div>
+          <p className="text-xs text-faint">
+            הקבלה תירשם על מלוא הסכום כולל מע"מ. תאריך התשלום לא יכול להיות עתידי.
+          </p>
+        </div>
+      )}
 
       <Input
         label="שם המסמך (פרטים) *"
@@ -470,6 +534,20 @@ function DocumentPreview({ draft, form, docTypeLabel }: { draft: Draft; form: Fo
           </div>
         </div>
       </div>
+
+      {needsPayment(draft, form.doc_type) && (
+        <div className="mt-4 pt-3 border-t border-slate-200 text-sm">
+          <div className="text-xs text-slate-500 mb-1">תשלום</div>
+          <div className="flex justify-between md:w-64">
+            <span>
+              {draft.paymentTypes.find((t) => t.value === form.payment_type)?.label || ''}
+              {' · '}
+              {he(form.payment_date)}
+            </span>
+            <span dir="ltr">{nisExact(draft.total)}</span>
+          </div>
+        </div>
+      )}
 
       {form.remarks && (
         <div className="mt-5 pt-3 border-t border-slate-200 text-sm whitespace-pre-line">

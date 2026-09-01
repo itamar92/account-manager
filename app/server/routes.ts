@@ -2142,6 +2142,8 @@ router.post('/invoices/issue-to-morning', requireOwner, handleAsync(async (req, 
     remarks: b.remarks,
     clientEmail: b.client_email,
     sendEmail: Boolean(b.send_email),
+    paymentType: b.payment_type != null ? parseInt(b.payment_type, 10) : undefined,
+    paymentDate: b.payment_date || undefined,
   });
   res.json({ result, invoice });
 }));
@@ -2157,6 +2159,8 @@ router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (re
     remarks: b.remarks,
     clientEmail: b.client_email,
     sendEmail: Boolean(b.send_email),
+    paymentType: b.payment_type != null ? parseInt(b.payment_type, 10) : undefined,
+    paymentDate: b.payment_date || undefined,
   });
   res.json({ result, invoice: getInvoice(req.params.id) });
 }));
