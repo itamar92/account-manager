@@ -318,13 +318,21 @@ new default, which is the point of changing it.
 ### Document types and revenue
 
 A single sale usually produces two documents in Morning: a **חשבון עסקה (300)** when the
-work is agreed, then a **חשבונית מס (320)** when it is billed. Both carry the full amount,
+work is agreed, then a **חשבונית מס (305)** when it is billed. Both carry the full amount,
 so totalling every document counts the sale twice.
 
-`server/docTypes.ts` is the single place that decides what counts. Only **305** (חשבונית מס
-קבלה) and **320** (חשבונית מס) are revenue — the same rule `scripts/build_havila.py` uses.
+`server/docTypes.ts` is the single place that decides what counts. Only **305** (חשבונית מס)
+and **320** (חשבונית מס קבלה) are revenue — the same rule `scripts/build_havila.py` uses.
 Non-revenue documents are still imported and listed (flagged in amber in the invoices
 table) but are excluded from every total and never generate works.
+
+The codes are Morning's and were once written down here the other way round, which is worth
+knowing because it is not a labelling detail: **320 is an invoice that also receipts the
+money**, so Morning refuses to issue one without a `payment` row saying how the money came
+in. Issuing 320 as though it were a plain חשבונית מס is what made every הנפקה fail. The
+dialog now asks for the payment method and date whenever the chosen type is one of the
+receipt-bearing ones (`PAYMENT_DOC_TYPES`), and sends the receipt for the full
+VAT-inclusive total.
 
 ### Invoice numbering, and when an invoice comes into existence
 

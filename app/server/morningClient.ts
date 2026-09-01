@@ -27,10 +27,42 @@ export interface MorningDocument {
 
 export class MorningError extends Error {
   status: number;
-  constructor(message: string, status = 502) {
+  /** Morning's own `errorCode`, when the failure came back as one of its error bodies. */
+  code?: number;
+  constructor(message: string, status = 502, code?: number) {
     super(message);
     this.status = status;
+    this.code = code;
   }
+}
+
+/**
+ * Morning's refusal, said in words.
+ *
+ * A rejected call comes back as `{"errorCode": 3010, "errorMessage": "..."}`. Reporting that
+ * as a bare 502 is what turned "the document is missing its payment details" into an
+ * unreadable gateway error on screen, so the message is unwrapped and a request Morning
+ * found invalid is reported as 422 — the caller's problem, not the gateway's.
+ */
+function morningFailure(method: string, path: string, status: number, body: string): MorningError {
+  let code: number | undefined;
+  let detail = body.trim();
+  try {
+    const parsed = JSON.parse(body);
+    const message = parsed?.errorMessage ?? parsed?.message ?? parsed?.error;
+    if (typeof parsed?.errorCode === 'number') code = parsed.errorCode;
+    if (message) detail = String(message);
+  } catch {
+    // Not JSON — an HTML error page or an empty body. The raw text is all there is to say.
+  }
+  // 4xx is Morning telling us the request is wrong; only 5xx is Morning itself being broken.
+  const outward = status >= 400 && status < 500 ? 422 : 502;
+  const suffix = code != null ? ` (שגיאה ${code})` : '';
+  return new MorningError(
+    `Morning דחה את הבקשה${suffix}: ${detail || `${method} ${path} החזיר ${status}`}`,
+    outward,
+    code
+  );
 }
 
 export function isMorningConfigured(): boolean {
@@ -80,7 +112,7 @@ async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown):
     resetTokenCache();
     throw new MorningError('Morning rejected the credentials (401)', 502);
   }
-  if (!res.ok) throw new MorningError(`Morning ${method} ${path} failed (${res.status}): ${await res.text()}`, 502);
+  if (!res.ok) throw morningFailure(method, path, res.status, await res.text());
   return (await res.json()) as T;
 }
 
@@ -281,6 +313,15 @@ export async function expenseClassifications(): Promise<Map<string, string>> {
   return map;
 }
 
+/** One row of `payment` — how the money on a receipt-bearing document came in. */
+export interface DocumentPayment {
+  /** Morning's payment-type code; see `PAYMENT_TYPE` in `docTypes.ts`. */
+  type: number;
+  date: string; // YYYY-MM-DD, never in the future
+  price: number; // including VAT — what was actually received
+  currency?: string;
+}
+
 export interface CreateDocumentInput {
   type: number;
   clientName: string;
@@ -297,14 +338,29 @@ export interface CreateDocumentInput {
   remarks?: string;
   /** Green Invoice emails the document to the client when true. Off by default. */
   sendEmail?: boolean;
+  /**
+   * Required by Morning for the receipt-bearing types (320/400/405) and refused as
+   * meaningless on the others — `requiresPayment` in `docTypes.ts` decides which.
+   */
+  payment?: DocumentPayment[];
+  /**
+   * Whether the prices below are before VAT (0), include it (1), or are exempt (2).
+   * Defaults to 0, which is what this app sends: works carry their pre-VAT amount.
+   */
+  vatType?: number;
 }
 
 export async function createDocument(input: CreateDocumentInput): Promise<MorningDocument> {
   const currency = input.currency || 'ILS';
   const emails = (input.clientEmails ?? []).filter(Boolean);
+  const payment = input.payment ?? [];
   return request<MorningDocument>('POST', '/documents', {
     type: input.type,
     lang: 'he',
+    // Stated rather than left to the account's default: an account set to "prices include
+    // VAT" would otherwise read every pre-VAT figure sent here as a VAT-inclusive one and
+    // bill the client ~15% short.
+    vatType: input.vatType ?? 0,
     client: {
       ...(input.clientId ? { id: input.clientId } : {}),
       name: input.clientName,
@@ -321,7 +377,19 @@ export async function createDocument(input: CreateDocumentInput): Promise<Mornin
       quantity: l.quantity ?? 1,
       price: l.price,
       currency,
+      vatType: input.vatType ?? 0,
     })),
+    // Only ever sent for the types that demand it — see `DocumentPayment`.
+    ...(payment.length
+      ? {
+          payment: payment.map((p) => ({
+            type: p.type,
+            date: p.date,
+            price: p.price,
+            currency: p.currency || currency,
+          })),
+        }
+      : {}),
     ...(input.remarks ? { remarks: input.remarks } : {}),
     // Only ever emailed on an explicit request, and only when there is an address to use.
     sendEmail: Boolean(input.sendEmail && emails.length),

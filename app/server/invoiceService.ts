@@ -1,4 +1,5 @@
 import { db, uuid, getVatPercent } from './db.js';
+import { DOC_TYPE } from './docTypes.js';
 
 export interface LineItemInput {
   description: string;
@@ -129,7 +130,7 @@ export function createInvoice(input: CreateInvoiceInput) {
     ).run(
       invoiceId,
       number,
-      input.docType ?? 320,
+      input.docType ?? DOC_TYPE.TAX_INVOICE,
       client.id,
       date,
       input.dueDate ?? null,
