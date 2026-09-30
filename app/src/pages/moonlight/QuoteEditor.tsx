@@ -1,13 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ChevronLeft, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, Eye, X } from 'lucide-react';
 import { del, get, post, put } from '../../api';
 import { Button, Card, Empty, Input, Modal, MoneyInput, Segmented, Textarea, fieldClass } from '../../ui';
 import { QuoteDocument } from '../../quotes/QuoteDocument';
 import { QuoteStatusBadge } from './QuotesTab';
 import { VAT_MODES } from './QuoteModals';
 import {
-  computeTotals, quoteDate, usePackages, useQuoteSettings,
+  computeTotals, previewOf, quoteDate, usePackages, useQuoteSettings,
   type Quote, type QuoteItem,
 } from './quotes';
 
@@ -37,16 +37,13 @@ const payloadOf = (form: Record<string, any>, lines: EditLine[]) => ({
     ({ name, description, quantity, unit_price, package_id })),
 });
 
-/** What a template's placeholders read as in its own preview, so the layout can be judged. */
-const SAMPLE = { client_name: 'שם הלקוח', event_date: 'תאריך האירוע' };
-const fillSample = (value: string | null) =>
-  value?.replaceAll('{client_name}', SAMPLE.client_name).replaceAll('{event_date}', SAMPLE.event_date) ?? null;
-
 /**
  * One quote — or one template — with the client's view of it beside the form.
  *
  * The preview is the same component the client will be shown, fed the same arithmetic the
- * server saves with, so nothing about the figures is a guess until the save.
+ * server saves with, so nothing about the figures is a guess until the save. On a wide screen it
+ * sits beside the form and follows the typing; «תצוגה מקדימה» opens it full-page, on its own, the
+ * way the client will get it — which is also the only preview a phone has room for.
  */
 export function QuoteEditor() {
   const { id } = useParams();
@@ -56,7 +53,6 @@ export function QuoteEditor() {
   const [saved, setSaved] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const [view, setView] = useState<'edit' | 'preview'>('edit');
   const [templateName, setTemplateName] = useState<string | null>(null);
   const { data: settingsData } = useQuoteSettings(setError);
   const { packages } = usePackages(setError);
@@ -136,6 +132,12 @@ export function QuoteEditor() {
     navigate(`/moonlight/quotes/${d.quote.id}`);
   });
 
+  /** The full-page preview reads what is saved, so it is saved first. */
+  const openPreview = () => run(async () => {
+    if (!(await saveFirst())) return;
+    navigate(`/moonlight/quotes/${form.id}/preview`);
+  });
+
   const makeDefault = () => run(async () => {
     await put('/moonlight/quotes/settings', { default_template_id: form.id });
     set({ is_default: true });
@@ -170,15 +172,6 @@ export function QuoteEditor() {
     ? form.template_name || 'תבנית'
     : form.client_name || 'הצעה ללא שם לקוח';
 
-  const preview = (
-    <QuoteDocument
-      brandName={brandName}
-      totals={totals}
-      quote={isTemplate
-        ? { ...form, client_name: SAMPLE.client_name, title: fillSample(form.title) ?? '', intro: fillSample(form.intro) }
-        : form}
-    />
-  );
 
   return (
     <div className="space-y-5">
@@ -211,6 +204,9 @@ export function QuoteEditor() {
             <Button variant="ghost" onClick={cancel}>ביטול הצעה</Button>
           )}
           {deletable && <Button variant="ghost" onClick={remove}>מחיקה</Button>}
+          <Button variant="ghost" onClick={openPreview} disabled={busy}>
+            <span className="flex items-center gap-1.5"><Eye size={16} /> תצוגה מקדימה</span>
+          </Button>
           {editable && (
             <Button onClick={save} disabled={!dirty || busy}>{busy ? 'שומר…' : dirty ? 'שמירה' : 'נשמר'}</Button>
           )}
@@ -234,15 +230,8 @@ export function QuoteEditor() {
         </p>
       )}
 
-      <Segmented
-        className="lg:hidden w-fit"
-        value={view}
-        onChange={setView}
-        options={[{ value: 'edit', label: 'עריכה' }, { value: 'preview', label: 'תצוגה מקדימה' }]}
-      />
-
       <div className="grid lg:grid-cols-2 gap-6 items-start">
-        <fieldset disabled={!editable} className={`space-y-4 min-w-0 ${view === 'preview' ? 'hidden lg:block' : ''}`}>
+        <fieldset disabled={!editable} className="space-y-4 min-w-0">
           {isTemplate && (
             <Card>
               <Input label="שם התבנית" value={form.template_name ?? ''}
@@ -397,11 +386,11 @@ export function QuoteEditor() {
           </Card>
         </fieldset>
 
-        <div className={`lg:sticky lg:top-[80px] min-w-0 ${view === 'edit' ? 'hidden lg:block' : ''}`}>
+        <div className="hidden lg:block lg:sticky lg:top-[80px] min-w-0">
           <div className="text-[12px] text-faint mb-2">
             {isTemplate ? 'כך תיראה הצעה מהתבנית' : `כך הלקוח יראה את ההצעה${form.valid_until ? ` · בתוקף עד ${quoteDate(form.valid_until)}` : ''}`}
           </div>
-          {preview}
+          <QuoteDocument brandName={brandName} totals={totals} quote={previewOf(form)} />
         </div>
       </div>
 

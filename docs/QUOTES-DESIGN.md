@@ -345,7 +345,11 @@ It then records `CF-Connecting-IP`, the user agent and the time, and freezes the
   - Attachments.
   - Validity.
   - Internal note.
-- Actions: שמירה, שליחה (opens the share dialog), preview in a new tab.
+- Actions: שמירה, שליחה (opens the share dialog), and **תצוגה מקדימה**.
+  - The preview saves unsaved changes first, then opens `/moonlight/quotes/:id/preview`: the quote alone, outside the app's shell, as the client's link will show it.
+  - On a computer it starts in a phone-width frame, since most clients read it from WhatsApp, with a switch to the wide version.
+  - `QuoteDocument` sizes itself with a container query, so the frame, the editor's side panel and a real phone all get the same layout.
+  - On a phone this is the editor's only preview; on a wide screen the live side preview stays.
 
 **QuoteDocument** (`src/quotes/QuoteDocument.tsx`) is the single renderer of what the client sees, used by the preview and the public page alike. What is previewed is therefore what gets signed.
 

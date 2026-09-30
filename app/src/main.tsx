@@ -15,6 +15,7 @@ import { Reports } from './pages/Reports';
 import { Moonlight } from './pages/Moonlight';
 import { ShowDetail } from './pages/moonlight/ShowDetail';
 import { QuoteEditor } from './pages/moonlight/QuoteEditor';
+import { QuotePreview } from './pages/moonlight/QuotePreview';
 import { Settings } from './pages/Settings';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -23,6 +24,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* Outside the shell: the quote on its own, the way the client will get it. */}
+          <Route path="/moonlight/quotes/:id/preview" element={<QuotePreview />} />
           <Route element={<Layout />}>
             {/* What is unfinished is the landing page; the year's figures are one click over. */}
             <Route path="/" element={<Inbox />} />

@@ -21,7 +21,9 @@ export type QuoteDocumentQuote = Pick<Quote,
  * quote is interpreted as markup.
  *
  * Narrow by design: most clients open a quote from WhatsApp, on a phone, so the lines are a
- * list rather than a four-column table.
+ * list rather than a four-column table. It sizes itself by its own width (a container query),
+ * not the screen's, so the phone frame of the preview and the editor's side panel lay it out
+ * exactly as a phone would.
  */
 export function QuoteDocument({ quote, totals, brandName }: {
   quote: QuoteDocumentQuote;
@@ -39,16 +41,16 @@ export function QuoteDocument({ quote, totals, brandName }: {
   ].filter(Boolean) as Array<{ icon: React.ElementType; text: string }>;
 
   return (
-    <article className="bg-surface border border-line rounded-2xl overflow-hidden text-ink shadow-[0_1px_2px_rgba(20,24,32,.04)]">
-      <header className="bg-ink text-white px-5 py-6 md:px-8 md:py-7">
+    <article className="@container bg-surface border border-line rounded-2xl overflow-hidden text-ink shadow-[0_1px_2px_rgba(20,24,32,.04)]">
+      <header className="bg-ink text-white px-5 py-6 @xl:px-8 @xl:py-7">
         <div className="flex items-start justify-between gap-4">
-          <div className="ser text-[22px] md:text-2xl tracking-wide">{brandName}</div>
+          <div className="ser text-[22px] @xl:text-2xl tracking-wide">{brandName}</div>
           <div className="text-end text-[12px] leading-5 text-white/65">
             <div>הצעת מחיר</div>
             {quote.quote_number && <div className="num" dir="ltr">{quote.quote_number}</div>}
           </div>
         </div>
-        <h1 className="ser text-[21px] md:text-[26px] leading-snug mt-6">{quote.title || 'הצעת מחיר'}</h1>
+        <h1 className="ser text-[21px] @xl:text-[26px] leading-snug mt-6">{quote.title || 'הצעת מחיר'}</h1>
         {quote.client_name && <p className="mt-1.5 text-[15px] text-white/80">עבור {quote.client_name}</p>}
         {chips.length > 0 && (
           <ul className="mt-4 flex flex-wrap gap-2">
@@ -61,7 +63,7 @@ export function QuoteDocument({ quote, totals, brandName }: {
         )}
       </header>
 
-      <div className="px-5 py-6 md:px-8 md:py-7 space-y-7">
+      <div className="px-5 py-6 @xl:px-8 @xl:py-7 space-y-7">
         {quote.intro && (
           <p className="whitespace-pre-line text-[15px] leading-7 text-body">{quote.intro}</p>
         )}
@@ -127,7 +129,7 @@ export function QuoteDocument({ quote, totals, brandName }: {
       </div>
 
       {(quote.valid_until || quote.contact_name || quote.contact_phone) && (
-        <footer className="border-t border-line bg-soft px-5 py-4 md:px-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[13px] text-muted">
+        <footer className="border-t border-line bg-soft px-5 py-4 @xl:px-8 flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[13px] text-muted">
           <span>{quote.valid_until && <>ההצעה בתוקף עד <span className="num">{quoteDate(quote.valid_until)}</span></>}</span>
           {(quote.contact_name || quote.contact_phone) && (
             <span>

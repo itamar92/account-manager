@@ -97,6 +97,20 @@ export const STATUS_STYLES: Record<QuoteStatus, string> = {
   expired: 'bg-warn-soft text-warn-ink',
 };
 
+/** What a template's placeholders read as when it is previewed, so its layout can be judged. */
+const SAMPLE = { client_name: 'שם הלקוח', event_date: 'תאריך האירוע' };
+const fillSample = (value: string | null) =>
+  value?.replaceAll('{client_name}', SAMPLE.client_name).replaceAll('{event_date}', SAMPLE.event_date) ?? null;
+
+/**
+ * A quote as it should be previewed. A template has no client yet, so it is shown with a
+ * sample one standing in for the quotes that will be made from it.
+ */
+export const previewOf = <Q extends Pick<Quote, 'is_template' | 'client_name' | 'title' | 'intro'>>(quote: Q): Q =>
+  quote.is_template
+    ? { ...quote, client_name: SAMPLE.client_name, title: fillSample(quote.title) ?? '', intro: fillSample(quote.intro) }
+    : quote;
+
 /** 'YYYY-MM-DD' the way a quote writes it. */
 export const quoteDate = (date: string | null | undefined) =>
   date ? `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : '';
