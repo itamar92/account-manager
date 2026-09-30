@@ -76,6 +76,7 @@ import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfi
 import {
   analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
 } from './campaignAdvisor.js';
+import { quoteRouter } from './quoteRoutes.js';
 
 /**
  * The follow-up conversation is a single shared thread rather than one per user: the owner is
@@ -1044,6 +1045,9 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
     payoutTotal: sumOver(payout),
   };
 }
+
+// Price quotes — the one Moonlight area band members write to as well; see quoteRoutes.ts.
+router.use('/moonlight/quotes', quoteRouter);
 
 router.get('/moonlight/summary', requireAuth, handle((req, res) => {
   res.json({ summary: bandSummary(dateRange(req.query)), fund: bandFund() });

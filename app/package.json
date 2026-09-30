@@ -8,6 +8,7 @@
     "build": "vite build",
     "start": "NODE_ENV=production tsx server.ts",
     "lint": "tsc --noEmit",
+    "test": "node --import tsx --test server/*.test.ts",
     "expenses:probe": "tsx bin/expense-status-probe.ts"
   },
   "dependencies": {

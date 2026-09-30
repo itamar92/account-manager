@@ -62,7 +62,7 @@ a field left empty there falls back to these, so an existing deployment keeps wo
 | Email | Role | Access |
 |-------|------|--------|
 | `itamar92@gmail.com` | owner | everything |
-| `amir@moonlight.band`, `yuval@moonlight.band`, `guy@moonlight.band` | band | `/moonlight` only, read-only |
+| `amir@moonlight.band`, `yuval@moonlight.band`, `guy@moonlight.band` | band | `/moonlight` only, read-only — except הצעות מחיר, which they edit too |
 
 **Change the default passwords** (or set the `SEED_*` env vars before first run).
 First run also imports `../invoices_2026.csv` (Green Invoice export) and the Moonlight
@@ -314,6 +314,29 @@ The default is **20% (30/30/20/20)**. It was a fixed 40% before, so a one-time m
 under the old figure, and the boot recompute would otherwise silently re-divide it while leaving
 the percentage on the row unable to explain the shares beside it. Every show still open takes the
 new default, which is the point of changing it.
+
+### Moonlight — price quotes (הצעות מחיר)
+
+Moonlight → הצעות מחיר is where a show is sold before it exists. The full design, including the
+phases still to come (the client's link, the signature, a signed quote becoming a show), is in
+[`../docs/QUOTES-DESIGN.md`](../docs/QUOTES-DESIGN.md).
+
+- **Templates** hold the usual quote: the intro, the lines and the terms. «הצעה חדשה» asks only
+  for the client, the date and the price. The price goes into the template's first line, and
+  `{client_name}` / `{event_date}` in the title and intro are filled in. A template is a
+  `band_quotes` row with `is_template = 1`, edited in the same editor as a quote.
+- **Money** is worked out by `server/quoteMath.ts`, the one file the server saves with and the
+  editor previews with. A quote's prices are either before VAT or including it, and the discount
+  comes off before VAT. The VAT rate is frozen on the quote when it is made.
+- **Numbers** run per year: `ML-2026-001`. Validity is set in days in the quote settings, and a
+  quote with a client expires at the end of its last day, Israel time. Expiry is worked out, never
+  stored.
+- **Who edits:** every logged-in user, band members included. This is the one Moonlight area
+  where the band writes, and the router says so (`server/quoteRoutes.ts`). A signed or cancelled
+  quote is closed to edits and is copied (שכפול) instead.
+
+`npm test` runs the quote tests (`server/*.test.ts`, Node's built-in runner), and CI runs them
+too.
 
 ### Document types and revenue
 

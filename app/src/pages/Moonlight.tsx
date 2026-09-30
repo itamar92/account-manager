@@ -11,6 +11,7 @@ import { SupplierPaymentsTab } from './moonlight/SupplierPaymentsTab';
 import { SupplierNamesTab } from './moonlight/SupplierNamesTab';
 import { AdsTab } from './moonlight/AdsTab';
 import { CampaignAnalysisTab } from './moonlight/CampaignAnalysisTab';
+import { QuotesTab } from './moonlight/QuotesTab';
 import { DEFAULT_COMMISSION_PERCENT, divisionSplitLabel, useBandMembers } from './moonlight/shared';
 
 /**
@@ -23,12 +24,14 @@ import { DEFAULT_COMMISSION_PERCENT, divisionSplitLabel, useBandMembers } from '
  *
  * `campaignAi` sits next to `ads` because it is the same money read a different way: that one
  * says what the campaigns cost, this one says whether it was worth it.
+ *
+ * `quotes` is where a show is sold before it exists. It is the one tab the band edits too.
  */
-type Tab = 'summary' | 'shows' | 'suppliers' | 'supplierPayments' | 'supplierNames'
+type Tab = 'summary' | 'shows' | 'quotes' | 'suppliers' | 'supplierPayments' | 'supplierNames'
   | 'generalExpenses' | 'ads' | 'campaignAi';
 
 const TABS: Tab[] = [
-  'summary', 'shows', 'suppliers', 'supplierPayments', 'supplierNames', 'generalExpenses',
+  'summary', 'shows', 'quotes', 'suppliers', 'supplierPayments', 'supplierNames', 'generalExpenses',
   'ads', 'campaignAi',
 ];
 
@@ -129,7 +132,8 @@ export function Moonlight() {
 
   return (
     <div className="space-y-5">
-      {!isOwner && (
+      {/* Quotes are the band's to edit as well, so the view-only line would be untrue there. */}
+      {!isOwner && tab !== 'quotes' && (
         <p className="text-sm text-muted">תצוגה בלבד — עריכה זמינה למנהל בלבד</p>
       )}
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
@@ -139,6 +143,8 @@ export function Moonlight() {
       {tab === 'shows' && (
         <ShowsTab {...tabProps} events={events} period={period} onNewEvent={newEvent} />
       )}
+
+      {tab === 'quotes' && <QuotesTab onError={setError} />}
 
       {tab === 'suppliers' && <SuppliersTab {...tabProps} />}
 

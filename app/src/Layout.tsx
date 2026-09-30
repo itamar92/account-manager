@@ -3,7 +3,7 @@ import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-route
 import {
   Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Settings,
   LogOut, Wallet, Music, Megaphone, Sparkles, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
-  Calculator, HandCoins, Tags,
+  Calculator, HandCoins, Tags, FileSignature,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
@@ -50,6 +50,8 @@ const moonNav: NavGroup[] = [
       // A show's income, costs and staffing live on the show itself, so this one entry is
       // the way into all three.
       { to: '/moonlight/shows', label: 'הופעות', icon: Music },
+      // Where a show is sold before it is one — and the one screen here the band edits too.
+      { to: '/moonlight/quotes', label: 'הצעות מחיר', icon: FileSignature },
     ],
   },
   {
@@ -79,6 +81,7 @@ const quickActions = [
   { to: '/invoices', label: 'חשבונית מעבודות' },
   { to: '/clients?new=1', label: 'לקוח חדש' },
   { to: '/moonlight/shows?new=1', label: 'הופעה חדשה' },
+  { to: '/moonlight/quotes?new=1', label: 'הצעת מחיר חדשה' },
 ];
 
 /**
