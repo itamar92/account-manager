@@ -123,11 +123,11 @@ CREATE TABLE IF NOT EXISTS band_quote_packages (
 CREATE TABLE IF NOT EXISTS band_quote_files (
   id TEXT PRIMARY KEY,
   quote_id TEXT REFERENCES band_quotes(id) ON DELETE CASCADE,  -- NULL = branding file
-  kind TEXT NOT NULL CHECK (kind IN ('attachment','logo','cover')),
-  filename TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('attachment','logo','cover','signature')),
+  filename TEXT,
   mime TEXT NOT NULL,
   size INTEGER NOT NULL,
-  storage_path TEXT NOT NULL,                 -- relative to DATA_DIR/uploads
+  data BLOB NOT NULL,                         -- the file itself; see Files
   uploaded_by TEXT REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -136,7 +136,9 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
 **Settings** are stored in the existing `settings` table, read and written with `getSetting`/`setSetting`:
 
 - `quote_brand_name`
-- `quote_logo_file_id`, `quote_cover_file_id`
+- `quote_logo_file_id`, `quote_signature_file_id` (and later `quote_cover_file_id`)
+- `quote_color_primary`, `quote_color_accent`
+- `quote_signature_name`
 - `quote_contact_name`, `quote_contact_phone`
 - `quote_default_template_id`
 - `quote_validity_days` (14)
@@ -241,6 +243,7 @@ failure must never fail the client's signature. It is logged and becomes a follo
 ## Permissions
 
 - **All logged-in users** can read and write everything in the section: quotes, packages, quote settings and uploads. That means the owner and the band.
+- **The one exception is the signature.** It is the owner's own hand, signing for the band, so only the owner can upload, replace or remove it (`requireOwner` on those two routes). A band member's settings save has `signature_name` dropped, not refused, because their form still carries it unchanged.
   - These routes use `requireAuth`, not `requireOwner`.
   - This is the first Moonlight area where band members write, which is deliberate. A comment at the router should say so, so nobody "fixes" it later.
 - **`created_by`/`updated_by`** are recorded and shown in the list ("נוצרה ע״י").
@@ -253,7 +256,7 @@ failure must never fail the client's signature. It is logged and becomes a follo
 | `server/quotes.ts` | Domain logic: totals, numbering, the send/cancel/duplicate/sign guards, the snapshot builder, sign-to-show linking, WhatsApp link builder |
 | `server/quoteRoutes.ts` | Authenticated router mounted at `/api/moonlight/quotes`. It lives in its own file because `routes.ts` is already 2,600 lines |
 | `server/publicQuotes.ts` | Unauthenticated router mounted at `/api/public/quotes` |
-| `server/uploads.ts` | File storage under `DATA_DIR/uploads/` |
+| `server/quoteFiles.ts` | Images and files: checking what an upload really is, storing it, serving it |
 
 **Authenticated routes** (`quoteRoutes.ts`):
 
@@ -305,12 +308,44 @@ It then records `CF-Connecting-IP`, the user agent and the time, and freezes the
 
 ## Files
 
-- **Where files live:**
-  - Attachments: `DATA_DIR/uploads/quotes/<quoteId>/<fileId>-<safe name>`.
-  - Branding: `DATA_DIR/uploads/branding/`.
-- **Limits:** PDF, JPG, PNG or WebP, up to 10 MB per file. The server checks the MIME type from the leading bytes, not only the header.
-- **Deleting:** removing a file or a quote deletes it from disk.
-- **Backups:** `deploy/backup.sh` backs up only the DB today. It gets a `tar` of `uploads/` pushed to the same R2 bucket. Without that, attachments and the logo are not backed up.
+- **Where files live:** in the database, as BLOBs in `band_quote_files`. This changes the first draft of this design, which kept them on disk under `DATA_DIR/uploads/`.
+  - **Why:** `deploy/backup.sh` copies the database file and nothing else. A logo or signature on disk would be the one thing a restore came back without.
+  - **What it costs:** nothing that matters at this size. A logo or a signature is tens of KB, and SQLite stores a few MB per BLOB without trouble.
+  - **What it saves:** there are no orphan files, no paths to sanitize, and nothing to add to the backup.
+- **Branding images:**
+  - The logo and the signature are each one row with no quote, pointed at by a setting.
+  - Replacing one inserts the new row and deletes the old one in a single transaction.
+  - They are served at `/api/moonlight/quotes/branding/:kind?v=<file id>`. Because the id is in the address, the image is cached forever and still never shown stale after a replacement.
+- **Limits:**
+  - Images may be PNG, JPG or WebP, up to 5 MB.
+  - Attachments (later) may also be PDF, up to 10 MB.
+  - The server reads the type from the file's leading bytes and ignores the header the browser sent.
+  - SVG is refused, because it is a document that can carry script and it would be served from the app's own origin.
+- **Deleting:** removing a file, or the quote that holds it, deletes its row.
+
+## Branding
+
+All of this lives in the quote settings, under "מיתוג" and "חתימה".
+
+**Logo**
+- The logo replaces the brand name in the quote's header.
+
+**Colours**
+- There are two colours. The **header** colour fills the quote's top. The **accent** colours the section headings and the total.
+- Seven ready-made palettes are offered, and two colour pickers accept any colour.
+- No choice can make a quote unreadable:
+  - The header's text is whichever of white or near-black has the higher contrast against the chosen colour.
+  - The accent is darkened only as far as it takes to reach 4.5:1 on white (WCAG AA). A pale gold still reads.
+
+**Signature**
+- It is shown at the end of every quote, at the far side, with the name under it and "בשם {brand}".
+- The near side is left free for the client's signature in phase 3.
+- **Upload:** the owner photographs a pen signature on paper. The browser then processes the photo before uploading it:
+  - The paper's shade is read from the photo (the 60th percentile of brightness).
+  - Anything clearly darker than the paper is kept as ink, with a soft edge so the strokes stay smooth, and the paper becomes transparent.
+  - The result is cropped to the ink and saved as a PNG.
+  - Drawing through a canvas also converts an iPhone HEIC photo into something the server accepts.
+- **Keeping the photo as taken:** a switch shows the photo before and after background removal. If you turn it off, the photo is uploaded as it is, still as a PNG.
 
 ## Frontend
 
@@ -404,8 +439,8 @@ Proposal: add `node --test` via `tsx` for `server/quotes.ts` only, and run it in
    - Packages and settings, and band access.
    - Unit tests.
 2. **Files**
-   - `server/uploads.ts` for attachments, logo and cover.
-   - The `backup.sh` extension.
+   - Done ahead of the rest: `server/quoteFiles.ts`, the logo, the colours and the owner's signature.
+   - Per-quote attachments remain. They use the same table and the same checks, so the backup needs no change.
 3. **Client link**
    - Token and public API.
    - `/q/:token` page, signature, view tracking and print layout.

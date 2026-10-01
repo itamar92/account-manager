@@ -77,7 +77,34 @@ export interface QuoteSettings {
   validity_days: number;
   prices_include_vat: boolean;
   default_template_id: string | null;
+  color_primary: string;
+  color_accent: string;
+  signature_name: string;
+  logo_url: string | null;
+  signature_url: string | null;
 }
+
+/** What a quote is dressed in — the same for every quote, set once in the settings. */
+export interface QuoteBranding {
+  brandName: string;
+  logoUrl: string | null;
+  primary: string;
+  accent: string;
+  signatureUrl: string | null;
+  signatureName: string;
+}
+
+/** Mirrors DEFAULT_COLORS on the server, for the moment before the settings arrive. */
+export const DEFAULT_COLORS = { primary: '#241d3d', accent: '#6b45d6' };
+
+export const brandingOf = (settings?: QuoteSettings | null): QuoteBranding => ({
+  brandName: settings?.brand_name || 'Moonlight',
+  logoUrl: settings?.logo_url ?? null,
+  primary: settings?.color_primary || DEFAULT_COLORS.primary,
+  accent: settings?.color_accent || DEFAULT_COLORS.accent,
+  signatureUrl: settings?.signature_url ?? null,
+  signatureName: settings?.signature_name ?? '',
+});
 
 export const STATUS_LABELS: Record<QuoteStatus, string> = {
   draft: 'טיוטה',

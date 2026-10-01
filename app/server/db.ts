@@ -714,6 +714,22 @@ CREATE TABLE IF NOT EXISTS band_quote_packages (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Images and files for quotes: the band's logo and the owner's signature (quote_id NULL), and
+-- later a quote's own attachments. Kept in the database rather than beside it, because the
+-- nightly backup copies the database file and nothing else — a logo on disk would be the one
+-- thing a restore came back without.
+CREATE TABLE IF NOT EXISTS band_quote_files (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT REFERENCES band_quotes(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('attachment','logo','cover','signature')),
+  filename TEXT,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_band_quote_items_quote ON band_quote_items(quote_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_band_quotes_list ON band_quotes(is_template, created_at);
 

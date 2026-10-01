@@ -7,7 +7,7 @@ import { QuoteDocument } from '../../quotes/QuoteDocument';
 import { QuoteStatusBadge } from './QuotesTab';
 import { VAT_MODES } from './QuoteModals';
 import {
-  computeTotals, previewOf, quoteDate, usePackages, useQuoteSettings,
+  brandingOf, computeTotals, previewOf, quoteDate, usePackages, useQuoteSettings,
   type Quote, type QuoteItem,
 } from './quotes';
 
@@ -164,7 +164,6 @@ export function QuoteEditor() {
     if (p) setLines([...lines, toLine({ name: p.name, description: p.description, quantity: 1, unit_price: p.unit_price, package_id: p.id })]);
   };
 
-  const brandName = settingsData?.settings.brand_name || 'Moonlight';
   const eventTypes = settingsData?.event_types ?? [];
   const activePackages = packages.filter((p) => p.active);
   const deletable = isTemplate || form.status === 'draft' || form.status === 'cancelled';
@@ -390,7 +389,7 @@ export function QuoteEditor() {
           <div className="text-[12px] text-faint mb-2">
             {isTemplate ? 'כך תיראה הצעה מהתבנית' : `כך הלקוח יראה את ההצעה${form.valid_until ? ` · בתוקף עד ${quoteDate(form.valid_until)}` : ''}`}
           </div>
-          <QuoteDocument brandName={brandName} totals={totals} quote={previewOf(form)} />
+          <QuoteDocument branding={brandingOf(settingsData?.settings)} totals={totals} quote={previewOf(form)} />
         </div>
       </div>
 

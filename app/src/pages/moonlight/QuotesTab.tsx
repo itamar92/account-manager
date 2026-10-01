@@ -7,7 +7,8 @@ import {
   STATUS_LABELS, STATUS_STYLES, quoteDate, useQuoteSettings,
   type Quote, type QuoteStatus,
 } from './quotes';
-import { PackagesModal, QuickCreateModal, QuoteSettingsModal, TemplatesModal } from './QuoteModals';
+import { PackagesModal, QuickCreateModal, TemplatesModal } from './QuoteModals';
+import { QuoteSettingsModal } from './QuoteSettingsModal';
 
 export function QuoteStatusBadge({ status }: { status: QuoteStatus }) {
   return (
@@ -237,7 +238,7 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
         onClose={() => setSettingsOpen(false)}
         settingsData={settingsData}
         onSaved={() => { setSettingsOpen(false); reloadSettings(); }}
-        onError={onError}
+        onImagesChanged={reloadSettings}
       />
     </div>
   );

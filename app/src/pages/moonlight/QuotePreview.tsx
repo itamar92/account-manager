@@ -5,7 +5,7 @@ import { get } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Empty, Segmented } from '../../ui';
 import { QuoteDocument } from '../../quotes/QuoteDocument';
-import { computeTotals, previewOf, useQuoteSettings, type Quote, type QuoteItem } from './quotes';
+import { brandingOf, computeTotals, previewOf, useQuoteSettings, type Quote, type QuoteItem } from './quotes';
 
 type Frame = 'phone' | 'desktop';
 
@@ -53,7 +53,7 @@ export function QuotePreview() {
     <QuoteDocument
       quote={previewOf(data.quote)}
       totals={totals}
-      brandName={settingsData?.settings.brand_name || 'Moonlight'}
+      branding={brandingOf(settingsData?.settings)}
     />
   );
 

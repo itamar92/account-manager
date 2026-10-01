@@ -1,5 +1,6 @@
 import { db, uuid, getSetting, setSetting, getVatPercent } from './db.js';
 import { computeTotals, type QuoteLineInput } from './quoteMath.js';
+import { brandingUrl } from './quoteFiles.js';
 
 /**
  * The band's price quotes — see docs/QUOTES-DESIGN.md for the whole of it.
@@ -73,6 +74,24 @@ export interface QuoteSettings {
   validity_days: number;
   prices_include_vat: boolean;
   default_template_id: string | null;
+  /** The quote's header. */
+  color_primary: string;
+  /** Section headings and the total. */
+  color_accent: string;
+  /** The name printed under the signature. */
+  signature_name: string;
+  /** Read-only here: set by uploading the image itself (see quoteFiles.ts). */
+  logo_url: string | null;
+  signature_url: string | null;
+}
+
+/** Moonlight's own ink and violet — what a quote wears until somebody chooses otherwise. */
+export const DEFAULT_COLORS = { primary: '#241d3d', accent: '#6b45d6' };
+
+function color(field: string, value: unknown): string {
+  const s = String(value ?? '').trim().toLowerCase();
+  if (!/^#[0-9a-f]{6}$/.test(s)) throw new QuoteError(400, `צבע לא תקין: ${field}`);
+  return s;
 }
 
 const clampDays = (value: unknown) => {
@@ -103,24 +122,43 @@ export function quoteSettings(): QuoteSettings {
     validity_days: clampDays(getSetting('quote_validity_days', '14')),
     prices_include_vat: getSetting('quote_prices_include_vat', '0') === '1',
     default_template_id: defaultTemplateId(),
+    color_primary: getSetting('quote_color_primary', DEFAULT_COLORS.primary),
+    color_accent: getSetting('quote_color_accent', DEFAULT_COLORS.accent),
+    signature_name: getSetting('quote_signature_name', ''),
+    logo_url: brandingUrl('logo'),
+    signature_url: brandingUrl('signature'),
   };
 }
 
+/**
+ * Saves whichever settings the caller sent. In one transaction, so a field that is refused —
+ * a colour that is not one, a name too long — leaves every other setting as it was rather than
+ * half of the form saved.
+ */
 export function saveQuoteSettings(patch: Partial<Record<keyof QuoteSettings, unknown>>): QuoteSettings {
-  if (patch.brand_name !== undefined) {
-    setSetting('quote_brand_name', String(patch.brand_name ?? '').trim() || 'Moonlight');
-  }
-  if (patch.contact_name !== undefined) setSetting('quote_contact_name', String(patch.contact_name ?? '').trim());
-  if (patch.contact_phone !== undefined) setSetting('quote_contact_phone', String(patch.contact_phone ?? '').trim());
-  if (patch.validity_days !== undefined) setSetting('quote_validity_days', String(clampDays(patch.validity_days)));
-  if (patch.prices_include_vat !== undefined) setSetting('quote_prices_include_vat', patch.prices_include_vat ? '1' : '0');
-  if (patch.default_template_id !== undefined) {
-    const id = String(patch.default_template_id ?? '');
-    if (id && !db.prepare('SELECT 1 FROM band_quotes WHERE id = ? AND is_template = 1').get(id)) {
-      throw new QuoteError(400, 'התבנית לא נמצאה');
+  db.transaction(() => {
+    if (patch.brand_name !== undefined) {
+      setSetting('quote_brand_name', String(patch.brand_name ?? '').trim() || 'Moonlight');
     }
-    setSetting('quote_default_template_id', id);
-  }
+    if (patch.contact_name !== undefined) setSetting('quote_contact_name', String(patch.contact_name ?? '').trim());
+    if (patch.contact_phone !== undefined) setSetting('quote_contact_phone', String(patch.contact_phone ?? '').trim());
+    if (patch.validity_days !== undefined) setSetting('quote_validity_days', String(clampDays(patch.validity_days)));
+    if (patch.prices_include_vat !== undefined) setSetting('quote_prices_include_vat', patch.prices_include_vat ? '1' : '0');
+    if (patch.color_primary !== undefined) setSetting('quote_color_primary', color('color_primary', patch.color_primary));
+    if (patch.color_accent !== undefined) setSetting('quote_color_accent', color('color_accent', patch.color_accent));
+    if (patch.signature_name !== undefined) {
+      const name = String(patch.signature_name ?? '').trim();
+      if (name.length > 120) throw new QuoteError(400, 'השם שמתחת לחתימה ארוך מדי');
+      setSetting('quote_signature_name', name);
+    }
+    if (patch.default_template_id !== undefined) {
+      const id = String(patch.default_template_id ?? '');
+      if (id && !db.prepare('SELECT 1 FROM band_quotes WHERE id = ? AND is_template = 1').get(id)) {
+        throw new QuoteError(400, 'התבנית לא נמצאה');
+      }
+      setSetting('quote_default_template_id', id);
+    }
+  })();
   return quoteSettings();
 }
 

@@ -1,6 +1,9 @@
-import { Router } from 'express';
-import { requireAuth } from './auth.js';
+import express, { Router } from 'express';
+import { requireAuth, requireOwner } from './auth.js';
 import { getVatPercent } from './db.js';
+import {
+  FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
+} from './quoteFiles.js';
 import {
   EVENT_TYPES, cancelQuote, createBlankQuote, createFromTemplate, createPackage, createTemplate,
   deletePackage, deleteQuote, duplicateQuote, getQuote, listPackages, listQuotes, listTemplates,
@@ -15,6 +18,10 @@ import {
  * member does, so a quote is theirs to make, edit and send exactly as it is the owner's — see
  * docs/QUOTES-DESIGN.md. Tightening these to owner-only would not be a fix; it would take the
  * feature away from the people it was built for.
+ *
+ * The one exception is the signature. It is the owner's own hand, signing for the band, so the
+ * band sees it on every quote they make but only the owner can put it there, change it or take
+ * it away.
  */
 export const quoteRouter = Router();
 
@@ -70,7 +77,61 @@ quoteRouter.get('/settings', handle((_req, res) => {
 }));
 
 quoteRouter.put('/settings', handle((req, res) => {
-  res.json({ settings: saveQuoteSettings(req.body || {}) });
+  const patch = { ...(req.body || {}) };
+  // The name under the signature is part of the signature. A band member's form still carries
+  // it, unchanged, so it is dropped rather than refused.
+  if (req.user?.role !== 'owner') delete patch.signature_name;
+  res.json({ settings: saveQuoteSettings(patch) });
+}));
+
+// ---- the logo and the signature ----
+
+/** The signature is the owner's; the logo is anybody's. */
+const ownerForSignature = (req: any, res: any, next: any) =>
+  req.params.kind === 'signature' ? requireOwner(req, res, next) : next();
+
+/**
+ * The image as the request body, whatever it claims to be — saveBrandingImage reads what it
+ * actually is from its bytes. An oversized one is answered in JSON like every other refusal,
+ * rather than with the HTML page Express would otherwise send.
+ */
+const rawImage = (req: any, res: any, next: any) =>
+  express.raw({ type: () => true, limit: MAX_IMAGE_BYTES })(req, res, (err?: any) => {
+    if (!err) return next();
+    res.status(err.status || 400).json({
+      error: err.type === 'entity.too.large' ? 'התמונה גדולה מ־5MB' : 'ההעלאה נכשלה',
+    });
+  });
+
+quoteRouter.get('/branding/:kind', (req, res) => {
+  const kind = req.params.kind;
+  const file = isBrandingKind(kind) ? brandingImage(kind) : null;
+  if (!file) return res.status(404).json({ error: 'אין תמונה' });
+  res.set({
+    'Content-Type': file.mime,
+    'X-Content-Type-Options': 'nosniff',
+    // Addressed by its own id, so it can be kept for ever; asked for without one, it must not be.
+    'Cache-Control': req.query.v === file.id ? 'private, max-age=31536000, immutable' : 'private, no-cache',
+  });
+  res.send(file.data);
+});
+
+quoteRouter.post('/branding/:kind', ownerForSignature, rawImage, (req: any, res: any) => {
+  const kind = req.params.kind;
+  if (!isBrandingKind(kind)) return res.status(404).json({ error: 'not found' });
+  try {
+    saveBrandingImage(kind, req.body, userId(req));
+    res.json({ settings: quoteSettings() });
+  } catch (err: any) {
+    res.status(err instanceof FileError ? err.status : 500).json({ error: err.message || 'internal error' });
+  }
+});
+
+quoteRouter.delete('/branding/:kind', ownerForSignature, handle((req, res) => {
+  const kind = req.params.kind;
+  if (!isBrandingKind(kind)) return res.status(404).json({ error: 'not found' });
+  removeBrandingImage(kind);
+  res.json({ settings: quoteSettings() });
 }));
 
 // ---- one quote ----

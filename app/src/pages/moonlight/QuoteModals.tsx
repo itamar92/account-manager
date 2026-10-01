@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { del, post, put, nis } from '../../api';
-import { Button, Input, Modal, MoneyInput, Segmented, Textarea, fieldClass } from '../../ui';
+import { Button, Input, Modal, MoneyInput, Textarea, fieldClass } from '../../ui';
 import { usePackages, type Quote, type QuotePackage, type QuoteSettings } from './quotes';
 
 type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number } | null;
@@ -260,50 +260,3 @@ export function PackagesModal({ open, onClose, onError }: {
     </Modal>
   );
 }
-
-/** Who the quotes come from, and what a new quote starts with. */
-export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onError }: {
-  open: boolean;
-  onClose: () => void;
-  settingsData: SettingsData;
-  onSaved: () => void;
-  onError: (message: string) => void;
-}) {
-  const [form, setForm] = useState<QuoteSettings | null>(null);
-  useEffect(() => { if (open && settingsData) setForm({ ...settingsData.settings }); }, [open, settingsData]);
-
-  const save = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try { await put('/moonlight/quotes/settings', form); onSaved(); }
-    catch (err: any) { onError(err.message); }
-  };
-
-  return (
-    <Modal title="הגדרות הצעות מחיר" open={open} onClose={onClose}>
-      {form && (
-        <form onSubmit={save} className="space-y-3">
-          <Input label="השם בראש ההצעה" value={form.brand_name}
-            onChange={(e) => setForm({ ...form, brand_name: e.target.value })} />
-          <div className="grid grid-cols-2 gap-3">
-            <Input label="איש קשר" value={form.contact_name}
-              onChange={(e) => setForm({ ...form, contact_name: e.target.value })} />
-            <Input label="טלפון" type="tel" dir="ltr" value={form.contact_phone}
-              onChange={(e) => setForm({ ...form, contact_phone: e.target.value })} />
-          </div>
-          <p className="text-[12px] text-faint -mt-1">
-            מופיעים בתחתית כל הצעה חדשה. אפשר לשנות אותם בכל הצעה לחוד, או לקבוע אחרים בתבנית.
-          </p>
-          <Input label="תוקף הצעה חדשה (ימים)" type="number" min={1} max={365} value={form.validity_days}
-            onChange={(e) => setForm({ ...form, validity_days: parseInt(e.target.value, 10) || 0 })} />
-          <div>
-            <span className="block text-[13px] text-muted mb-1.5">מחירים בהצעה ריקה ובתבנית חדשה</span>
-            <Segmented value={form.prices_include_vat ? 'incl' : 'excl'} options={VAT_MODES}
-              onChange={(v) => setForm({ ...form, prices_include_vat: v === 'incl' })} />
-          </div>
-          <Button type="submit" className="w-full">שמירה</Button>
-        </form>
-      )}
-    </Modal>
-  );
-}
-

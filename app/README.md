@@ -331,6 +331,11 @@ phases still to come (the client's link, the signature, a signed quote becoming 
 - **Numbers** run per year: `ML-2026-001`. Validity is set in days in the quote settings, and a
   quote with a client expires at the end of its last day, Israel time. Expiry is worked out, never
   stored.
+- **Branding** (quote settings → מיתוג, חתימה): a logo, two colours (header and accent; the
+  text adjusts so any choice stays readable) and the owner's signature, photographed on paper
+  with the background removed in the browser before upload. The images are stored in the
+  database (`band_quote_files`), so the existing backup covers them. Only the owner can change
+  the signature.
 - **Who edits:** every logged-in user, band members included. This is the one Moonlight area
   where the band writes, and the router says so (`server/quoteRoutes.ts`). A signed or cancelled
   quote is closed to edits and is copied (שכפול) instead.
