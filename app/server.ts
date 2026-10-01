@@ -11,6 +11,8 @@ import {
   backfillMemberPayments, backfillSupplierPayments, pruneOrphanPayments,
 } from './server/supplierPayments.js';
 import { backfillSupplierAliases } from './server/supplierNames.js';
+import { seedBuiltinTemplate } from './server/quotes.js';
+import { publicQuoteRouter } from './server/publicQuotes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -31,13 +33,26 @@ pruneOrphanPayments();
 // Moves the invoice names off the supplier's free-text column into the table that can be
 // edited from the screen that notices one is missing.
 backfillSupplierAliases();
+// Moonlight's own quote, as the template a new quote starts from. Once: a band that deletes it
+// has chosen to, and «תבניות» adds it back on request.
+seedBuiltinTemplate();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));
 app.use(loadUser);
 
 app.use('/api/v1', apiV1);
+// A client's quote link: no login, the token is the credential (see server/publicQuotes.ts).
+// Mounted ahead of /api so none of the logged-in routes ever sees it.
+app.use('/api/public/quotes', publicQuoteRouter);
 app.use('/api', router);
+
+// The page a client's link opens. Kept out of search engines, and it passes its own address on
+// to nobody, since that address is the key to the quote.
+app.use('/q', (_req, res, next) => {
+  res.set({ 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer' });
+  next();
+});
 
 // Read-only MCP endpoint, for AI agents (Claude Desktop and anything else that speaks MCP).
 // Authenticated with the same X-API-Key mechanism as /api/v1 — a key created in

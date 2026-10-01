@@ -76,6 +76,8 @@ import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfi
 import {
   analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
 } from './campaignAdvisor.js';
+import { quoteRouter } from './quoteRoutes.js';
+import { quoteFollowUps } from './quoteShow.js';
 
 /**
  * The follow-up conversation is a single shared thread rather than one per user: the owner is
@@ -384,6 +386,8 @@ export function inboxItems() {
   const openCount = [
     overdue.length, unbilled.length, Number(uncategorized.count) || 0,
     band.awaitingPayment.length, band.missingAssignments.length,
+    band.quotes.newlySigned.length,
+    band.quotes.needsShow.length + band.quotes.amountMismatch.length + band.quotes.stillOption.length,
     annualFiling ? 1 : 0, annualShortfall ? 1 : 0,
   ].filter(Boolean).length;
 
@@ -412,6 +416,7 @@ export function inboxItems() {
       awaitingPaymentCount: band.awaitingPayment.length,
       owedToSuppliersTotal: band.owedToSuppliersTotal,
       missingAssignments: band.missingAssignments,
+      quotes: band.quotes,
     },
   };
 }
@@ -880,6 +885,8 @@ export function bandFollowUps() {
     awaitingInvoiceTotal: queue.total,
     awaitingInvoiceVat: queue.vat_at_risk,
     awaitingInvoiceOldestDays: queue.oldest_days,
+    // And what a client's signature left behind: news, a quote with no show, a price that differs.
+    quotes: quoteFollowUps(),
   };
 }
 
@@ -1044,6 +1051,9 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
     payoutTotal: sumOver(payout),
   };
 }
+
+// Price quotes — the one Moonlight area band members write to as well; see quoteRoutes.ts.
+router.use('/moonlight/quotes', quoteRouter);
 
 router.get('/moonlight/summary', requireAuth, handle((req, res) => {
   res.json({ summary: bandSummary(dateRange(req.query)), fund: bandFund() });
@@ -1263,8 +1273,15 @@ router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
     };
   }
 
+  // The quotes behind this show, so its page can say which one the client signed.
+  const quotes = db.prepare(
+    `SELECT id, quote_number, status, client_name, signer_name, signed_at, net_amount, total
+     FROM band_quotes WHERE show_id = ? AND is_template = 0 ORDER BY (status = 'signed') DESC, created_at DESC`
+  ).all(event.id);
+
   res.json({
     event: { ...withShares(event), label: eventLabel(event.venue, event.date) },
+    quotes,
     expenses: expense,
     outstanding: expenseOutstanding(expense),
     assignments,

@@ -633,6 +633,114 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_ai_reports_kind ON ai_campaign_reports(kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_thread ON ai_chat_messages(thread_id, created_at);
 
+-- ---------- Moonlight quotes (docs/QUOTES-DESIGN.md) ----------
+-- A price quote for a show. A template is a row of the same table with is_template = 1: the
+-- usual intro, lines and terms, with no client, number or validity of its own, so it is
+-- edited in the same editor and a new quote is a copy of it with three fields filled in.
+--
+-- The signature columns are written once, by the client's signing, and never again; the
+-- snapshot beside them is the quote exactly as it was shown when it was signed.
+CREATE TABLE IF NOT EXISTS band_quotes (
+  id TEXT PRIMARY KEY,
+  is_template INTEGER NOT NULL DEFAULT 0,
+  template_name TEXT,
+  quote_number TEXT UNIQUE,               -- ML-2026-001; NULL on a template
+  public_token TEXT UNIQUE,               -- the client's link; set when first sent
+  status TEXT NOT NULL DEFAULT 'draft'
+    CHECK (status IN ('draft','sent','viewed','signed','cancelled')),
+  client_name TEXT NOT NULL DEFAULT '',
+  client_phone TEXT,
+  client_email TEXT,
+  client_tax_id TEXT,
+  event_type TEXT,
+  event_date TEXT,                        -- YYYY-MM-DD
+  event_location TEXT,
+  guest_count INTEGER,
+  show_duration TEXT,                     -- free text, as the client reads it: «כ־40 דקות»
+  title TEXT NOT NULL DEFAULT '',
+  intro TEXT,
+  terms TEXT,
+  valid_until TEXT,                       -- YYYY-MM-DD; NULL on a template
+  contact_name TEXT,
+  contact_phone TEXT,
+  internal_note TEXT,                     -- never shown to the client
+  prices_include_vat INTEGER NOT NULL DEFAULT 0,
+  vat_percent REAL NOT NULL,              -- frozen when the quote is made
+  discount REAL NOT NULL DEFAULT 0,
+  subtotal REAL NOT NULL DEFAULT 0,
+  net_amount REAL NOT NULL DEFAULT 0,
+  vat_amount REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  show_id TEXT REFERENCES band_events(id) ON DELETE SET NULL,
+  show_link_status TEXT,                  -- what signing did about the show: created/linked/choose/error
+  show_amount_ok INTEGER NOT NULL DEFAULT 0, -- the band kept the show's own amount over the quote's
+  signed_seen_at TEXT,                    -- first opened by the band after signing; until then it is news
+  calendar_id TEXT,                       -- the quote's «אופציה» event, on the band rule's calendar
+  calendar_event_id TEXT,
+  calendar_event_title TEXT,              -- as last written by the app, to tell an option from a booking
+  calendar_event_link TEXT,
+  created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  sent_at TEXT,
+  first_viewed_at TEXT,
+  last_viewed_at TEXT,
+  view_count INTEGER NOT NULL DEFAULT 0,
+  cancelled_at TEXT,
+  signed_at TEXT,
+  signer_name TEXT,
+  signature_png TEXT,
+  signer_ip TEXT,
+  signer_user_agent TEXT,
+  signed_snapshot TEXT,
+  signed_snapshot_sha256 TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- A quote's lines. A line picked from a package is a copy of it: changing the price list
+-- later must not reprice a quote somebody has already been sent.
+CREATE TABLE IF NOT EXISTS band_quote_items (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT NOT NULL REFERENCES band_quotes(id) ON DELETE CASCADE,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  name TEXT NOT NULL,
+  description TEXT,
+  quantity REAL NOT NULL DEFAULT 1,
+  unit_price REAL NOT NULL DEFAULT 0,
+  total REAL NOT NULL DEFAULT 0,
+  package_id TEXT
+);
+
+-- The price list lines are picked from.
+CREATE TABLE IF NOT EXISTS band_quote_packages (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  unit_price REAL NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Images and files for quotes: the band's logo and the owner's signature (quote_id NULL), and
+-- later a quote's own attachments. Kept in the database rather than beside it, because the
+-- nightly backup copies the database file and nothing else — a logo on disk would be the one
+-- thing a restore came back without.
+CREATE TABLE IF NOT EXISTS band_quote_files (
+  id TEXT PRIMARY KEY,
+  quote_id TEXT REFERENCES band_quotes(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('attachment','logo','cover','signature')),
+  filename TEXT,
+  mime TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  data BLOB NOT NULL,
+  uploaded_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_band_quote_items_quote ON band_quote_items(quote_id, sort_order);
+CREATE INDEX IF NOT EXISTS idx_band_quotes_list ON band_quotes(is_template, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date);
 CREATE INDEX IF NOT EXISTS idx_works_client ON works(client_id, status);
 CREATE INDEX IF NOT EXISTS idx_invoices_client ON invoices(client_id, status);
@@ -737,6 +845,17 @@ addColumnIfMissing('band_suppliers', 'expects_invoice', 'INTEGER NOT NULL DEFAUL
 // which is neither their name in the band nor the mailbox the calendar knows them by.
 addColumnIfMissing('band_members', 'tax_id', 'TEXT');
 addColumnIfMissing('band_members', 'morning_supplier_id', 'TEXT');
+// How long the band plays — the one blank the old Google Docs quote had that a quote did not.
+addColumnIfMissing('band_quotes', 'show_duration', 'TEXT');
+// A signed quote becoming a show (docs/QUOTES-DESIGN.md, «Signing becomes a show»).
+addColumnIfMissing('band_quotes', 'show_link_status', 'TEXT');
+addColumnIfMissing('band_quotes', 'show_amount_ok', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('band_quotes', 'signed_seen_at', 'TEXT');
+// The quote's own calendar event — the way its show comes into being (server/quoteCalendar.ts).
+addColumnIfMissing('band_quotes', 'calendar_id', 'TEXT');
+addColumnIfMissing('band_quotes', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('band_quotes', 'calendar_event_title', 'TEXT');
+addColumnIfMissing('band_quotes', 'calendar_event_link', 'TEXT');
 
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a

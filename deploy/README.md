@@ -316,6 +316,31 @@ If Cloudflare Access is in front (§7), `/mcp` needs the bypass policy described
 Access answers with a 302 to its login page and the server shows as `failed` with an HTML parse
 error rather than a clean 401.
 
+## 4c. Google Calendar: write access for price quotes
+
+The calendar sync only reads. A price quote also **writes**: it holds its date with an
+«אופציה» event on the band's calendar and sends the invitations, and the sync makes the show
+from that event. That needs the refresh token in `.env` to carry the `calendar.events` scope as
+well as `calendar.readonly`. A token issued read-only still syncs, and the quote's dialog answers
+with a message naming `calendar.events`.
+
+To issue one with both:
+
+1. **Google Cloud Console** → the project that holds `GOOGLE_CLIENT_ID` → **OAuth consent screen**
+   → **Data access**: add `.../auth/calendar.readonly` and `.../auth/calendar.events`. If the
+   consent screen is still in **Testing**, Google expires its refresh tokens after 7 days, so
+   publish it.
+2. The same client → **Authorized redirect URIs**: add `https://developers.google.com/oauthplayground`.
+3. **[OAuth 2.0 Playground](https://developers.google.com/oauthplayground)** → the gear → *Use your
+   own OAuth credentials* → the client ID and secret. In step 1, enter
+   `https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events`,
+   authorize with the account whose calendar holds the shows, and in step 2 exchange the code.
+4. Put the new refresh token in `deploy/.env` as `GOOGLE_REFRESH_TOKEN`, then
+   `docker compose up -d` in `deploy/`.
+
+To check it: open a quote → «יומן והופעה» → «שריון ביומן כאופציה». An error naming
+`calendar.events` means the old token is still the one in use.
+
 ## 5. Backups
 
 The whole application state is one file in the `am-data` volume. Losing the VM
@@ -378,6 +403,12 @@ One catch: **exclude `/api/v1` and `/mcp`**, or the `X-API-Key` calls behind the
 the Morning integration and the MCP server that Claude Desktop connects to — will
 be intercepted by Access and fail. Add a Bypass policy for those paths, or a
 service-token policy if you want them authenticated at the edge too.
+
+**Clients' quote links need the same.** A client opening a quote from WhatsApp or an email has
+no Access login, so add a Bypass policy for `/q/*`, `/api/public/*` and `/assets/*` (the page's
+script and styles). The alternative is a second public hostname on the same tunnel, such as
+`quotes.im-tools.org`, left outside Access, with `PUBLIC_BASE_URL=https://quotes.im-tools.org` in
+`.env` so the links the app writes point there.
 
 The symptom is specific and worth recognising: Access answers an unauthenticated
 request with a **302 to its login page**, so the caller sees HTML where it expected

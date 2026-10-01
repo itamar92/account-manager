@@ -14,6 +14,9 @@ import { Expenses } from './pages/Expenses';
 import { Reports } from './pages/Reports';
 import { Moonlight } from './pages/Moonlight';
 import { ShowDetail } from './pages/moonlight/ShowDetail';
+import { QuoteEditor } from './pages/moonlight/QuoteEditor';
+import { QuotePreview } from './pages/moonlight/QuotePreview';
+import { QuotePublic } from './pages/QuotePublic';
 import { Settings } from './pages/Settings';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -22,6 +25,10 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* A client's quote link: no login and no shell — see server/publicQuotes.ts. */}
+          <Route path="/q/:token" element={<QuotePublic />} />
+          {/* Outside the shell: the quote on its own, the way the client will get it. */}
+          <Route path="/moonlight/quotes/:id/preview" element={<QuotePreview />} />
           <Route element={<Layout />}>
             {/* What is unfinished is the landing page; the year's figures are one click over. */}
             <Route path="/" element={<Inbox />} />
@@ -35,6 +42,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/moonlight" element={<Moonlight />} />
             {/* Before /:tab, so "shows/<id>" is a show and not a tab named "shows". */}
             <Route path="/moonlight/shows/:id" element={<ShowDetail />} />
+            <Route path="/moonlight/quotes/:id" element={<QuoteEditor />} />
             <Route path="/moonlight/:tab" element={<Moonlight />} />
             <Route path="/settings" element={<Settings />} />
           </Route>

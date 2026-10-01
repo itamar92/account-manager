@@ -44,5 +44,9 @@ jobs:
       - name: Typecheck
         run: npm run lint
 
+      # The quote arithmetic and its rules — the part of the app a client signs.
+      - name: Test
+        run: npm test
+
       - name: Build
         run: npm run build
