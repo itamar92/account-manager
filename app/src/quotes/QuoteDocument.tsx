@@ -1,9 +1,10 @@
 import React from 'react';
+import { clsx } from 'clsx';
 import { CalendarDays, MapPin, PartyPopper, Timer, Users } from 'lucide-react';
 import { nis, nisExact } from '../api';
 import type { QuoteTotals } from '../../server/quoteMath';
 import {
-  israelDateTime, issuedOn, quoteDate, type ClientSignature, type Quote, type QuoteBranding,
+  israelDateTime, issuedOn, quoteDate, type ClientSignature, type LogoPosition, type Quote, type QuoteBranding,
 } from '../pages/moonlight/quotes';
 import { readableOnWhite, textOn } from './colors';
 
@@ -45,7 +46,9 @@ export function QuoteDocument({ quote, totals, branding, clientSignature, client
    */
   clientLine?: boolean;
 }) {
-  const { brandName, logoUrl, signatureUrl, signatureName } = branding;
+  const { brandName, logoUrl, logoPosition, signatureUrl, signatureName } = branding;
+  // A logo in the middle heads the page like a letterhead, and the title under it follows.
+  const centered = logoPosition === 'center';
   const header = { backgroundColor: branding.primary, color: textOn(branding.primary) };
   const accent = { color: readableOnWhite(branding.accent) };
   const vatPercent = Number(quote.vat_percent) || 0;
@@ -63,22 +66,16 @@ export function QuoteDocument({ quote, totals, branding, clientSignature, client
 
   return (
     <article className="quote-doc @container bg-surface border border-line rounded-2xl overflow-hidden text-ink shadow-[0_1px_2px_rgba(20,24,32,.04)]">
-      <header style={header} className="px-5 py-6 @xl:px-8 @xl:py-7">
-        <div className="flex items-start justify-between gap-4">
-          {/* A logo usually spells the name already, so it stands in for it rather than beside it. */}
-          {logoUrl
-            ? <img src={logoUrl} alt={brandName} className="h-12 @xl:h-14 w-auto max-w-[180px] object-contain object-right" />
-            : <div className="ser text-[22px] @xl:text-2xl tracking-wide">{brandName}</div>}
-          <div className="text-end text-[12px] leading-5 opacity-65">
-            <div>הצעת מחיר</div>
-            {quote.quote_number && <div className="num" dir="ltr">{quote.quote_number}</div>}
-            {issued && <div className="num">{issued}</div>}
-          </div>
-        </div>
+      <header style={header} className={clsx('px-5 py-6 @xl:px-8 @xl:py-7', centered && 'text-center')}>
+        <QuoteMasthead brandName={brandName} logoUrl={logoUrl} position={logoPosition} lines={[
+          'הצעת מחיר',
+          quote.quote_number && <span className="num" dir="ltr">{quote.quote_number}</span>,
+          issued && <span className="num">{issued}</span>,
+        ]} />
         <h1 className="ser text-[21px] @xl:text-[26px] leading-snug mt-6">{quote.title || 'הצעת מחיר'}</h1>
         {quote.client_name && <p className="mt-1.5 text-[15px] opacity-80">עבור {quote.client_name}</p>}
         {chips.length > 0 && (
-          <ul className="mt-4 flex flex-wrap gap-2">
+          <ul className={clsx('mt-4 flex flex-wrap gap-2', centered && 'justify-center')}>
             {chips.map(({ icon: Icon, text, label }) => (
               <li key={label} title={label} className="flex items-center gap-1.5 bg-current/10 rounded-full px-3 py-1 text-[12.5px]">
                 <Icon size={13} className="shrink-0 opacity-70" /> {text}
@@ -203,6 +200,57 @@ export function QuoteDocument({ quote, totals, branding, clientSignature, client
         </footer>
       )}
     </article>
+  );
+}
+
+/**
+ * The top of a quote's header: the logo where the settings put it, and the small print of the
+ * quote — its number and date. Beside a logo at the right or the left, the small print takes the
+ * corner across from it. Under a logo in the middle, it is one line centred beneath, letterhead
+ * fashion, which also leaves the logo the whole width of a phone rather than a third of it.
+ *
+ * The settings draw their preview with this same piece, so the choice there is the quote's.
+ */
+export function QuoteMasthead({ brandName, logoUrl, position, lines, size = 'document' }: {
+  brandName: string;
+  logoUrl: string | null;
+  position: LogoPosition;
+  /** The small print, a line each; an empty one is left out. */
+  lines: React.ReactNode[];
+  size?: 'document' | 'preview';
+}) {
+  const preview = size === 'preview';
+  const shown = lines.filter(Boolean);
+  // A logo usually spells the name already, so it stands in for it rather than beside it.
+  const mark = logoUrl
+    ? <img src={logoUrl} alt={brandName} className={clsx(
+        'w-auto object-contain',
+        preview ? 'h-11 max-w-[160px]' : 'h-12 @xl:h-14 max-w-[180px]',
+        { right: 'object-right', center: 'object-center', left: 'object-left' }[position],
+      )} />
+    : <div className={clsx('ser tracking-wide', preview ? 'text-xl' : 'text-[22px] @xl:text-2xl')}>{brandName}</div>;
+  const small = clsx('opacity-65', preview ? 'text-[11px] leading-4' : 'text-[12px] leading-5');
+
+  if (position === 'center') {
+    return (
+      <div className="flex flex-col items-center">
+        {mark}
+        <div className={clsx(small, 'mt-2 flex flex-wrap justify-center gap-x-1.5')}>
+          {shown.map((line, i) => (
+            <React.Fragment key={i}>{i > 0 && <span aria-hidden>·</span>}<span>{line}</span></React.Fragment>
+          ))}
+        </div>
+      </div>
+    );
+  }
+  // The page reads right to left, so «right» is where it starts.
+  return (
+    <div className={clsx('flex items-start justify-between gap-4', position === 'left' && 'flex-row-reverse')}>
+      {mark}
+      <div className={clsx(small, position === 'left' ? 'text-start' : 'text-end')}>
+        {shown.map((line, i) => <div key={i}>{line}</div>)}
+      </div>
+    </div>
   );
 }
 

@@ -80,6 +80,8 @@ export interface QuoteSettings {
   color_primary: string;
   /** Section headings and the total. */
   color_accent: string;
+  /** Where the logo — or the name, without one — sits at the top of the quote. */
+  logo_position: LogoPosition;
   /** The name printed under the signature. */
   signature_name: string;
   /** What a quote's link is sent with, on WhatsApp and in an email alike — see quoteShare.ts. */
@@ -89,6 +91,13 @@ export interface QuoteSettings {
   logo_url: string | null;
   signature_url: string | null;
 }
+
+export type LogoPosition = 'right' | 'center' | 'left';
+
+export const LOGO_POSITIONS: LogoPosition[] = ['right', 'center', 'left'];
+
+const logoPosition = (value: unknown): LogoPosition =>
+  LOGO_POSITIONS.includes(value as LogoPosition) ? (value as LogoPosition) : 'center';
 
 /** Moonlight's own ink and violet — what a quote wears until somebody chooses otherwise. */
 export const DEFAULT_COLORS = { primary: '#241d3d', accent: '#6b45d6' };
@@ -129,6 +138,7 @@ export function quoteSettings(): QuoteSettings {
     default_template_id: defaultTemplateId(),
     color_primary: getSetting('quote_color_primary', DEFAULT_COLORS.primary),
     color_accent: getSetting('quote_color_accent', DEFAULT_COLORS.accent),
+    logo_position: logoPosition(getSetting('quote_logo_position', 'center')),
     signature_name: getSetting('quote_signature_name', ''),
     message_template: getSetting('quote_message_template', '') || DEFAULT_MESSAGE,
     email_subject: getSetting('quote_email_subject', '') || DEFAULT_SUBJECT,
@@ -153,6 +163,10 @@ export function saveQuoteSettings(patch: Partial<Record<keyof QuoteSettings, unk
     if (patch.prices_include_vat !== undefined) setSetting('quote_prices_include_vat', patch.prices_include_vat ? '1' : '0');
     if (patch.color_primary !== undefined) setSetting('quote_color_primary', color('color_primary', patch.color_primary));
     if (patch.color_accent !== undefined) setSetting('quote_color_accent', color('color_accent', patch.color_accent));
+    if (patch.logo_position !== undefined) {
+      if (!LOGO_POSITIONS.includes(patch.logo_position as LogoPosition)) throw new QuoteError(400, 'מיקום לוגו לא תקין');
+      setSetting('quote_logo_position', patch.logo_position as LogoPosition);
+    }
     if (patch.signature_name !== undefined) {
       const name = String(patch.signature_name ?? '').trim();
       if (name.length > 120) throw new QuoteError(400, 'השם שמתחת לחתימה ארוך מדי');

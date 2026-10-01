@@ -56,6 +56,11 @@ test('sending gives the quote its link and marks it sent; sending again changes 
   assert.equal(first.email, 'dana@example.com');
   assert.match(first.message, /שלום דנה,/);
   assert.ok(first.message.includes(first.url));
+  // The email's card: written as the client reads it, and its logo by an address a mailbox can load.
+  assert.equal(first.card.event_date, '01/06/2030');
+  assert.equal(first.card.total, 11800);
+  assert.equal(first.card.logo_url, null);
+  assert.equal(first.card.logo_position, 'center');
   assert.equal(q.getQuote(id).quote.status, 'sent');
 
   const again = link.sendQuote(id, USER, BASE);

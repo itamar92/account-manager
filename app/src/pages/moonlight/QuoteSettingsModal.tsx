@@ -5,14 +5,22 @@ import { del, postFile, put } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Input, Modal, Segmented, Switch, Textarea } from '../../ui';
 import { PALETTES, readableOnWhite, textOn } from '../../quotes/colors';
+import { QuoteMasthead } from '../../quotes/QuoteDocument';
 import { prepareSignature } from '../../quotes/signatureImage';
 import { VAT_MODES } from './QuoteModals';
-import type { QuoteSettings } from './quotes';
+import type { LogoPosition, QuoteSettings } from './quotes';
 
 type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number; calendar_ready?: boolean } | null;
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TYPES = 'image/png,image/jpeg,image/webp';
+
+/** In the order they sit on the page, which reads from the right. */
+const LOGO_POSITIONS: Array<{ value: LogoPosition; label: string }> = [
+  { value: 'right', label: 'ימין' },
+  { value: 'center', label: 'מרכז' },
+  { value: 'left', label: 'שמאל' },
+];
 
 /** The paper a transparent signature is shown on, so you can see that it is transparent. */
 const CHECKERBOARD: React.CSSProperties = {
@@ -32,9 +40,11 @@ interface SignatureDraft {
 /**
  * Who the quotes come from and what they look like.
  *
- * The two images are saved the moment they are uploaded, each on its own; everything else is a
- * form saved with the button. The images are read from the settings as the server last sent
- * them rather than from the form, so uploading a logo never throws away a name half-typed.
+ * The logo is saved the moment it is uploaded; everything else is a form saved with the button.
+ * The signature is looked at first — with the paper taken out or not — and is saved by its own
+ * button or, if that was missed, by the form's, so a signature on screen is never left behind.
+ * The images are read from the settings as the server last sent them rather than from the form,
+ * so uploading a logo never throws away a name half-typed.
  *
  * The signature is the owner's: a band member sees it here, and on every quote, but the controls
  * to change it are the owner's alone — the server refuses anyone else.
@@ -111,17 +121,23 @@ export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onIma
     setDraft({ ...draft, removeBackground, url: URL.createObjectURL(blob) });
   };
 
+  /** The signature on screen, as it will be saved. */
+  const draftBlob = draft && (draft.removeBackground ? draft.cleaned : draft.plain);
+
+  /** Throws, so the form's own save stops rather than closing on a signature that did not go in. */
+  const uploadSignature = async (blob: Blob) => {
+    if (blob.size > MAX_IMAGE_BYTES) throw new Error('התמונה גדולה מ־5MB');
+    await postFile('/moonlight/quotes/branding/signature', new File([blob], 'signature.png', { type: 'image/png' }));
+    setDraft(null);
+    onImagesChanged();
+  };
+
   const saveSignature = async () => {
-    const blob = draft && (draft.removeBackground ? draft.cleaned : draft.plain);
-    if (!blob) return;
-    if (blob.size > MAX_IMAGE_BYTES) return setError('התמונה גדולה מ־5MB');
+    if (!draftBlob) return;
     setBusy('signature');
     setError('');
-    try {
-      await postFile('/moonlight/quotes/branding/signature', new File([blob], 'signature.png', { type: 'image/png' }));
-      setDraft(null);
-      onImagesChanged();
-    } catch (err: any) { setError(err.message); }
+    try { await uploadSignature(draftBlob); }
+    catch (err: any) { setError(err.message); }
     finally { setBusy(null); }
   };
 
@@ -129,16 +145,24 @@ export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onIma
     e.preventDefault();
     setBusy('save');
     setError('');
-    try { await put('/moonlight/quotes/settings', form); onSaved(); }
-    catch (err: any) { setError(err.message); }
+    try {
+      if (draftBlob) await uploadSignature(draftBlob);
+      await put('/moonlight/quotes/settings', form);
+      onSaved();
+    } catch (err: any) { setError(err.message); }
     finally { setBusy(null); }
+  };
+
+  const close = () => {
+    if (draftBlob && !confirm('החתימה שבחרתם עוד לא נשמרה. לסגור בלי לשמור אותה?')) return;
+    onClose();
   };
 
   const headerStyle = { backgroundColor: form.color_primary, color: textOn(form.color_primary) };
   const activePalette = PALETTES.find((p) => p.primary === form.color_primary && p.accent === form.color_accent);
 
   return (
-    <Modal title="הגדרות הצעות מחיר" open={open} onClose={onClose} size="lg">
+    <Modal title="הגדרות הצעות מחיר" open={open} onClose={close} size="lg">
       <form onSubmit={save} className="space-y-6">
         {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
 
@@ -148,13 +172,9 @@ export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onIma
 
           {/* What the top of every quote will look like, with the choices below applied. */}
           <div className="rounded-xl overflow-hidden border border-line">
-            <div style={headerStyle} className="px-5 py-4">
-              <div className="flex items-start justify-between gap-4">
-                {saved.logo_url
-                  ? <img src={saved.logo_url} alt={form.brand_name} className="h-11 w-auto max-w-[160px] object-contain object-right" />
-                  : <div className="ser text-xl tracking-wide">{form.brand_name || 'Moonlight'}</div>}
-                <div className="text-[11px] opacity-65 text-end">הצעת מחיר<div dir="ltr">ML-2026-001</div></div>
-              </div>
+            <div style={headerStyle} className={clsx('px-5 py-4', form.logo_position === 'center' && 'text-center')}>
+              <QuoteMasthead brandName={form.brand_name || 'Moonlight'} logoUrl={saved.logo_url}
+                position={form.logo_position} size="preview" lines={['הצעת מחיר', <span dir="ltr">ML-2026-001</span>]} />
               <div className="ser text-lg mt-3">הופעה בחתונה של דנה ורון</div>
             </div>
             <div className="bg-surface px-5 py-3 flex items-baseline justify-between">
@@ -183,6 +203,12 @@ export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onIma
             <p className="text-[12px] text-faint mt-1.5">
               PNG עם רקע שקוף נראה הכי טוב, עד 5MB. הלוגו מחליף את השם בראש ההצעה — ודאו שהוא בולט על צבע הכותרת.
             </p>
+          </div>
+
+          <div>
+            <span className="block text-[13px] text-muted mb-1.5">מיקום {saved.logo_url ? 'הלוגו' : 'השם'} בראש ההצעה</span>
+            <Segmented value={form.logo_position} options={LOGO_POSITIONS}
+              onChange={(logo_position) => set({ logo_position })} />
           </div>
 
           <div>
@@ -318,8 +344,8 @@ export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onIma
           </p>
         </section>
 
-        <Button type="submit" className="w-full" disabled={busy === 'save'}>
-          {busy === 'save' ? 'שומר…' : 'שמירה'}
+        <Button type="submit" className="w-full" disabled={busy === 'save' || busy === 'signature'}>
+          {busy === 'save' ? 'שומר…' : draftBlob ? 'שמירה, כולל החתימה' : 'שמירה'}
         </Button>
       </form>
     </Modal>
