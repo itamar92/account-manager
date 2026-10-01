@@ -93,6 +93,7 @@ export interface QuoteSettings {
   default_template_id: string | null;
   color_primary: string;
   color_accent: string;
+  logo_position: LogoPosition;
   signature_name: string;
   message_template: string;
   email_subject: string;
@@ -138,6 +139,25 @@ export interface ShareDetails {
   subject: string;
   phone: string | null;
   email: string | null;
+  card: EmailCard;
+}
+
+/** What the email is dressed in and sums up, written as the client reads it (server/quoteLink.ts). */
+export interface EmailCard {
+  brand_name: string;
+  logo_url: string | null;
+  logo_position: LogoPosition;
+  color_primary: string;
+  color_accent: string;
+  title: string;
+  quote_number: string;
+  event_date: string;
+  event_location: string;
+  total: number;
+  vat_percent: number;
+  valid_until: string;
+  contact_name: string;
+  contact_phone: string;
 }
 
 /** The client's signature, as the document shows it once there is one. */
@@ -147,10 +167,13 @@ export interface ClientSignature {
   png: string;
 }
 
+export type LogoPosition = 'right' | 'center' | 'left';
+
 /** What a quote is dressed in — the same for every quote, set once in the settings. */
 export interface QuoteBranding {
   brandName: string;
   logoUrl: string | null;
+  logoPosition: LogoPosition;
   primary: string;
   accent: string;
   signatureUrl: string | null;
@@ -163,6 +186,7 @@ export const DEFAULT_COLORS = { primary: '#241d3d', accent: '#6b45d6' };
 export const brandingOf = (settings?: QuoteSettings | null): QuoteBranding => ({
   brandName: settings?.brand_name || 'Moonlight',
   logoUrl: settings?.logo_url ?? null,
+  logoPosition: settings?.logo_position ?? 'center',
   primary: settings?.color_primary || DEFAULT_COLORS.primary,
   accent: settings?.color_accent || DEFAULT_COLORS.accent,
   signatureUrl: settings?.signature_url ?? null,

@@ -2,7 +2,7 @@ import { randomBytes } from 'crypto';
 import { db, getSetting, sha256 } from './db.js';
 import { computeTotals, type QuoteTotals } from './quoteMath.js';
 import { brandingImage, type BrandingKind } from './quoteFiles.js';
-import { QuoteError, displayStatus, hebrewDate, quoteSettings, todayInIsrael } from './quotes.js';
+import { QuoteError, displayStatus, hebrewDate, quoteSettings, todayInIsrael, type LogoPosition } from './quotes.js';
 import { fillMessage, whatsappNumber } from './quoteShare.js';
 import { afterSigning } from './quoteShow.js';
 
@@ -44,27 +44,70 @@ export interface ShareDetails {
   /** As WhatsApp addresses it, or null to let WhatsApp ask. */
   phone: string | null;
   email: string | null;
+  /** What the email is dressed in and sums up — src/quotes/quoteEmail.ts builds it from these. */
+  card: EmailCard;
 }
 
-export const quoteUrl = (baseUrl: string, token: string) => `${baseUrl.replace(/\/+$/, '')}/q/${token}`;
+/** Everything already written as the client reads it, and every address absolute, for a mailbox. */
+export interface EmailCard {
+  brand_name: string;
+  /** By the quote's own link, so the client's mail app can load it without a login. */
+  logo_url: string | null;
+  logo_position: LogoPosition;
+  color_primary: string;
+  color_accent: string;
+  title: string;
+  quote_number: string;
+  event_date: string;
+  event_location: string;
+  /** The sum to pay, VAT and all, in shekels. */
+  total: number;
+  vat_percent: number;
+  valid_until: string;
+  contact_name: string;
+  contact_phone: string;
+}
 
-function shareFor(row: any, url: string): ShareDetails {
+const trimBase = (baseUrl: string) => baseUrl.replace(/\/+$/, '');
+
+export const quoteUrl = (baseUrl: string, token: string) => `${trimBase(baseUrl)}/q/${token}`;
+
+function shareFor(row: any, baseUrl: string): ShareDetails {
   const settings = quoteSettings();
+  const url = quoteUrl(baseUrl, row.public_token);
+  const contactName = row.contact_name || settings.contact_name || '';
   const fields = {
     client_name: row.client_name || '',
     title: row.title || 'הצעת מחיר',
     event_date: hebrewDate(row.event_date),
     valid_until: hebrewDate(row.valid_until),
     link: url,
-    contact_name: row.contact_name || settings.contact_name || '',
+    contact_name: contactName,
     quote_number: row.quote_number || '',
   };
+  const logo = publicImageUrl(row.public_token, 'logo');
   return {
     url,
     message: fillMessage(settings.message_template, fields),
     subject: fillMessage(settings.email_subject, fields),
     phone: whatsappNumber(row.client_phone),
     email: row.client_email || null,
+    card: {
+      brand_name: settings.brand_name,
+      logo_url: logo && `${trimBase(baseUrl)}${logo}`,
+      logo_position: settings.logo_position,
+      color_primary: settings.color_primary,
+      color_accent: settings.color_accent,
+      title: fields.title,
+      quote_number: fields.quote_number,
+      event_date: fields.event_date,
+      event_location: row.event_location || '',
+      total: Number(row.total) || 0,
+      vat_percent: Number(row.vat_percent) || 0,
+      valid_until: fields.valid_until,
+      contact_name: contactName,
+      contact_phone: row.contact_phone || settings.contact_phone || '',
+    },
   };
 }
 
@@ -101,7 +144,7 @@ export function sendQuote(id: string, userId: string | null, baseUrl: string): S
        updated_by = COALESCE(?, updated_by)
      WHERE id = ?`
   ).run(token, userId, id);
-  return shareFor(rowById(id), quoteUrl(baseUrl, token));
+  return shareFor(rowById(id), baseUrl);
 }
 
 /**
@@ -115,7 +158,7 @@ export function regenerateLink(id: string, baseUrl: string): ShareDetails {
   if (row.status === 'signed') throw new QuoteError(409, 'להצעה חתומה נשאר הקישור שלה — זה העותק החתום של הלקוח');
   const token = newToken();
   db.prepare('UPDATE band_quotes SET public_token = ? WHERE id = ?').run(token, id);
-  return shareFor(rowById(id), quoteUrl(baseUrl, token));
+  return shareFor(rowById(id), baseUrl);
 }
 
 // ---------- what the client sees ----------
@@ -130,6 +173,7 @@ const CLIENT_FIELDS = [
 export interface PublicBranding {
   brand_name: string;
   logo_url: string | null;
+  logo_position: LogoPosition;
   color_primary: string;
   color_accent: string;
   signature_url: string | null;
@@ -161,6 +205,7 @@ function liveBranding(token: string): PublicBranding {
   return {
     brand_name: s.brand_name,
     logo_url: publicImageUrl(token, 'logo'),
+    logo_position: s.logo_position,
     color_primary: s.color_primary,
     color_accent: s.color_accent,
     signature_url: publicImageUrl(token, 'signature'),
@@ -190,7 +235,9 @@ export function publicQuote(token: string): PublicQuote {
       quote: snapshot.quote,
       totals: snapshot.totals,
       // The logo is the band's look, which may change; the band's signature is part of the record.
-      branding: { ...snapshot.branding, logo_url: publicImageUrl(token, 'logo') },
+      branding: {
+        ...snapshot.branding, logo_url: publicImageUrl(token, 'logo'), logo_position: quoteSettings().logo_position,
+      },
       version: null,
       signature: { signer_name: row.signer_name, signed_at: row.signed_at, png: row.signature_png },
     };

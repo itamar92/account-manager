@@ -15,7 +15,7 @@ fixes the original's gaps as it goes (see [What we deliberately do not port](#wh
 |---|---|
 | What a signed quote does | It **becomes a show**: it creates or links a `band_events` row with the agreed amount |
 | Client experience | **Full port**: a public branded page on a secret link, with a drawn signature |
-| Delivery | **A link, sent on WhatsApp or by email.** Both open from the sender's own WhatsApp or mail (a `wa.me`, `mailto:` or Gmail compose link), so the app itself sends nothing and the client's reply reaches a person |
+| Delivery | **A link, sent on WhatsApp or by email.** Both open from the sender's own WhatsApp or mail (a `wa.me`, `mailto:` or Gmail compose link), so the app itself sends nothing and the client's reply reaches a person. The email is designed HTML, pasted in from the clipboard, since a compose link carries plain text only |
 | Band members | Can **create, edit, send and delete any quote**, and manage packages and quote settings |
 | Identity on the quote | **Moonlight only**: band name, logo, contact person. No legal business details |
 | Extra contents | **Saved packages** (price list) and **file attachments** |
@@ -144,6 +144,7 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
 - `quote_brand_name`
 - `quote_logo_file_id`, `quote_signature_file_id` (and later `quote_cover_file_id`)
 - `quote_color_primary`, `quote_color_accent`
+- `quote_logo_position`: `right`, `center` (the default) or `left`
 - `quote_signature_name`
 - `quote_contact_name`, `quote_contact_phone`
 - `quote_default_template_id`
@@ -298,6 +299,7 @@ Built in `server/quoteShow.ts`. The steps below run right after the signature co
 | `server/quotes.ts` | Domain logic: numbering, templates, the edit/cancel/duplicate guards, settings |
 | `server/quoteLink.ts` | The client's side: sending and the link's token, the client-safe view, view counting, signing and the signed snapshot |
 | `server/quoteShare.ts` | The message and the WhatsApp, `mailto:` and Gmail links. No imports, so the share dialog uses the same file |
+| `src/quotes/quoteEmail.ts` | The HTML email: header, message, the offer's card and the button to the link. Built in the browser, from the message as edited |
 | `server/quoteRoutes.ts` | Authenticated router mounted at `/api/moonlight/quotes`. It lives in its own file because `routes.ts` is already 2,600 lines |
 | `server/publicQuotes.ts` | Unauthenticated router mounted at `/api/public/quotes`, ahead of `/api` |
 | `server/quoteFiles.ts` | Images and files: checking what an upload really is, storing it, serving it |
@@ -377,6 +379,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 
 **Logo**
 - The logo replaces the brand name in the quote's header.
+- It sits at the right, in the middle or at the left (`quote_logo_position`). At a side, the quote's number and date take the corner across from it. In the middle, they are one line centred under it, and the title follows it to the middle. The email's header takes the same position.
 
 **Colours**
 - There are two colours. The **header** colour fills the quote's top. The **accent** colours the section headings and the total.
@@ -460,6 +463,8 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 - Copy link, and open it the way the client will (a logged-in visit is not counted as a view).
 - **וואטסאפ** opens `https://wa.me/972XXXXXXXXX?text=…`. The phone is normalized from however it was typed. With no phone it falls back to `https://wa.me/?text=…`, and WhatsApp asks who to send to.
 - **אימייל** opens the device's mail app (`mailto:`), and **Gmail** opens Gmail's compose window. Both are addressed to the quote's client email when there is one, with the subject from `quote_email_subject`.
+- The email is HTML (`src/quotes/quoteEmail.ts`): the band's header, the message, a card with the title, date, place and total, and a button to the link. A compose link can carry only plain text, so the click puts the email on the clipboard as rich text and opens the compose window with an empty body to paste it into. The line the link is on in the message becomes the button, in that line's words. If the browser refuses the copy, the window opens with the plain message, as before.
+- The dialog previews the email («איך המייל ייראה»). Its logo is the link's own public address, so the client's mail app loads it without a login.
 - The message comes from `quote_message_template`, with `{client_name}`, `{title}`, `{event_date}`, `{valid_until}`, `{link}`, `{contact_name}` and `{quote_number}` filled in. It can be edited in the dialog for one send, and the links follow the edit.
 - «קישור חדש במקום הזה» replaces the token, and the old link stops working. A signed quote keeps its link, since it is the client's copy.
 

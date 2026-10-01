@@ -7,7 +7,7 @@ import type { QuoteTotals } from '../../server/quoteMath';
 import { whatsappUrl } from '../../server/quoteShare';
 import { QuoteDocument, type QuoteDocumentQuote } from '../quotes/QuoteDocument';
 import { SignaturePad, type SignaturePadHandle } from '../quotes/SignaturePad';
-import { israelDateTime, quoteDate, type QuoteBranding } from './moonlight/quotes';
+import { israelDateTime, quoteDate, type LogoPosition, type QuoteBranding } from './moonlight/quotes';
 
 /** What /api/public/quotes/:token answers — see server/quoteLink.ts. */
 interface PublicView {
@@ -15,7 +15,8 @@ interface PublicView {
   quote: QuoteDocumentQuote;
   totals: QuoteTotals | null;
   branding: {
-    brand_name: string; logo_url: string | null; color_primary: string; color_accent: string;
+    brand_name: string; logo_url: string | null; logo_position?: LogoPosition;
+    color_primary: string; color_accent: string;
     signature_url: string | null; signature_name: string;
   };
   version: string | null;
@@ -25,6 +26,7 @@ interface PublicView {
 const brandingOf = (b: PublicView['branding']): QuoteBranding => ({
   brandName: b.brand_name,
   logoUrl: b.logo_url,
+  logoPosition: b.logo_position ?? 'center',
   primary: b.color_primary,
   accent: b.color_accent,
   signatureUrl: b.signature_url,

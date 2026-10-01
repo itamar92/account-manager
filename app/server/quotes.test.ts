@@ -210,3 +210,13 @@ test('the built-in template is put in place once, and deleting it does not bring
   q.deleteQuote(id!);
   assert.equal(q.seedBuiltinTemplate(), null);
 });
+
+test('the logo sits in the middle until the settings move it, and only to a side that exists', () => {
+  assert.equal(q.quoteSettings().logo_position, 'center');
+  assert.equal(q.saveQuoteSettings({ logo_position: 'left' }).logo_position, 'left');
+  expectError(() => q.saveQuoteSettings({ logo_position: 'top', brand_name: 'Not saved' }), 400);
+  // The refusal leaves the whole form as it was, not just the field it refused.
+  assert.equal(q.quoteSettings().logo_position, 'left');
+  assert.notEqual(q.quoteSettings().brand_name, 'Not saved');
+  q.saveQuoteSettings({ logo_position: 'center' });
+});
