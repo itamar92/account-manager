@@ -4,6 +4,7 @@ import { computeTotals, type QuoteTotals } from './quoteMath.js';
 import { brandingImage, type BrandingKind } from './quoteFiles.js';
 import { QuoteError, displayStatus, hebrewDate, quoteSettings, todayInIsrael } from './quotes.js';
 import { fillMessage, whatsappNumber } from './quoteShare.js';
+import { afterSigning } from './quoteShow.js';
 
 /**
  * The client's side of a quote: the link it is sent as, what that link shows, and the signature
@@ -287,5 +288,7 @@ export function signQuote(
   ).run(signedAt, signerName, png, meta.ip.slice(0, 64), meta.userAgent.slice(0, 500),
     snapshot, sha256(snapshot), row.id, row.updated_at);
   if (result.changes !== 1) throw new QuoteError(409, 'ההצעה השתנתה רגע לפני החתימה. טענו אותה מחדש.');
+  // The signature is in. Making it a show comes after, and cannot take the signature back.
+  afterSigning(row.id);
   return publicQuote(token);
 }

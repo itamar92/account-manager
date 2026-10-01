@@ -3,7 +3,7 @@ import { del, post, put, nis } from '../../api';
 import { Button, Input, Modal, MoneyInput, Textarea, fieldClass } from '../../ui';
 import { usePackages, type Quote, type QuotePackage, type QuoteSettings } from './quotes';
 
-type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number } | null;
+type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number; calendar_ready?: boolean } | null;
 
 export const VAT_MODES = [
   { value: 'excl' as const, label: 'המחיר + מע"מ' },
@@ -31,7 +31,8 @@ export function QuickCreateModal({
   onClose: () => void;
   templates: Quote[];
   settingsData: SettingsData;
-  onCreated: (id: string) => void;
+  /** `holdDate`: open the new quote with its calendar dialog, to hold the date as «אופציה». */
+  onCreated: (id: string, holdDate: boolean) => void;
   onBlank: () => void;
   onNewTemplate: () => void;
   onNewBuiltin: () => void;
@@ -40,6 +41,8 @@ export function QuickCreateModal({
   const defaultId = settingsData?.settings.default_template_id ?? templates[0]?.id ?? '';
   const [form, setForm] = useState(quickForm());
   const [busy, setBusy] = useState(false);
+  const calendarReady = !!settingsData?.calendar_ready;
+  const [holdDate, setHoldDate] = useState(true);
 
   useEffect(() => {
     if (open) setForm(quickForm(templates.find((t) => t.id === defaultId) ?? templates[0]));
@@ -54,7 +57,7 @@ export function QuickCreateModal({
     try {
       const d = await post('/moonlight/quotes', form);
       onClose();
-      onCreated(d.quote.id);
+      onCreated(d.quote.id, calendarReady && holdDate);
     } catch (err: any) { onError(err.message); }
     finally { setBusy(false); }
   };
@@ -114,6 +117,16 @@ export function QuickCreateModal({
               </span>
             )}
           </label>
+          {calendarReady && (
+            <label className="flex items-start gap-2.5 text-[13.5px] text-ink-2 cursor-pointer">
+              <input type="checkbox" checked={holdDate} onChange={(e) => setHoldDate(e.target.checked)}
+                className="accent-accent w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                שריון ביומן כאופציה
+                <span className="block text-[12px] text-faint">אחרי היצירה ייפתח האירוע לעריכה: כותרת, שעות, מיקום ומי מוזמן.</span>
+              </span>
+            </label>
+          )}
           <Button type="submit" className="w-full" disabled={busy || !form.template_id}>
             {busy ? 'יוצר…' : 'יצירת הצעה'}
           </Button>

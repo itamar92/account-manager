@@ -227,7 +227,7 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
         onClose={() => setQuickOpen(false)}
         templates={templates}
         settingsData={settingsData}
-        onCreated={open}
+        onCreated={(id, holdDate) => navigate(`/moonlight/quotes/${id}${holdDate ? '?calendar=1' : ''}`)}
         onBlank={createBlank}
         onNewTemplate={createTemplate}
         onNewBuiltin={createBuiltin}

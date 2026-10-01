@@ -7,6 +7,7 @@ import {
   ensureExpenseRow, eventSharesTotal, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel,
 } from './moonlight.js';
 import { setEventAttendees } from './assignments.js';
+import { linkQuotesByCalendar } from './quoteShow.js';
 
 export interface RuleSyncResult {
   ruleId: string;
@@ -348,6 +349,8 @@ export async function pullShowsFromCalendar(
     results.push(tally);
   }
 
+  // A quote whose «אופציה» event has just become a show is pointed at it.
+  linkQuotesByCalendar();
   setSetting('calendar_last_sync', new Date().toISOString());
 
   return {
@@ -358,6 +361,29 @@ export async function pullShowsFromCalendar(
     linked: results.reduce((s, r) => s + r.linked, 0),
     removed: results.reduce((s, r) => s + r.removed, 0),
   };
+}
+
+/**
+ * One event through the same steps a full sync takes it through — the rule decides whether it is
+ * a show, the title is cleaned the same way, and the show is created or updated by
+ * applyBandEvent. It is how a quote's own event becomes a show the moment it is created, rather
+ * than at the next sync, without the show being made any other way than from the calendar.
+ *
+ * Only the band rule's half is run: a personal rule writes the owner's private works, which a
+ * quote has no business touching.
+ */
+export function syncOneBandEvent(rule: CalendarRule, event: CalendarEvent): { matched: boolean } {
+  const date = eventDate(event);
+  if (!event.id || !date || rule.target !== 'band') return { matched: false };
+  const verdict = evaluate(rule, event, overrideMap());
+  if (!verdict.matched) return { matched: false };
+  const tally: RuleSyncResult = {
+    ruleId: rule.id, ruleName: rule.name, target: rule.target,
+    fetched: 1, matched: 1, created: 0, updated: 0, linked: 0, removed: 0, skipped: 0,
+  };
+  db.transaction(() => applyBandEvent(event, date, cleanTitle(event, verdict, rule), tally))();
+  linkQuotesByCalendar();
+  return { matched: true };
 }
 
 export interface PreviewRow {

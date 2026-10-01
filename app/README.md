@@ -37,7 +37,7 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `SEED_BAND_PASSWORD` | `moonlight123` | initial band members password |
 | `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` | — | Morning API credentials; without them the Morning sync is disabled |
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs `calendar.readonly`, and `calendar.events` too for quotes to create their «אופציה» events — see `deploy/README.md` |
 | `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
 | `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
 | `META_API_VERSION` | `v25.0` | Graph API version |
@@ -317,8 +317,7 @@ new default, which is the point of changing it.
 
 ### Moonlight — price quotes (הצעות מחיר)
 
-Moonlight → הצעות מחיר is where a show is sold before it exists. The full design, including the
-phase still to come (a signed quote becoming a show), is in
+Moonlight → הצעות מחיר is where a show is sold before it exists. The full design is in
 [`../docs/QUOTES-DESIGN.md`](../docs/QUOTES-DESIGN.md).
 
 - **Templates** hold the usual quote: the intro, the lines and the terms. «הצעה חדשה» asks only
@@ -344,6 +343,13 @@ phase still to come (a signed quote becoming a show), is in
   quote there without logging in and signs it with a finger. The signed copy is frozen, with the
   time and IP. The link uses `PUBLIC_BASE_URL` when it is set, and otherwise the address the
   app was opened at.
+- **The calendar, and the show:** shows still come only from the calendar. A quote holds its
+  date with an «אופציה» event on the band rule's calendar (`server/quoteCalendar.ts`), with
+  Google's invitations to the members and any suppliers chosen, and the sync makes the show from
+  it. When the client signs, the quote's price goes into that show if it has none
+  (`server/quoteShow.ts`), and the quote offers to take «אופציה» off the event. Several shows on
+  the date, a price that differs, or an event still «אופציה» is a follow-up on the Moonlight
+  summary and in the inbox, settled from the quote's «יומן והופעה» card.
 - **Who edits:** every logged-in user, band members included. This is the one Moonlight area
   where the band writes, and the router says so (`server/quoteRoutes.ts`). A signed or cancelled
   quote is closed to edits and is copied (שכפול) instead.

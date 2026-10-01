@@ -229,9 +229,15 @@ export function getQuote(id: string) {
     `SELECT (SELECT name FROM users WHERE id = ?) AS created_by_name,
             (SELECT name FROM users WHERE id = ?) AS updated_by_name`
   ).get(row.created_by, row.updated_by) as any;
+  // The show it is for, as the editor shows it. Read here rather than through moonlight.ts, which
+  // would make the quote modules depend on the shows' whole bookkeeping just to print a name.
+  const show = row.show_id
+    ? db.prepare('SELECT id, venue, date, location, amount_pre_vat, amount_with_vat FROM band_events WHERE id = ?').get(row.show_id) ?? null
+    : null;
   return {
     quote: { ...withStatus(row), ...names, is_default: !!row.is_template && row.id === defaultTemplateId() },
     items: itemsOf(id),
+    show,
   };
 }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowDown, ArrowUp, ChevronLeft, Eye, Send, X } from 'lucide-react';
 import { del, get, post, put } from '../../api';
 import { Button, Card, Empty, Input, Modal, MoneyInput, Segmented, Textarea, fieldClass } from '../../ui';
@@ -7,9 +7,11 @@ import { QuoteDocument } from '../../quotes/QuoteDocument';
 import { QuoteStatusBadge } from './QuotesTab';
 import { VAT_MODES } from './QuoteModals';
 import { QuoteShareModal } from './QuoteShareModal';
+import { QuoteShowCard } from './QuoteShowCard';
+import { QuoteCalendarModal } from './QuoteCalendarModal';
 import {
   brandingOf, computeTotals, israelDateTime, previewOf, quoteDate, usePackages, useQuoteSettings,
-  type Quote, type QuoteItem, type ShareDetails,
+  type Quote, type QuoteItem, type QuoteShow, type ShareDetails,
 } from './quotes';
 
 /** A line as the editor holds it: figures as typed, and a key that survives reordering. */
@@ -56,13 +58,18 @@ export function QuoteEditor() {
   const [busy, setBusy] = useState(false);
   const [templateName, setTemplateName] = useState<string | null>(null);
   const [share, setShare] = useState<ShareDetails | null>(null);
+  const [show, setShow] = useState<QuoteShow | null>(null);
+  const [calendarOpen, setCalendarOpen] = useState(false);
+  const [notice, setNotice] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: settingsData } = useQuoteSettings(setError);
   const { packages } = usePackages(setError);
 
-  const accept = (d: { quote: Quote; items: QuoteItem[] }) => {
+  const accept = (d: { quote: Quote; items: QuoteItem[]; show?: QuoteShow | null }) => {
     const nextLines = d.items.map(toLine);
     setForm(d.quote);
     setLines(nextLines);
+    setShow(d.show ?? null);
     setSaved(JSON.stringify(payloadOf(d.quote, nextLines)));
   };
 
@@ -71,6 +78,14 @@ export function QuoteEditor() {
     setError('');
     get(`/moonlight/quotes/${id}`).then(accept).catch((e) => setError(e.message));
   }, [id]);
+
+  // `?calendar=1` is «הצעה חדשה» asking to hold the date as well; dropped once acted on.
+  useEffect(() => {
+    if (!form || searchParams.get('calendar') !== '1') return;
+    setCalendarOpen(true);
+    searchParams.delete('calendar');
+    setSearchParams(searchParams, { replace: true });
+  }, [form?.id, searchParams]);
 
   const payload = form ? payloadOf(form, lines) : null;
   const dirty = !!payload && JSON.stringify(payload) !== saved;
@@ -150,6 +165,20 @@ export function QuoteEditor() {
     accept(d);
     setShare(d.share);
   });
+
+  /** The event is made from what is saved — the date above all — so the quote is saved first. */
+  const openCalendar = () => run(async () => {
+    if (!(await saveFirst())) return;
+    setNotice('');
+    setCalendarOpen(true);
+  });
+
+  const calendarSaved = (d: { quote: Quote; items: QuoteItem[]; show: QuoteShow | null; calendar_matched: boolean }) => {
+    accept(d);
+    setNotice(d.calendar_matched
+      ? (d.show ? 'האירוע נשמר ביומן, וההופעה עודכנה ממנו.' : 'האירוע נשמר ביומן.')
+      : 'האירוע נשמר ביומן, אבל כלל היומן להופעות לא מזהה אותו כהופעה — לכן לא נוצרה הופעה. הוסיפו לכותרת את מילת המפתח.');
+  };
 
   const regenerateLink = () => run(async () => {
     const d = await post(`/moonlight/quotes/${form.id}/regenerate-link`);
@@ -242,6 +271,7 @@ export function QuoteEditor() {
       </div>
 
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+      {notice && <div className="text-sm text-ink-2 bg-accent-soft rounded-xl px-4 py-2.5">{notice}</div>}
 
       {!editable && (
         <div className={`text-[13.5px] rounded-xl px-4 py-2.5 ${form.status === 'signed' ? 'bg-pos-soft text-ink-2' : 'bg-soft border border-line text-ink-2'}`}>
@@ -282,6 +312,7 @@ export function QuoteEditor() {
       )}
 
       <div className="grid lg:grid-cols-2 gap-6 items-start">
+        <div className="space-y-4 min-w-0">
         <fieldset disabled={!editable} className="space-y-4 min-w-0">
           {isTemplate && (
             <Card>
@@ -330,6 +361,17 @@ export function QuoteEditor() {
             )}
           </Card>
 
+        </fieldset>
+
+        {/* Between the two fieldsets rather than inside one: a signed quote is closed to edits,
+            but which show it belongs to is still the band's to settle, and nothing inside a
+            disabled fieldset can be clicked. */}
+        {!isTemplate && form.status !== 'cancelled' && (
+          <QuoteShowCard quote={form} show={show} calendarReady={!!settingsData?.calendar_ready}
+            saveFirst={saveFirst} onChange={accept} onError={setError} onOpenCalendar={openCalendar} />
+        )}
+
+        <fieldset disabled={!editable} className="space-y-4 min-w-0">
           <Card className="space-y-3">
             <h2 className="font-semibold">פתיח</h2>
             <Input label="כותרת" value={form.title}
@@ -441,6 +483,7 @@ export function QuoteEditor() {
               onChange={(e) => set({ internal_note: e.target.value })} />
           </Card>
         </fieldset>
+        </div>
 
         <div className="hidden lg:block lg:sticky lg:top-[80px] min-w-0">
           <div className="text-[12px] text-faint mb-2">
@@ -452,6 +495,10 @@ export function QuoteEditor() {
               : null} />
         </div>
       </div>
+
+      {!isTemplate && (
+        <QuoteCalendarModal open={calendarOpen} onClose={() => setCalendarOpen(false)} quote={form} onSaved={calendarSaved} />
+      )}
 
       <QuoteShareModal open={!!share} onClose={() => setShare(null)} share={share} quote={form} onRegenerate={regenerateLink} />
 

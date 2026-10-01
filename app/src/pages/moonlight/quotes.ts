@@ -52,6 +52,13 @@ export interface Quote {
   vat_amount: number;
   total: number;
   show_id: string | null;
+  show_link_status: 'linked' | 'choose' | 'no_show' | 'error' | null;
+  show_amount_ok: number;
+  signed_seen_at: string | null;
+  calendar_id: string | null;
+  calendar_event_id: string | null;
+  calendar_event_title: string | null;
+  calendar_event_link: string | null;
   public_token: string | null;
   sent_at: string | null;
   first_viewed_at: string | null;
@@ -92,6 +99,37 @@ export interface QuoteSettings {
   logo_url: string | null;
   signature_url: string | null;
 }
+
+/** The show a quote is linked to, as the editor shows it. */
+export interface QuoteShow {
+  id: string;
+  venue: string;
+  date: string;
+  location: string | null;
+  amount_pre_vat: number;
+  amount_with_vat: number;
+}
+
+/** A show on the quote's date it could be linked to — see server/quoteShow.ts. */
+export interface ShowCandidate extends QuoteShow {
+  /** The other quote already behind this show, if any. */
+  taken_by: string | null;
+}
+
+/** What the calendar dialog opens with — server/quoteCalendar.ts, calendarDraft. */
+export interface CalendarDraft {
+  configured: boolean;
+  rule: { name: string; keywords: string; ignore_words: string } | null;
+  date: string | null;
+  signed: boolean;
+  members: Array<{ key: string; name: string; email: string }>;
+  suppliers: Array<{ id: string; name: string; email: string; role: string; role_name: string }>;
+  event: { id: string; title: string; link: string | null; is_option: boolean } | null;
+  gone?: boolean;
+  form: { title: string; location: string; start_time: string | null; end_time: string | null; attendees: string[] };
+}
+
+export { isOptionTitle, withoutOption } from '../../../server/quoteOption';
 
 /** The link a sent quote lives at, and what it goes out with — built by server/quoteLink.ts. */
 export interface ShareDetails {
@@ -198,6 +236,7 @@ export function useQuoteSettings(onError?: (message: string) => void) {
     settings: QuoteSettings;
     event_types: string[];
     vat_percent: number;
+    calendar_ready: boolean;
   } | null>(null);
   const load = React.useCallback(() => {
     get('/moonlight/quotes/settings').then(setData).catch((e) => onError?.(e.message));

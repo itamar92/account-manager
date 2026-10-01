@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
+import { FileSignature } from 'lucide-react';
 import { del, get, post, put, nis } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Empty, Input, Modal, MoneyInput, SelectCell, fieldClass } from '../../ui';
@@ -82,6 +83,10 @@ export function ShowDetail() {
   if (!data) return <Empty text="טוען…" />;
 
   const { event, expenses, assignments, suppliers, outstanding, missing } = data;
+  // The quote the client signed for this show, or the one still with them.
+  const quote = (data.quotes ?? [])[0] as
+    | { id: string; quote_number: string; status: string; signer_name: string | null }
+    | undefined;
   const income = Number(event.amount_pre_vat) || 0;
   const gross = Number(event.amount_with_vat) || 0;
   const spent = Number(event.expenses) || 0;
@@ -209,6 +214,15 @@ export function ShowDetail() {
             <div className="text-[13px] text-[#E2A63A] mt-2">
               חסר שיבוץ: {missing.map(roleName).join(', ')}
             </div>
+          )}
+          {quote && (
+            <Link to={`/moonlight/quotes/${quote.id}`}
+              className="inline-flex items-center gap-1.5 text-[13px] text-white/80 hover:text-white mt-2.5">
+              <FileSignature size={14} />
+              {quote.status === 'signed'
+                ? <>הצעת מחיר חתומה <span className="num">{quote.quote_number}</span>{quote.signer_name && <> · {quote.signer_name}</>}</>
+                : <>הצעת מחיר <span className="num">{quote.quote_number}</span> · טרם נחתמה</>}
+            </Link>
           )}
         </div>
 

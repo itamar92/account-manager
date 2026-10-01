@@ -370,6 +370,9 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
             <PerShowChart rows={summary.perShow ?? []} />
           </Card>
 
+          {/* ---- what a client's signature left for a person ---- */}
+          <SignedQuotes data={followUps?.quotes} />
+
           {/* ---- what is still unstaffed ---- */}
           {(followUps?.missingAssignments?.length ?? 0) > 0 && (
             <Card className="border-warn/40">
@@ -422,6 +425,62 @@ export function SummaryTab({ onError, isOwner }: { onError: (message: string) =>
         </div>
       </Modal>
     </div>
+  );
+}
+
+type QuoteBrief = {
+  id: string; quote_number: string; client_name: string; event_date: string; net_amount: number;
+  show_venue: string | null; show_link_status: string | null; show_amount_pre_vat?: number;
+  has_calendar_event: boolean;
+};
+
+/**
+ * Signed quotes, each once, with the one thing to know about it: it has no show yet, its price is
+ * not the show's, its calendar event still says «אופציה», or — when all is well — that it was
+ * signed and where it landed. A quote stays news until someone opens it.
+ */
+function SignedQuotes({ data }: {
+  data?: { newlySigned: QuoteBrief[]; needsShow: QuoteBrief[]; amountMismatch: QuoteBrief[]; stillOption: QuoteBrief[] };
+}) {
+  if (!data) return null;
+  const rows = new Map<string, { quote: QuoteBrief; note: string; warn: boolean }>();
+  for (const q of data.newlySigned) {
+    rows.set(q.id, { quote: q, note: `נחתמה${q.show_venue ? ` · ${q.show_venue}` : ''}`, warn: false });
+  }
+  for (const q of data.stillOption ?? []) rows.set(q.id, { quote: q, note: 'נחתמה — ביומן עדיין «אופציה»', warn: true });
+  for (const q of data.amountMismatch) {
+    rows.set(q.id, { quote: q, note: `בהופעה ${nis(q.show_amount_pre_vat)}, בהצעה ${nis(q.net_amount)}`, warn: true });
+  }
+  for (const q of data.needsShow) {
+    rows.set(q.id, {
+      quote: q, warn: true,
+      note: q.has_calendar_event ? 'נחתמה — ההופעה עוד לא נוצרה מהיומן' : 'נחתמה — אין אירוע ביומן',
+    });
+  }
+  if (rows.size === 0) return null;
+  const warnings = [...rows.values()].filter((r) => r.warn).length;
+
+  return (
+    <Card className={warnings ? 'border-warn/40' : undefined}>
+      <h2 className={clsx('ser text-lg mb-3', warnings && 'text-warn')}>
+        {warnings ? `${warnings} הצעות חתומות שצריכות טיפול` : `${rows.size} הצעות נחתמו`}
+      </h2>
+      <div className="flex flex-col gap-2">
+        {[...rows.values()].map(({ quote, note, warn }) => (
+          <Link
+            key={quote.id}
+            to={`/moonlight/quotes/${quote.id}`}
+            className="flex items-center justify-between gap-3 text-sm border-b border-soft pb-2 last:border-0 hover:text-moon"
+          >
+            <span className="min-w-0">
+              <span className="font-medium">{quote.client_name}</span>
+              <span className="num text-xs text-faint mr-2">{quote.quote_number} · {quote.event_date}</span>
+            </span>
+            <span className={clsx('text-xs shrink-0', warn ? 'text-warn' : 'text-pos')}>{note}</span>
+          </Link>
+        ))}
+      </div>
+    </Card>
   );
 }
 

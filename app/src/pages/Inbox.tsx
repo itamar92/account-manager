@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, Briefcase, CalendarClock, FileBarChart, Moon, Music, Receipt } from 'lucide-react';
+import { AlertCircle, Briefcase, CalendarClock, FileBarChart, FileSignature, Moon, Music, Receipt } from 'lucide-react';
 import { clsx } from 'clsx';
 import { get, nis } from '../api';
 import { Empty, InkPanel, PageHeader, Pill } from '../ui';
@@ -93,6 +93,40 @@ export function Inbox() {
         amount: band.awaitingPaymentTotal, cta: 'לרשימה', to: '/moonlight/income',
       });
     }
+    // A client signed: news first, since it is a show sold; then whatever the signature could
+    // not settle on its own.
+    const quotes = band.quotes;
+    if (quotes?.newlySigned.length) {
+      const one = quotes.newlySigned.length === 1 ? quotes.newlySigned[0] : null;
+      out.push({
+        key: 'band-signed', kind: 'money', tone: 'moon', icon: FileSignature, primary: true,
+        title: one
+          ? `Moonlight · ${one.client_name} חתמו על הצעת המחיר`
+          : `Moonlight · ${quotes.newlySigned.length} הצעות מחיר נחתמו`,
+        sub: quotes.newlySigned
+          .slice(0, 3)
+          .map((q: any) => `${q.client_name} ${q.event_date.slice(8, 10)}.${q.event_date.slice(5, 7)}`)
+          .join(' · '),
+        amount: quotes.newlySigned.reduce((s: number, q: any) => s + (Number(q.net_amount) || 0), 0),
+        cta: 'לפתוח', to: one ? `/moonlight/quotes/${one.id}` : '/moonlight/summary',
+      });
+    }
+    const unsettled = new Set([
+      ...(quotes?.needsShow ?? []), ...(quotes?.amountMismatch ?? []), ...(quotes?.stillOption ?? []),
+    ].map((q: any) => q.id)).size;
+    if (unsettled) {
+      out.push({
+        key: 'band-quote-show', kind: 'data', tone: 'warn', icon: FileSignature,
+        title: `Moonlight · ${unsettled} הצעות חתומות שצריכות טיפול`,
+        sub: [
+          quotes.stillOption?.length ? `${quotes.stillOption.length} עדיין «אופציה» ביומן` : '',
+          quotes.needsShow.length ? `${quotes.needsShow.length} בלי הופעה` : '',
+          quotes.amountMismatch.length ? `${quotes.amountMismatch.length} בסכום שונה מההופעה` : '',
+        ].filter(Boolean).join(' · '),
+        cta: 'לטפל', to: '/moonlight/summary',
+      });
+    }
+
     // The closed year's return: a date, and a figure to pay with it.
     const filing = inbox.annualFiling;
     if (filing) {

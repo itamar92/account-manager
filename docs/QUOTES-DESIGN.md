@@ -85,6 +85,11 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   total REAL NOT NULL DEFAULT 0,
   -- links and lifecycle
   show_id TEXT REFERENCES band_events(id) ON DELETE SET NULL,
+  show_link_status TEXT,                      -- what signing did: created / linked / choose / error
+  show_amount_ok INTEGER NOT NULL DEFAULT 0,  -- the band kept the show's own price over the quote's
+  signed_seen_at TEXT,                        -- first opened by the band after signing
+  calendar_id TEXT, calendar_event_id TEXT,   -- the quote's «אופציה» event, and so its show
+  calendar_event_title TEXT, calendar_event_link TEXT,
   created_by TEXT REFERENCES users(id),
   updated_by TEXT REFERENCES users(id),
   sent_at TEXT, first_viewed_at TEXT, last_viewed_at TEXT,
@@ -239,23 +244,43 @@ draft ──send──▶ sent ──first public view──▶ viewed ──sig
   - Delete is allowed only for `draft` and `cancelled`.
   - Cancel works on any unsigned quote. The link then shows "ההצעה אינה בתוקף".
 
-## Signing becomes a show
+## The calendar event, and the show it becomes
 
-The steps below run right after the signature commits, in a separate step. A bookkeeping
-failure must never fail the client's signature. It is logged and becomes a follow-up instead.
+**Shows come from the calendar, and from nowhere else.** A quote does not create a show. It puts an event on the band's calendar, and the calendar sync makes the show from that event exactly as it does from any event typed into Google. Built in `server/quoteCalendar.ts`, with the shared helpers in `server/quoteOption.ts`.
 
-1. **The quote already has `show_id`:** fill that show's amounts only if its amount is still 0. If the show already has a different amount, leave it and raise a follow-up saying the two disagree.
-2. **No link yet**, so look at shows on `event_date`:
-   - **None:** create a show with `venue` = title, `date` = event date, `location`, `amount_pre_vat` = `net_amount`, `amount_with_vat` = `total`, and `venue_locked = 1`. Then run `ensureExpenseRow` and `recomputeEvent`.
+**Holding the date** («שריון ביומן כאופציה»):
+- Offered when a quote is created («הצעה חדשה» has the option ticked when the calendar is connected), and from the quote's «יומן והופעה» card at any time.
+- The dialog starts with the title as the band writes them, «אופציה - הופעה קולדפליי אירוע חברה קיסריה»: the event type (or the client), then the place. Everything is editable: the title, a start and end time (none = all-day), and the location.
+- **Who is invited:** every member with an email, ticked by default; any supplier, by role, unticked; and any other addresses. Google sends the invitations itself (`sendUpdates=all`). A supplier invited this way is staffed on the show automatically, since staffing already matches guests' emails.
+- The event goes on the calendar of the enabled band rule. The dialog warns when the title would not be read as a show: a missing keyword (`הופעה` by default), or an ignore word.
+- Once Google answers, that one event is run through the sync (`syncOneBandEvent`: the rule, `cleanTitle`, `applyBandEvent`), so the show appears at once rather than at the next sync. Only the band rule's half runs; a quote never touches the owner's personal works.
+- The quote keeps `calendar_id`, `calendar_event_id`, `calendar_event_title` and `calendar_event_link`.
+
+**After the client signs**, the card says the event is still «אופציה», and the dialog opens with the prefix already taken off. Saving rewrites the event (a guest who already answered keeps the answer), the sync renames the show from it, and the follow-up clears.
+
+**Write access:** reading the calendar needs `calendar.readonly`; writing these events also needs `calendar.events`. A token issued read-only gets a message saying so, and `deploy/README.md` says how to issue a new one.
+
+## Signing and the show
+
+Built in `server/quoteShow.ts`. The steps below run right after the signature commits, in a separate step (`afterSigning`). A bookkeeping failure must never fail the client's signature. It is logged, the quote is marked `show_link_status = 'error'`, and it becomes a follow-up instead.
+
+1. **The quote's show:** linked by hand, or made by the sync from the quote's own event. It gets the quote's amounts only if its amount is still 0. If the show already has a different amount, leave it and raise a follow-up saying the two disagree.
+2. **Otherwise, the shows on `event_date`**, leaving out any show another live quote is already behind (linked to it, or made from its event: on a busy date that is somebody else's option):
    - **Exactly one:** link to it, and fill its amounts as in step 1.
-   - **Several:** link nothing, and raise a follow-up: "הצעה נחתמה — בחרו לאיזו הופעה לשייך".
-3. Set `band_quotes.show_id`. `ShowDetail` then shows a "הצעת מחיר חתומה" link.
+   - **Several:** link nothing (`choose`), and the band picks one from the quote.
+   - **None:** link nothing (`no_show`). The show comes from the calendar: the quote's event, created from the card, or an event typed into Google.
+3. **A show that arrives later** is still linked: after every sync, full or of one event, `linkQuotesByCalendar` points each quote with no show at the show its event became, and a signed one then takes step 1. A quote the band pointed at a show by hand keeps that.
 
-**Calendar duplicates:** `findOrphanBandEvent` in `calendarSync.ts` already adopts a hand-made show with no `calendar_event_id` on the same date. So a Google Calendar event added after signing links to the show the quote created instead of adding a second one. The date check in step 2 covers the opposite order, where the calendar event came first.
+**Calendar duplicates:** `findOrphanBandEvent` in `calendarSync.ts` still adopts a hand-made show with no `calendar_event_id` on the same date, so a show typed in before its event reached the calendar is not doubled.
 
-**Picking the show earlier:** the editor also offers to link a show at draft time. When a date is entered it suggests "יש הופעה בתאריך הזה — לשייך?", so most quotes arrive at signing already linked.
+**Finishing what signing could not** (the card, `POST /:id/link-show`):
+- Several shows on the date, or the show deleted since: pick one. The amounts follow exactly as they would have at signing.
+- The wrong show: «זו לא ההופעה הנכונה» moves the quote to another show. An amount already written into the first show stays there, since nothing here erases a figure, and the card says so.
+- A signed quote can move between shows but is never left with none. Before signing, linking is only a pointer and writes nothing to the show.
 
-**Why the system can write the show:** show fields are owner-write through the API, but this write is made by the system as a result of the client's signature, not by a band member.
+**A price that differs** (`POST /:id/show-amount`): «עדכון ההופעה לסכום ההצעה» writes the quote's figure into the show, and only the owner can do that, since it is the show's money. «הסכום בהופעה נכון» keeps the show's figure, and anyone in the band can decide it. Fixing the show's figure by hand clears the disagreement too, because it is worked out from the rows, not stored.
+
+**Why the system can write the show:** show fields are owner-write through the API, but this write is made by the system as a result of the client's signature, not by a band member. It only fills a show that has no amount; a figure somebody typed is never overwritten.
 
 ## Permissions
 
@@ -438,11 +463,12 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 - The message comes from `quote_message_template`, with `{client_name}`, `{title}`, `{event_date}`, `{valid_until}`, `{link}`, `{contact_name}` and `{quote_number}` filled in. It can be edited in the dialog for one send, and the links follow the edit.
 - «קישור חדש במקום הזה» replaces the token, and the old link stops working. A signed quote keeps its link, since it is the client's copy.
 
-**Follow-ups:** the Moonlight summary's follow-up list gains three items:
+**Follow-ups** (`quoteFollowUps`, part of `bandFollowUps`), on the Moonlight summary and in the owner's inbox:
 
-- Newly signed quotes.
-- Signed quotes that still need a show chosen.
-- Amount disagreements between a quote and its show.
+- Newly signed quotes, until someone in the band opens the quote (`signed_seen_at`, set by `GET /:id`).
+- Signed quotes with no show: several on the date, none yet from the calendar, a failure, or the show deleted since.
+- Signed quotes whose calendar event is still titled «אופציה».
+- Amount disagreements of more than ₪1 before VAT between a signed quote and its show.
 
 ## Deployment note: Cloudflare Access
 
@@ -475,7 +501,7 @@ Proposal: add `node --test` via `tsx` for `server/quotes.ts` only, and run it in
    - Token and public API.
    - `/q/:token` page, signature, view tracking and print layout.
    - Share dialog with WhatsApp and email.
-4. **Sign becomes a show**
+4. **Sign becomes a show** — done, through the calendar
    - Linking logic and the editor's show suggestion.
    - `ShowDetail` link and summary follow-ups.
 

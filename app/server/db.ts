@@ -672,6 +672,13 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   vat_amount REAL NOT NULL DEFAULT 0,
   total REAL NOT NULL DEFAULT 0,
   show_id TEXT REFERENCES band_events(id) ON DELETE SET NULL,
+  show_link_status TEXT,                  -- what signing did about the show: created/linked/choose/error
+  show_amount_ok INTEGER NOT NULL DEFAULT 0, -- the band kept the show's own amount over the quote's
+  signed_seen_at TEXT,                    -- first opened by the band after signing; until then it is news
+  calendar_id TEXT,                       -- the quote's «אופציה» event, on the band rule's calendar
+  calendar_event_id TEXT,
+  calendar_event_title TEXT,              -- as last written by the app, to tell an option from a booking
+  calendar_event_link TEXT,
   created_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   updated_by TEXT REFERENCES users(id) ON DELETE SET NULL,
   sent_at TEXT,
@@ -840,6 +847,15 @@ addColumnIfMissing('band_members', 'tax_id', 'TEXT');
 addColumnIfMissing('band_members', 'morning_supplier_id', 'TEXT');
 // How long the band plays — the one blank the old Google Docs quote had that a quote did not.
 addColumnIfMissing('band_quotes', 'show_duration', 'TEXT');
+// A signed quote becoming a show (docs/QUOTES-DESIGN.md, «Signing becomes a show»).
+addColumnIfMissing('band_quotes', 'show_link_status', 'TEXT');
+addColumnIfMissing('band_quotes', 'show_amount_ok', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('band_quotes', 'signed_seen_at', 'TEXT');
+// The quote's own calendar event — the way its show comes into being (server/quoteCalendar.ts).
+addColumnIfMissing('band_quotes', 'calendar_id', 'TEXT');
+addColumnIfMissing('band_quotes', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('band_quotes', 'calendar_event_title', 'TEXT');
+addColumnIfMissing('band_quotes', 'calendar_event_link', 'TEXT');
 
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a

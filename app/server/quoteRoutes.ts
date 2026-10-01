@@ -2,6 +2,8 @@ import express, { Router } from 'express';
 import { requireAuth, requireOwner } from './auth.js';
 import { getVatPercent } from './db.js';
 import { regenerateLink, sendQuote } from './quoteLink.js';
+import { linkQuoteToShow, markSignedSeen, settleShowAmount, showsOnDate } from './quoteShow.js';
+import { calendarDraft, calendarReady, createQuoteEvent, updateQuoteEvent } from './quoteCalendar.js';
 import {
   FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
 } from './quoteFiles.js';
@@ -35,6 +37,13 @@ function handle(fn: (req: any, res: any) => void) {
     } catch (err: any) {
       res.status(err.status || 500).json({ error: err.message || 'internal error' });
     }
+  };
+}
+
+/** The same, for the routes that wait on Google. */
+function handleAsync(fn: (req: any, res: any) => Promise<void>) {
+  return (req: any, res: any) => {
+    fn(req, res).catch((err: any) => res.status(err.status || 500).json({ error: err.message || 'internal error' }));
   };
 }
 
@@ -79,7 +88,11 @@ quoteRouter.delete('/packages/:id', handle((req, res) => {
 
 /** The settings, and the two fixed lists every quote screen needs beside them. */
 quoteRouter.get('/settings', handle((_req, res) => {
-  res.json({ settings: quoteSettings(), event_types: EVENT_TYPES, vat_percent: getVatPercent() });
+  res.json({
+    settings: quoteSettings(), event_types: EVENT_TYPES, vat_percent: getVatPercent(),
+    // Whether a quote can put its «אופציה» on the calendar: connected, and a band rule to read it.
+    calendar_ready: calendarReady(),
+  });
 }));
 
 quoteRouter.put('/settings', handle((req, res) => {
@@ -88,6 +101,11 @@ quoteRouter.put('/settings', handle((req, res) => {
   // it, unchanged, so it is dropped rather than refused.
   if (req.user?.role !== 'owner') delete patch.signature_name;
   res.json({ settings: saveQuoteSettings(patch) });
+}));
+
+/** The shows on a date, so the editor can offer «יש הופעה בתאריך הזה — לשייך?». */
+quoteRouter.get('/show-candidates', handle((req, res) => {
+  res.json({ shows: showsOnDate(String(req.query.date ?? ''), String(req.query.quote_id ?? '')) });
 }));
 
 // ---- the logo and the signature ----
@@ -151,7 +169,9 @@ quoteRouter.post('/', handle((req, res) => {
   res.json(getQuote(id));
 }));
 
+/** Opening a signed quote is the band having seen it, so it leaves the «נחתמו» news. */
 quoteRouter.get('/:id', handle((req, res) => {
+  markSignedSeen(req.params.id);
   res.json(getQuote(req.params.id));
 }));
 
@@ -184,6 +204,44 @@ quoteRouter.post('/:id/send', handle((req, res) => {
 quoteRouter.post('/:id/regenerate-link', handle((req, res) => {
   const share = regenerateLink(req.params.id, baseUrl(req));
   res.json({ ...getQuote(req.params.id), share });
+}));
+
+/** { show_id }: a show's id, or null to unlink a quote not yet signed. Shows themselves come from the calendar. */
+quoteRouter.post('/:id/link-show', handle((req, res) => {
+  const target = req.body?.show_id;
+  linkQuoteToShow(req.params.id, target === undefined || target === '' ? null : target);
+  res.json(getQuote(req.params.id));
+}));
+
+/**
+ * The quote and its show disagree on the price. { use: 'show' } keeps the show's figure, which
+ * anyone in the band may decide; { use: 'quote' } writes the quote's figure into the show, and a
+ * show's money is the owner's to change.
+ */
+quoteRouter.post('/:id/show-amount', handle((req, res) => {
+  const use = req.body?.use === 'quote' ? 'quote' : 'show';
+  if (use === 'quote' && req.user?.role !== 'owner') {
+    return void res.status(403).json({ error: 'רק בעל החשבון משנה את סכום ההופעה' });
+  }
+  settleShowAmount(req.params.id, use);
+  res.json(getQuote(req.params.id));
+}));
+
+/**
+ * The quote's calendar event. Anyone who edits quotes can hold a date with one, since that is
+ * part of making the quote; the event goes on the band rule's calendar, and the calendar sync
+ * makes the show from it — the one way a show comes into being.
+ */
+quoteRouter.get('/:id/calendar', handleAsync(async (req, res) => {
+  res.json(await calendarDraft(req.params.id));
+}));
+
+quoteRouter.post('/:id/calendar', handleAsync(async (req, res) => {
+  res.json(await createQuoteEvent(req.params.id, req.body || {}));
+}));
+
+quoteRouter.put('/:id/calendar', handleAsync(async (req, res) => {
+  res.json(await updateQuoteEvent(req.params.id, req.body || {}));
 }));
 
 quoteRouter.post('/:id/save-as-template', handle((req, res) => {

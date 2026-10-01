@@ -9,7 +9,7 @@ import { prepareSignature } from '../../quotes/signatureImage';
 import { VAT_MODES } from './QuoteModals';
 import type { QuoteSettings } from './quotes';
 
-type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number } | null;
+type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number; calendar_ready?: boolean } | null;
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_TYPES = 'image/png,image/jpeg,image/webp';
