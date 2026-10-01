@@ -10,3 +10,6 @@ __pycache__/
 # OS
 .DS_Store
 Thumbs.db
+
+# The owner's signature and other branding images — uploaded in the app, not kept in git
+branding/

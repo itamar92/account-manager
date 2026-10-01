@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import { Check, ImageUp, Trash2 } from 'lucide-react';
 import { del, postFile, put } from '../../api';
 import { useAuth } from '../../AuthContext';
-import { Button, Input, Modal, Segmented, Switch } from '../../ui';
+import { Button, Input, Modal, Segmented, Switch, Textarea } from '../../ui';
 import { PALETTES, readableOnWhite, textOn } from '../../quotes/colors';
 import { prepareSignature } from '../../quotes/signatureImage';
 import { VAT_MODES } from './QuoteModals';
@@ -297,6 +297,25 @@ export function QuoteSettingsModal({ open, onClose, settingsData, onSaved, onIma
             <Segmented value={form.prices_include_vat ? 'incl' : 'excl'} options={VAT_MODES}
               onChange={(v) => set({ prices_include_vat: v === 'incl' })} />
           </div>
+        </section>
+
+        {/* ---- sending ---- */}
+        <section className="space-y-3 border-t border-line pt-5">
+          <h3 className="font-semibold">שליחה ללקוח</h3>
+          <p className="text-[12.5px] text-muted -mt-1">
+            ההודעה שנפתחת בוואטסאפ ובמייל עם הקישור להצעה. אפשר לשנות אותה גם לפני כל שליחה.
+          </p>
+          <Textarea label="ההודעה" rows={6} value={form.message_template}
+            onChange={(e) => set({ message_template: e.target.value })} />
+          <Input label="נושא האימייל" value={form.email_subject}
+            onChange={(e) => set({ email_subject: e.target.value })} />
+          <p className="text-[12px] text-faint" dir="rtl">
+            מתמלאים בכל הצעה:{' '}
+            {['client_name', 'title', 'event_date', 'valid_until', 'link', 'contact_name', 'quote_number'].map((k, i) => (
+              <React.Fragment key={k}>{i > 0 && ' '}<code dir="ltr" className="bg-soft rounded px-1">{`{${k}}`}</code></React.Fragment>
+            ))}
+            . ריק = ההודעה הרגילה.
+          </p>
         </section>
 
         <Button type="submit" className="w-full" disabled={busy === 'save'}>

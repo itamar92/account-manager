@@ -36,6 +36,7 @@ export interface Quote {
   event_date: string | null;
   event_location: string | null;
   guest_count: number | null;
+  show_duration: string | null;
   title: string;
   intro: string | null;
   terms: string | null;
@@ -51,8 +52,14 @@ export interface Quote {
   vat_amount: number;
   total: number;
   show_id: string | null;
+  public_token: string | null;
+  sent_at: string | null;
+  first_viewed_at: string | null;
+  last_viewed_at: string | null;
+  view_count: number;
   signed_at: string | null;
   signer_name: string | null;
+  signature_png?: string | null;
   created_at: string;
   updated_at: string;
   created_by_name?: string | null;
@@ -80,8 +87,26 @@ export interface QuoteSettings {
   color_primary: string;
   color_accent: string;
   signature_name: string;
+  message_template: string;
+  email_subject: string;
   logo_url: string | null;
   signature_url: string | null;
+}
+
+/** The link a sent quote lives at, and what it goes out with — built by server/quoteLink.ts. */
+export interface ShareDetails {
+  url: string;
+  message: string;
+  subject: string;
+  phone: string | null;
+  email: string | null;
+}
+
+/** The client's signature, as the document shows it once there is one. */
+export interface ClientSignature {
+  name: string;
+  signedAt: string;
+  png: string;
 }
 
 /** What a quote is dressed in — the same for every quote, set once in the settings. */
@@ -141,6 +166,31 @@ export const previewOf = <Q extends Pick<Quote, 'is_template' | 'client_name' | 
 /** 'YYYY-MM-DD' the way a quote writes it. */
 export const quoteDate = (date: string | null | undefined) =>
   date ? `${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : '';
+
+/** A moment the database kept in UTC, as the time it was in Israel: «01/10/2026 22:45». */
+export const israelDateTime = (utc: string | null | undefined) => {
+  if (!utc) return '';
+  const moment = new Date(utc.includes('T') ? utc : `${utc.replace(' ', 'T')}Z`);
+  if (Number.isNaN(moment.getTime())) return '';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(moment).map((p) => [p.type, p.value]));
+  return `${parts.day}/${parts.month}/${parts.year} ${parts.hour}:${parts.minute}`;
+};
+
+/**
+ * The day a quote was made, as a date on the quote. The database keeps the moment in UTC, so a
+ * quote made at 01:00 in Israel is still dated that day rather than the one before.
+ */
+export const issuedOn = (createdAt: string | null | undefined) => {
+  if (!createdAt) return '';
+  const moment = new Date(createdAt.includes('T') ? createdAt : `${createdAt.replace(' ', 'T')}Z`);
+  if (Number.isNaN(moment.getTime())) return '';
+  return quoteDate(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(moment));
+};
 
 /** Everything the quote screens read besides the quotes: the settings and the fixed lists. */
 export function useQuoteSettings(onError?: (message: string) => void) {

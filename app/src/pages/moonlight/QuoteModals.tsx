@@ -10,12 +10,22 @@ export const VAT_MODES = [
   { value: 'incl' as const, label: 'המחיר כולל מע"מ' },
 ];
 
+/** What the quick form starts with: blank, but for what the template already says. */
+const quickForm = (template?: Quote) => ({
+  template_id: template?.id ?? '', client_name: '', client_phone: '', event_date: '', price: '',
+  event_location: template?.event_location ?? '', show_duration: template?.show_duration ?? '',
+});
+
 /**
- * «הצעה חדשה»: pick the template, type the three things that change, and the rest of the quote
- * is already written. The new quote opens in the editor, where anything else can still change.
+ * «הצעה חדשה»: pick the template, type the things that change, and the rest of the quote is
+ * already written. The new quote opens in the editor, where anything else can still change.
+ *
+ * The client, the date and the price are asked for; the place and the show's length are there
+ * too, because they were the other blanks every quote filled in. Both start as the template has
+ * them, so a template that says «כשעה» needs nothing typed.
  */
 export function QuickCreateModal({
-  open, onClose, templates, settingsData, onCreated, onBlank, onNewTemplate, onError,
+  open, onClose, templates, settingsData, onCreated, onBlank, onNewTemplate, onNewBuiltin, onError,
 }: {
   open: boolean;
   onClose: () => void;
@@ -24,15 +34,16 @@ export function QuickCreateModal({
   onCreated: (id: string) => void;
   onBlank: () => void;
   onNewTemplate: () => void;
+  onNewBuiltin: () => void;
   onError: (message: string) => void;
 }) {
   const defaultId = settingsData?.settings.default_template_id ?? templates[0]?.id ?? '';
-  const [form, setForm] = useState({ template_id: '', client_name: '', client_phone: '', event_date: '', price: '' });
+  const [form, setForm] = useState(quickForm());
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (open) setForm({ template_id: defaultId, client_name: '', client_phone: '', event_date: '', price: '' });
-  }, [open, defaultId]);
+    if (open) setForm(quickForm(templates.find((t) => t.id === defaultId) ?? templates[0]));
+  }, [open, defaultId, templates]);
 
   const template = templates.find((t) => t.id === form.template_id);
   const vatNote = template?.prices_include_vat ? 'כולל מע"מ' : 'לפני מע"מ';
@@ -56,8 +67,12 @@ export function QuickCreateModal({
             עדיין אין תבנית. תבנית היא ההצעה הרגילה שלכם — הפתיח, השורות והתנאים — וממנה כל הצעה
             חדשה היא רק שם הלקוח, תאריך ומחיר.
           </p>
+          <p className="text-[13px] text-muted">
+            התבנית המוכנה היא הצעת המחיר של מונלייט: ההרכב, לוח הזמנים, מה נדרש מההפקה, תשלום וביטול.
+          </p>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => { onClose(); onNewTemplate(); }}>יצירת תבנית</Button>
+            <Button onClick={() => { onClose(); onNewBuiltin(); }}>התבנית המוכנה</Button>
+            <Button variant="ghost" onClick={() => { onClose(); onNewTemplate(); }}>תבנית ריקה</Button>
             <Button variant="ghost" onClick={() => { onClose(); onBlank(); }}>הצעה ריקה</Button>
           </div>
         </div>
@@ -67,7 +82,11 @@ export function QuickCreateModal({
             <label className="block">
               <span className="block text-[13px] text-muted mb-1.5">תבנית</span>
               <select value={form.template_id} className={fieldClass}
-                onChange={(e) => setForm({ ...form, template_id: e.target.value })}>
+                onChange={(e) => {
+                  const next = quickForm(templates.find((t) => t.id === e.target.value));
+                  // What was typed about the client stays; what came from the old template goes.
+                  setForm({ ...form, template_id: next.template_id, event_location: next.event_location, show_duration: next.show_duration });
+                }}>
                 {templates.map((t) => (
                   <option key={t.id} value={t.id}>{t.template_name || 'תבנית'}{t.is_default ? ' (ברירת מחדל)' : ''}</option>
                 ))}
@@ -81,6 +100,10 @@ export function QuickCreateModal({
               onChange={(e) => setForm({ ...form, event_date: e.target.value })} />
             <Input label="טלפון" type="tel" dir="ltr" value={form.client_phone}
               onChange={(e) => setForm({ ...form, client_phone: e.target.value })} />
+            <Input label="מקום" value={form.event_location}
+              onChange={(e) => setForm({ ...form, event_location: e.target.value })} />
+            <Input label="משך ההופעה" placeholder="למשל: כשעה" value={form.show_duration}
+              onChange={(e) => setForm({ ...form, show_duration: e.target.value })} />
           </div>
           <label className="block">
             <span className="block text-[13px] text-muted mb-1.5">מחיר * ({vatNote})</span>
@@ -107,12 +130,13 @@ export function QuickCreateModal({
 }
 
 /** The templates, which one «הצעה חדשה» opens with, and the way into each. */
-export function TemplatesModal({ open, onClose, templates, onOpen, onNew, onChanged, onError }: {
+export function TemplatesModal({ open, onClose, templates, onOpen, onNew, onNewBuiltin, onChanged, onError }: {
   open: boolean;
   onClose: () => void;
   templates: Quote[];
   onOpen: (id: string) => void;
   onNew: () => void;
+  onNewBuiltin: () => void;
   onChanged: () => void;
   onError: (message: string) => void;
 }) {
@@ -166,7 +190,10 @@ export function TemplatesModal({ open, onClose, templates, onOpen, onNew, onChan
             </li>
           ))}
         </ul>
-        <Button onClick={() => { onClose(); onNew(); }}>+ תבנית חדשה</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => { onClose(); onNew(); }}>+ תבנית חדשה</Button>
+          <Button variant="ghost" onClick={() => { onClose(); onNewBuiltin(); }}>+ התבנית המוכנה של מונלייט</Button>
+        </div>
       </div>
     </Modal>
   );

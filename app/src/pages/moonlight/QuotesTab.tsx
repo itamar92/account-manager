@@ -75,6 +75,12 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
     catch (err: any) { onError(err.message); }
   };
 
+  /** Moonlight's own quote, ready to use — opened so it can be looked over before the first quote. */
+  const createBuiltin = async () => {
+    try { open((await post('/moonlight/quotes/templates/builtin')).quote.id); }
+    catch (err: any) { onError(err.message); }
+  };
+
   const duplicate = async (quote: Quote) => {
     try { open((await post(`/moonlight/quotes/${quote.id}/duplicate`)).quote.id); }
     catch (err: any) { onError(err.message); }
@@ -136,7 +142,10 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
               תבנית היא ההצעה הרגילה שלכם — פתיח, שורות ותנאים. מרגע שיש אחת, הצעה חדשה היא רק שם, תאריך ומחיר.
             </p>
           </div>
-          <Button onClick={createTemplate}>יצירת תבנית</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={createBuiltin}>התבנית המוכנה של מונלייט</Button>
+            <Button variant="ghost" onClick={createTemplate}>תבנית ריקה</Button>
+          </div>
         </div>
       )}
 
@@ -221,6 +230,7 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
         onCreated={open}
         onBlank={createBlank}
         onNewTemplate={createTemplate}
+        onNewBuiltin={createBuiltin}
         onError={onError}
       />
       <TemplatesModal
@@ -229,6 +239,7 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
         templates={templates}
         onOpen={open}
         onNew={createTemplate}
+        onNewBuiltin={createBuiltin}
         onChanged={() => { load(); reloadSettings(); }}
         onError={onError}
       />

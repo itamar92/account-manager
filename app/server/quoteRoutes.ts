@@ -1,11 +1,12 @@
 import express, { Router } from 'express';
 import { requireAuth, requireOwner } from './auth.js';
 import { getVatPercent } from './db.js';
+import { regenerateLink, sendQuote } from './quoteLink.js';
 import {
   FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
 } from './quoteFiles.js';
 import {
-  EVENT_TYPES, cancelQuote, createBlankQuote, createFromTemplate, createPackage, createTemplate,
+  EVENT_TYPES, cancelQuote, createBlankQuote, createBuiltinTemplate, createFromTemplate, createPackage, createTemplate,
   deletePackage, deleteQuote, duplicateQuote, getQuote, listPackages, listQuotes, listTemplates,
   quoteSettings, saveAsTemplate, saveQuoteSettings, updatePackage, updateQuote,
 } from './quotes.js';
@@ -52,6 +53,11 @@ quoteRouter.get('/templates', handle((_req, res) => {
 quoteRouter.post('/templates', handle((req, res) => {
   const id = createTemplate(req.body || {}, userId(req));
   res.json(getQuote(id));
+}));
+
+/** Another copy of the template the system comes with — Moonlight's own quote. */
+quoteRouter.post('/templates/builtin', handle((req, res) => {
+  res.json(getQuote(createBuiltinTemplate(userId(req))));
 }));
 
 quoteRouter.get('/packages', handle((_req, res) => {
@@ -159,6 +165,25 @@ quoteRouter.post('/:id/duplicate', handle((req, res) => {
 
 quoteRouter.post('/:id/cancel', handle((req, res) => {
   res.json(cancelQuote(req.params.id, userId(req)));
+}));
+
+/**
+ * Where the client's link points. PUBLIC_BASE_URL wins when it is set — for a hostname kept
+ * outside Cloudflare Access just for clients — and otherwise the link is the address the app was
+ * opened at, which the browser states in Origin.
+ */
+const baseUrl = (req: any): string =>
+  process.env.PUBLIC_BASE_URL?.trim() || req.get('origin') || `${req.protocol}://${req.get('host')}`;
+
+/** The link, and the message it goes out with; the dialog opens WhatsApp or the mail app with them. */
+quoteRouter.post('/:id/send', handle((req, res) => {
+  const share = sendQuote(req.params.id, userId(req), baseUrl(req));
+  res.json({ ...getQuote(req.params.id), share });
+}));
+
+quoteRouter.post('/:id/regenerate-link', handle((req, res) => {
+  const share = regenerateLink(req.params.id, baseUrl(req));
+  res.json({ ...getQuote(req.params.id), share });
 }));
 
 quoteRouter.post('/:id/save-as-template', handle((req, res) => {

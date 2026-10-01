@@ -16,6 +16,7 @@ import { Moonlight } from './pages/Moonlight';
 import { ShowDetail } from './pages/moonlight/ShowDetail';
 import { QuoteEditor } from './pages/moonlight/QuoteEditor';
 import { QuotePreview } from './pages/moonlight/QuotePreview';
+import { QuotePublic } from './pages/QuotePublic';
 import { Settings } from './pages/Settings';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
@@ -24,6 +25,8 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          {/* A client's quote link: no login and no shell — see server/publicQuotes.ts. */}
+          <Route path="/q/:token" element={<QuotePublic />} />
           {/* Outside the shell: the quote on its own, the way the client will get it. */}
           <Route path="/moonlight/quotes/:id/preview" element={<QuotePreview />} />
           <Route element={<Layout />}>

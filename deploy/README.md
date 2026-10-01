@@ -379,6 +379,12 @@ the Morning integration and the MCP server that Claude Desktop connects to — w
 be intercepted by Access and fail. Add a Bypass policy for those paths, or a
 service-token policy if you want them authenticated at the edge too.
 
+**Clients' quote links need the same.** A client opening a quote from WhatsApp or an email has
+no Access login, so add a Bypass policy for `/q/*`, `/api/public/*` and `/assets/*` (the page's
+script and styles). The alternative is a second public hostname on the same tunnel, such as
+`quotes.im-tools.org`, left outside Access, with `PUBLIC_BASE_URL=https://quotes.im-tools.org` in
+`.env` so the links the app writes point there.
+
 The symptom is specific and worth recognising: Access answers an unauthenticated
 request with a **302 to its login page**, so the caller sees HTML where it expected
 JSON rather than a clean 401. In Claude Desktop that surfaces as the connector

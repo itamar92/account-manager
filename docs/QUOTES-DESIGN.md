@@ -15,7 +15,7 @@ fixes the original's gaps as it goes (see [What we deliberately do not port](#wh
 |---|---|
 | What a signed quote does | It **becomes a show**: it creates or links a `band_events` row with the agreed amount |
 | Client experience | **Full port**: a public branded page on a secret link, with a drawn signature |
-| Delivery | **Link + WhatsApp share**. The app sends no email |
+| Delivery | **A link, sent on WhatsApp or by email.** Both open from the sender's own WhatsApp or mail (a `wa.me`, `mailto:` or Gmail compose link), so the app itself sends nothing and the client's reply reaches a person |
 | Band members | Can **create, edit, send and delete any quote**, and manage packages and quote settings |
 | Identity on the quote | **Moonlight only**: band name, logo, contact person. No legal business details |
 | Extra contents | **Saved packages** (price list) and **file attachments** |
@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   event_date TEXT,                            -- YYYY-MM-DD; required to send
   event_location TEXT,
   guest_count INTEGER,
+  show_duration TEXT,                         -- free text: «כ־40 דקות», «שני סטים של 45 דקות»
   -- content
   title TEXT NOT NULL,
   intro TEXT,
@@ -143,7 +144,8 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
 - `quote_default_template_id`
 - `quote_validity_days` (14)
 - `quote_prices_include_vat`
-- `quote_whatsapp_template`
+- `quote_message_template`, `quote_email_subject` (empty = the defaults in `server/quoteShare.ts`)
+- `quote_builtin_template_seeded`
 - `quote_seq_<year>`
 
 **Why items get their own table:** items are rows, not a JSON column. They are the thing that gets reordered and edited, and the rest of the schema is relational. The signed snapshot is the one place JSON is right, because it is a frozen record.
@@ -158,12 +160,27 @@ date and the price change. A **template** is where that usual content lives.
 - It has no number, no client, no validity date and no status of its own, and it never shows in the quotes list or the stats.
 - Because it is an ordinary quote row, it uses the same editor, the same preview and the same items. Later it will also carry the same attachments.
 
+**The built-in template**
+- The app comes with one: Moonlight's own quote, the Google Doc «Template הצעת מחיר — להקת המחווה לקולדפליי» that the band sent for years. Its content lives in `server/quoteTemplates.ts`.
+- It is added once, at startup (`seedBuiltinTemplate`, guarded by the setting `quote_builtin_template_seeded`). After that it is an ordinary template the band edits. Deleting it is final, and «תבניות» → «+ התבנית המוכנה של מונלייט» adds a fresh copy.
+- Like any first template, it becomes the default only when there is no template yet.
+- Where the Doc's parts went:
+
+  | In the Doc | In the quote |
+  |---|---|
+  | `{{DATE}}` | The date the quote was made, under its number |
+  | `{{תאריך האירוע}}`, `{{שם המקום}}`, `{{זמן מופע}}` | `event_date`, `event_location`, `show_duration`, shown as the header's chips |
+  | `{{שם האירוע}}` | The client and the event type («עבור …», «חתונה») |
+  | `{{AMPLIFICATION_TEXT}}` (the price paragraph) | The lines and the totals: the show, priced per quote, and «הגברה ותאורה» at no charge, which reads «כלול» |
+  | Line-up, timings, production needs, payment, deposit, cancellation, force majeure | The first line's description, and the terms under four headings |
+
 **Default template**
 - The setting `quote_default_template_id` names the template that "הצעה חדשה" starts from.
 - The first template created becomes the default. Deleting the default falls back to the next one.
 
 **Quick create**
 - "הצעה חדשה" opens a short form: template (the default is preselected), client name, client phone, event date and price. It then opens the new quote in the editor, where anything else can still be changed.
+- The form also has the place and the show's length, which were the old Doc's other blanks. Both start as the template has them, and whichever the form does not send stays as the template has it.
 - **The price** is written into the unit price of the template's **first line**, and the form names that line ("המחיר נכנס לשורה «הופעה מלאה»"). Every other line keeps its template price. The template's VAT mode decides whether that price is before or including VAT.
 - **What is copied fresh:**
   - The VAT rate is today's rate, not the rate frozen on the template.
@@ -253,9 +270,11 @@ failure must never fail the client's signature. It is logged and becomes a follo
 
 | File | Contents |
 |---|---|
-| `server/quotes.ts` | Domain logic: totals, numbering, the send/cancel/duplicate/sign guards, the snapshot builder, sign-to-show linking, WhatsApp link builder |
+| `server/quotes.ts` | Domain logic: numbering, templates, the edit/cancel/duplicate guards, settings |
+| `server/quoteLink.ts` | The client's side: sending and the link's token, the client-safe view, view counting, signing and the signed snapshot |
+| `server/quoteShare.ts` | The message and the WhatsApp, `mailto:` and Gmail links. No imports, so the share dialog uses the same file |
 | `server/quoteRoutes.ts` | Authenticated router mounted at `/api/moonlight/quotes`. It lives in its own file because `routes.ts` is already 2,600 lines |
-| `server/publicQuotes.ts` | Unauthenticated router mounted at `/api/public/quotes` |
+| `server/publicQuotes.ts` | Unauthenticated router mounted at `/api/public/quotes`, ahead of `/api` |
 | `server/quoteFiles.ts` | Images and files: checking what an upload really is, storing it, serving it |
 
 **Authenticated routes** (`quoteRoutes.ts`):
@@ -268,7 +287,7 @@ POST   /templates                 new blank template
 POST   /:id/save-as-template      { template_name }
 GET    /:id                       quote + items + files + linked show
 PUT    /:id                       save (items replaced as a whole, totals recomputed)
-POST   /:id/send                  → { url, whatsappUrl }
+POST   /:id/send                  → quote + { share: { url, message, subject, phone, email } }
 POST   /:id/cancel | /:id/duplicate | /:id/regenerate-link
 DELETE /:id                       draft/cancelled only
 POST   /:id/files                 express.raw upload (same pattern as /reports/annual/parse)
@@ -284,9 +303,13 @@ GET|PUT /settings                 + POST /settings/logo, /settings/cover
 GET  /:token                      client-safe view model (no internal_note, created_by, …)
 POST /:token/view                 marks viewed; skipped when req.user is set
 POST /:token/sign                 { signer_name, signature_png, consent, version }
-GET  /:token/files/:fileId        attachments of that quote only
-GET  /:token/branding/:kind       logo / cover
+GET  /:token/files/:fileId        attachments of that quote only (with attachments)
+GET  /:token/branding/:kind       logo / signature
 ```
+
+**The link's address** is `PUBLIC_BASE_URL` when that is set (for a client hostname kept outside Cloudflare Access), and otherwise the address the app was opened at, from the request's `Origin`.
+
+**The signed snapshot** holds the quote's client-facing fields, the lines and totals, the colours, and the band's signature as a data URL, so the record does not depend on a branding image that may be replaced later. The client's own signature stays in `signature_png`. A signed link is always shown from the snapshot.
 
 **Checks on sign.** The server rejects the request unless all of these hold:
 
@@ -388,6 +411,10 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 
 **QuoteDocument** (`src/quotes/QuoteDocument.tsx`) is the single renderer of what the client sees, used by the preview and the public page alike. What is previewed is therefore what gets signed.
 
+- A quote is dated the day it was made, in Israel, under its number.
+- A line at no charge reads «כלול». A template's first line, priced in each quote, reads «נקבע בכל הצעה».
+- The intro and the terms are laid out from plain text. A short line ending in a colon is a heading, and lines starting with «•» or «-» are a list. Every piece is still rendered as text.
+
 **Public page** (`src/pages/QuotePublic.tsx`) is built mobile-first, because clients open it from WhatsApp.
 
 - Section order:
@@ -403,10 +430,13 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 - Other states: expired, cancelled and already signed, the last one showing the signed copy.
 - The page sets `data-ws="moon"` for the Moonlight palette.
 
-**Share dialog:**
+**Share dialog** (`QuoteShareModal.tsx`), opened by «שליחה ללקוח» in the editor:
 
-- Copy link.
-- "שליחה בוואטסאפ" opens `https://wa.me/972XXXXXXXXX?text=…`. The phone is normalized from `05X-XXXXXXX`, and the text comes from `quote_whatsapp_template` with `{client_name}`, `{title}`, `{event_date}`, `{link}`, `{valid_until}` and `{contact_name}` filled in. With no phone it falls back to `https://wa.me/?text=…`.
+- Copy link, and open it the way the client will (a logged-in visit is not counted as a view).
+- **וואטסאפ** opens `https://wa.me/972XXXXXXXXX?text=…`. The phone is normalized from however it was typed. With no phone it falls back to `https://wa.me/?text=…`, and WhatsApp asks who to send to.
+- **אימייל** opens the device's mail app (`mailto:`), and **Gmail** opens Gmail's compose window. Both are addressed to the quote's client email when there is one, with the subject from `quote_email_subject`.
+- The message comes from `quote_message_template`, with `{client_name}`, `{title}`, `{event_date}`, `{valid_until}`, `{link}`, `{contact_name}` and `{quote_number}` filled in. It can be edited in the dialog for one send, and the links follow the edit.
+- «קישור חדש במקום הזה» replaces the token, and the old link stops working. A signed quote keeps its link, since it is the client's copy.
 
 **Follow-ups:** the Moonlight summary's follow-up list gains three items:
 
@@ -441,10 +471,10 @@ Proposal: add `node --test` via `tsx` for `server/quotes.ts` only, and run it in
 2. **Files**
    - Done ahead of the rest: `server/quoteFiles.ts`, the logo, the colours and the owner's signature.
    - Per-quote attachments remain. They use the same table and the same checks, so the backup needs no change.
-3. **Client link**
+3. **Client link** — done
    - Token and public API.
    - `/q/:token` page, signature, view tracking and print layout.
-   - Share dialog with WhatsApp.
+   - Share dialog with WhatsApp and email.
 4. **Sign becomes a show**
    - Linking logic and the editor's show suggestion.
    - `ShowDetail` link and summary follow-ups.

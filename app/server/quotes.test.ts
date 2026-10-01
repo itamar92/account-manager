@@ -163,3 +163,50 @@ test('templates are not quotes: they are listed apart', () => {
   assert.ok(q.listQuotes().every((row: any) => row.is_template === 0));
   assert.ok(q.listTemplates().length > 0);
 });
+
+test('the built-in template is Moonlight\'s own quote, with the show priced per quote and sound included', () => {
+  const id = q.createBuiltinTemplate(USER);
+  const { quote, items } = q.getQuote(id);
+  assert.equal(quote.is_template, 1);
+  assert.equal(quote.prices_include_vat, 0);
+  assert.match(quote.terms, /7,000 ₪/);
+  assert.match(quote.terms, /שוטף \+ 30/);
+  assert.match(quote.terms, /30% ממחיר ההופעה/);
+  assert.deepEqual(items.map((i: any) => [i.name, i.unit_price]), [['הופעה חיה — הרכב מלא', 0], ['הגברה ותאורה', 0]]);
+
+  const quoteId = q.createFromTemplate(id, {
+    client_name: 'עדן', event_date: '2027-04-28', price: 16000,
+    event_location: 'קיסריה', show_duration: 'כ־40 דקות',
+  }, USER);
+  const made = q.getQuote(quoteId);
+  assert.equal(made.quote.event_location, 'קיסריה');
+  assert.equal(made.quote.show_duration, 'כ־40 דקות');
+  assert.match(made.quote.intro, /ב־28\/04\/2027/);
+  assert.deepEqual(made.items.map((i: any) => i.unit_price), [16000, 0]);
+  // 16,000 ₪ + מע"מ, as the Doc quoted it.
+  assert.equal(made.quote.net_amount, 16000);
+  assert.ok(made.quote.total > 16000);
+});
+
+test('a quote made from a template keeps the template\'s place and length unless the form sends its own', () => {
+  const templateId = q.createTemplate({ show_duration: 'כשעה', event_location: 'זאפה' }, USER);
+  const kept = q.getQuote(q.createFromTemplate(templateId, { client_name: 'x', event_date: '2027-01-01', price: 1 }, USER));
+  assert.equal(kept.quote.show_duration, 'כשעה');
+  assert.equal(kept.quote.event_location, 'זאפה');
+  const cleared = q.getQuote(q.createFromTemplate(templateId, {
+    client_name: 'x', event_date: '2027-01-01', price: 1, show_duration: '', event_location: 'גריי',
+  }, USER));
+  assert.equal(cleared.quote.show_duration, null);
+  assert.equal(cleared.quote.event_location, 'גריי');
+  expectError(() => q.updateQuote(kept.quote.id, { show_duration: 'x'.repeat(81) }, USER), 400);
+});
+
+test('the built-in template is put in place once, and deleting it does not bring it back', () => {
+  const defaultBefore = q.quoteSettings().default_template_id;
+  const id = q.seedBuiltinTemplate();
+  assert.ok(id);
+  // There were templates already, so the one somebody chose stays the default.
+  assert.equal(q.quoteSettings().default_template_id, defaultBefore);
+  q.deleteQuote(id!);
+  assert.equal(q.seedBuiltinTemplate(), null);
+});

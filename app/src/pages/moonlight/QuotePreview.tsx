@@ -54,6 +54,9 @@ export function QuotePreview() {
       quote={previewOf(data.quote)}
       totals={totals}
       branding={brandingOf(settingsData?.settings)}
+      clientSignature={data.quote.status === 'signed' && data.quote.signature_png && data.quote.signer_name && data.quote.signed_at
+        ? { name: data.quote.signer_name, signedAt: data.quote.signed_at, png: data.quote.signature_png }
+        : null}
     />
   );
 

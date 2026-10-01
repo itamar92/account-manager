@@ -1,6 +1,8 @@
 import { db, uuid, getSetting, setSetting, getVatPercent } from './db.js';
 import { computeTotals, type QuoteLineInput } from './quoteMath.js';
 import { brandingUrl } from './quoteFiles.js';
+import { BUILTIN_TEMPLATE } from './quoteTemplates.js';
+import { DEFAULT_MESSAGE, DEFAULT_SUBJECT } from './quoteShare.js';
 
 /**
  * The band's price quotes — see docs/QUOTES-DESIGN.md for the whole of it.
@@ -80,6 +82,9 @@ export interface QuoteSettings {
   color_accent: string;
   /** The name printed under the signature. */
   signature_name: string;
+  /** What a quote's link is sent with, on WhatsApp and in an email alike — see quoteShare.ts. */
+  message_template: string;
+  email_subject: string;
   /** Read-only here: set by uploading the image itself (see quoteFiles.ts). */
   logo_url: string | null;
   signature_url: string | null;
@@ -125,6 +130,8 @@ export function quoteSettings(): QuoteSettings {
     color_primary: getSetting('quote_color_primary', DEFAULT_COLORS.primary),
     color_accent: getSetting('quote_color_accent', DEFAULT_COLORS.accent),
     signature_name: getSetting('quote_signature_name', ''),
+    message_template: getSetting('quote_message_template', '') || DEFAULT_MESSAGE,
+    email_subject: getSetting('quote_email_subject', '') || DEFAULT_SUBJECT,
     logo_url: brandingUrl('logo'),
     signature_url: brandingUrl('signature'),
   };
@@ -151,6 +158,17 @@ export function saveQuoteSettings(patch: Partial<Record<keyof QuoteSettings, unk
       if (name.length > 120) throw new QuoteError(400, 'השם שמתחת לחתימה ארוך מדי');
       setSetting('quote_signature_name', name);
     }
+    // Emptied, either goes back to the default rather than sending the client nothing.
+    if (patch.message_template !== undefined) {
+      const message = String(patch.message_template ?? '').trim();
+      if (message.length > 2000) throw new QuoteError(400, 'ההודעה ללקוח ארוכה מדי');
+      setSetting('quote_message_template', message === DEFAULT_MESSAGE ? '' : message);
+    }
+    if (patch.email_subject !== undefined) {
+      const subject = String(patch.email_subject ?? '').trim();
+      if (subject.length > 200) throw new QuoteError(400, 'נושא האימייל ארוך מדי');
+      setSetting('quote_email_subject', subject === DEFAULT_SUBJECT ? '' : subject);
+    }
     if (patch.default_template_id !== undefined) {
       const id = String(patch.default_template_id ?? '');
       if (id && !db.prepare('SELECT 1 FROM band_quotes WHERE id = ? AND is_template = 1').get(id)) {
@@ -167,7 +185,7 @@ export function saveQuoteSettings(patch: Partial<Record<keyof QuoteSettings, unk
 /** The columns a list needs — not the signature image, which is most of a signed row's bytes. */
 const LIST_COLUMNS = `
   q.id, q.is_template, q.template_name, q.quote_number, q.status, q.client_name, q.client_phone,
-  q.event_type, q.event_date, q.event_location, q.title, q.valid_until, q.prices_include_vat,
+  q.event_type, q.event_date, q.event_location, q.show_duration, q.title, q.valid_until, q.prices_include_vat,
   q.net_amount, q.vat_amount, q.total, q.show_id, q.sent_at, q.signed_at, q.created_at,
   q.updated_at, u.name AS created_by_name`;
 
@@ -222,8 +240,9 @@ export function getQuote(id: string) {
 /** The fields a person edits. Everything else is set by what happens to the quote. */
 const CONTENT_FIELDS = [
   'template_name', 'client_name', 'client_phone', 'client_email', 'client_tax_id',
-  'event_type', 'event_date', 'event_location', 'guest_count', 'title', 'intro', 'terms',
-  'valid_until', 'contact_name', 'contact_phone', 'internal_note', 'prices_include_vat', 'discount',
+  'event_type', 'event_date', 'event_location', 'guest_count', 'show_duration', 'title', 'intro',
+  'terms', 'valid_until', 'contact_name', 'contact_phone', 'internal_note', 'prices_include_vat',
+  'discount',
 ] as const;
 
 type Content = Record<(typeof CONTENT_FIELDS)[number], any>;
@@ -231,13 +250,13 @@ type Content = Record<(typeof CONTENT_FIELDS)[number], any>;
 /** How long each free-text field may run. A generous cap, but a cap: this ends up on a phone. */
 const TEXT_LIMITS: Record<string, number> = {
   template_name: 120, client_name: 200, client_phone: 40, client_email: 200, client_tax_id: 20,
-  event_location: 300, title: 200, intro: 5000, terms: 10000, contact_name: 120,
+  event_location: 300, show_duration: 80, title: 200, intro: 5000, terms: 10000, contact_name: 120,
   contact_phone: 40, internal_note: 2000,
 };
 
 const FIELD_LABELS: Record<string, string> = {
   template_name: 'שם התבנית', client_name: 'שם הלקוח', client_phone: 'טלפון', client_email: 'אימייל',
-  client_tax_id: 'ח.פ./ת.ז.', event_location: 'מקום', title: 'כותרת', intro: 'מלל פתיחה',
+  client_tax_id: 'ח.פ./ת.ז.', event_location: 'מקום', show_duration: 'משך ההופעה', title: 'כותרת', intro: 'מלל פתיחה',
   terms: 'תנאים', contact_name: 'איש קשר', contact_phone: 'טלפון איש קשר', internal_note: 'הערה פנימית',
   event_date: 'תאריך האירוע', valid_until: 'תוקף ההצעה',
 };
@@ -407,6 +426,26 @@ export function createTemplate(input: Record<string, unknown>, userId: string | 
   return id;
 }
 
+/** A fresh copy of the template the system comes with (see quoteTemplates.ts). */
+export function createBuiltinTemplate(userId: string | null): string {
+  return createTemplate({ ...BUILTIN_TEMPLATE }, userId);
+}
+
+/**
+ * Puts the built-in template in place the first time the app runs with quotes, and never again:
+ * a band that deletes it has decided it does not want it, and «תבניות» can always add another.
+ * It becomes the default only where there is no template yet, like any first template.
+ */
+export function seedBuiltinTemplate(): string | null {
+  if (getSetting('quote_builtin_template_seeded', '') === '1') return null;
+  let id: string | null = null;
+  db.transaction(() => {
+    id = createBuiltinTemplate(null);
+    setSetting('quote_builtin_template_seeded', '1');
+  })();
+  return id;
+}
+
 /** `{client_name}` and `{event_date}`, written out once, when a quote is made from a template. */
 export function fillPlaceholders(value: string | null, fields: { client_name: string; event_date: string }): string | null {
   if (!value) return value;
@@ -434,10 +473,16 @@ const linesOf = (quoteId: string): Line[] =>
  * The price goes into the template's first line — the show itself — and every other line keeps
  * the price the template gives it. What is taken fresh rather than copied is whatever depends on
  * today: the VAT rate, how long the quote is valid for, and who the client should call.
+ *
+ * The place and the show's length may come too, since they were blanks of the old quote as well;
+ * whichever is not sent stays as the template has it.
  */
 export function createFromTemplate(
   templateId: string,
-  input: { client_name?: unknown; client_phone?: unknown; event_date?: unknown; price?: unknown },
+  input: {
+    client_name?: unknown; client_phone?: unknown; event_date?: unknown; price?: unknown;
+    event_location?: unknown; show_duration?: unknown;
+  },
   userId: string | null
 ): string {
   const template = quoteRow(templateId);
@@ -466,6 +511,8 @@ export function createFromTemplate(
     client_name: clientName,
     client_phone: text('client_phone', input.client_phone),
     event_date: eventDate,
+    event_location: input.event_location !== undefined ? text('event_location', input.event_location) : template.event_location,
+    show_duration: input.show_duration !== undefined ? text('show_duration', input.show_duration) : template.show_duration,
     valid_until: defaults.valid_until,
     // The template's own contact wins where it has one; the settings are the fallback.
     contact_name: template.contact_name || defaults.contact_name,

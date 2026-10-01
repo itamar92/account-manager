@@ -1,8 +1,10 @@
 import React from 'react';
-import { CalendarDays, MapPin, PartyPopper, Users } from 'lucide-react';
+import { CalendarDays, MapPin, PartyPopper, Timer, Users } from 'lucide-react';
 import { nis, nisExact } from '../api';
 import type { QuoteTotals } from '../../server/quoteMath';
-import { quoteDate, type Quote, type QuoteBranding } from '../pages/moonlight/quotes';
+import {
+  israelDateTime, issuedOn, quoteDate, type ClientSignature, type Quote, type QuoteBranding,
+} from '../pages/moonlight/quotes';
 import { readableOnWhite, textOn } from './colors';
 
 /** Whole shekels where the figure is whole, agorot where it is not — a quote never rounds a sum it states. */
@@ -10,8 +12,9 @@ const money = (n: number) => (Math.round(n * 100) % 100 === 0 ? nis(n) : nisExac
 
 export type QuoteDocumentQuote = Pick<Quote,
   'quote_number' | 'title' | 'client_name' | 'event_type' | 'event_date' | 'event_location'
-  | 'guest_count' | 'intro' | 'terms' | 'valid_until' | 'contact_name' | 'contact_phone'
-  | 'prices_include_vat' | 'vat_percent'>;
+  | 'guest_count' | 'show_duration' | 'intro' | 'terms' | 'valid_until' | 'contact_name'
+  | 'contact_phone' | 'prices_include_vat' | 'vat_percent'>
+  & Partial<Pick<Quote, 'is_template' | 'created_at'>>;
 
 /**
  * A quote as the client reads it.
@@ -30,10 +33,17 @@ export type QuoteDocumentQuote = Pick<Quote,
  * dark reads on the colour chosen, and the accent is darkened as far as it needs to be to read
  * on white, so no choice in the settings can make a quote illegible.
  */
-export function QuoteDocument({ quote, totals, branding }: {
+export function QuoteDocument({ quote, totals, branding, clientSignature, clientLine = true }: {
   quote: QuoteDocumentQuote;
   totals: QuoteTotals;
   branding: QuoteBranding;
+  /** Once the client has signed. */
+  clientSignature?: ClientSignature | null;
+  /**
+   * The empty line the client will sign on, so the band sees where it goes. The client's own
+   * page turns it off: the box they sign in is right below the quote.
+   */
+  clientLine?: boolean;
 }) {
   const { brandName, logoUrl, signatureUrl, signatureName } = branding;
   const header = { backgroundColor: branding.primary, color: textOn(branding.primary) };
@@ -41,15 +51,18 @@ export function QuoteDocument({ quote, totals, branding }: {
   const vatPercent = Number(quote.vat_percent) || 0;
   const includesVat = !!quote.prices_include_vat;
   const lines = totals.lines.filter((l) => l.name || l.total);
+  // A template has no date of its own; a quote is dated the day it was made, as the Doc was.
+  const issued = quote.quote_number ? issuedOn(quote.created_at) : '';
   const chips = [
-    quote.event_type && { icon: PartyPopper, text: quote.event_type },
-    quote.event_date && { icon: CalendarDays, text: quoteDate(quote.event_date) },
-    quote.event_location && { icon: MapPin, text: quote.event_location },
-    quote.guest_count && { icon: Users, text: `${quote.guest_count} אורחים` },
-  ].filter(Boolean) as Array<{ icon: React.ElementType; text: string }>;
+    quote.event_type && { icon: PartyPopper, text: quote.event_type, label: 'סוג האירוע' },
+    quote.event_date && { icon: CalendarDays, text: quoteDate(quote.event_date), label: 'תאריך האירוע' },
+    quote.event_location && { icon: MapPin, text: quote.event_location, label: 'מקום' },
+    quote.show_duration && { icon: Timer, text: quote.show_duration, label: 'משך ההופעה' },
+    quote.guest_count && { icon: Users, text: `${quote.guest_count} אורחים`, label: 'מספר אורחים' },
+  ].filter(Boolean) as Array<{ icon: React.ElementType; text: string; label: string }>;
 
   return (
-    <article className="@container bg-surface border border-line rounded-2xl overflow-hidden text-ink shadow-[0_1px_2px_rgba(20,24,32,.04)]">
+    <article className="quote-doc @container bg-surface border border-line rounded-2xl overflow-hidden text-ink shadow-[0_1px_2px_rgba(20,24,32,.04)]">
       <header style={header} className="px-5 py-6 @xl:px-8 @xl:py-7">
         <div className="flex items-start justify-between gap-4">
           {/* A logo usually spells the name already, so it stands in for it rather than beside it. */}
@@ -59,14 +72,15 @@ export function QuoteDocument({ quote, totals, branding }: {
           <div className="text-end text-[12px] leading-5 opacity-65">
             <div>הצעת מחיר</div>
             {quote.quote_number && <div className="num" dir="ltr">{quote.quote_number}</div>}
+            {issued && <div className="num">{issued}</div>}
           </div>
         </div>
         <h1 className="ser text-[21px] @xl:text-[26px] leading-snug mt-6">{quote.title || 'הצעת מחיר'}</h1>
         {quote.client_name && <p className="mt-1.5 text-[15px] opacity-80">עבור {quote.client_name}</p>}
         {chips.length > 0 && (
           <ul className="mt-4 flex flex-wrap gap-2">
-            {chips.map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-center gap-1.5 bg-current/10 rounded-full px-3 py-1 text-[12.5px]">
+            {chips.map(({ icon: Icon, text, label }) => (
+              <li key={label} title={label} className="flex items-center gap-1.5 bg-current/10 rounded-full px-3 py-1 text-[12.5px]">
                 <Icon size={13} className="shrink-0 opacity-70" /> {text}
               </li>
             ))}
@@ -75,9 +89,7 @@ export function QuoteDocument({ quote, totals, branding }: {
       </header>
 
       <div className="px-5 py-6 @xl:px-8 @xl:py-7 space-y-7">
-        {quote.intro && (
-          <p className="whitespace-pre-line text-[15px] leading-7 text-body">{quote.intro}</p>
-        )}
+        {quote.intro && <QuoteText text={quote.intro} className="text-[15px] leading-7 text-body" />}
 
         <section>
           <h2 style={accent} className="text-[12px] font-semibold tracking-[.08em] mb-2">פירוט ההצעה</h2>
@@ -94,8 +106,14 @@ export function QuoteDocument({ quote, totals, branding }: {
                     )}
                   </div>
                   <div className="text-end shrink-0">
-                    <div className="num font-semibold">{money(line.total)}</div>
-                    {line.quantity !== 1 && (
+                    {/* A template's first line is priced in each quote made from it; any other
+                        line at no charge is part of the price, which is what the client should read. */}
+                    {quote.is_template && i === 0 && !line.total
+                      ? <div className="text-[13px] text-faint">נקבע בכל הצעה</div>
+                      : !line.total
+                        ? <div className="font-semibold text-muted">כלול</div>
+                        : <div className="num font-semibold">{money(line.total)}</div>}
+                    {line.quantity !== 1 && line.total !== 0 && (
                       <div className="num text-[12px] text-faint" dir="ltr">
                         {line.quantity} × {money(line.unit_price)}
                       </div>
@@ -134,19 +152,37 @@ export function QuoteDocument({ quote, totals, branding }: {
         {quote.terms && (
           <section>
             <h2 style={accent} className="text-[12px] font-semibold tracking-[.08em] mb-2">תנאי ההצעה</h2>
-            <p className="whitespace-pre-line text-[13.5px] leading-6 text-body">{quote.terms}</p>
+            <QuoteText text={quote.terms} className="text-[13.5px] leading-6 text-body" />
           </section>
         )}
 
-        {/* The band's side of the agreement, signed in advance. It sits at the far end so the
-            near side is free for the client's signature once they sign. */}
-        {signatureUrl && (
-          <section className="flex justify-end">
-            <div className="text-center min-w-40">
-              <img src={signatureUrl} alt={`חתימה — ${signatureName || brandName}`}
-                className="h-16 w-auto max-w-[220px] mx-auto object-contain" />
+        {/* The two sides of the agreement: the client's at the near side, the band's — signed in
+            advance — at the far one. */}
+        {(signatureUrl || clientSignature || clientLine) && (
+          <section className="grid grid-cols-2 gap-6 @xl:gap-12 items-end pt-2 break-inside-avoid">
+            <div className="text-center min-w-0">
+              {clientSignature
+                ? <img src={clientSignature.png} alt={`חתימה — ${clientSignature.name}`}
+                    className="h-16 w-auto max-w-full mx-auto object-contain" />
+                : clientLine && <div className="h-16" />}
+              {(clientSignature || clientLine) && (
+                <div className="border-t border-line-strong mt-1 pt-1.5 text-[13px]">
+                  <div className="font-semibold truncate">{clientSignature?.name || quote.client_name || 'המזמין'}</div>
+                  <div className="text-[12px] text-muted">
+                    {clientSignature
+                      ? <>נחתם ב־<span className="num">{israelDateTime(clientSignature.signedAt)}</span></>
+                      : 'חתימת המזמין'}
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="text-center min-w-0">
+              {signatureUrl
+                ? <img src={signatureUrl} alt={`חתימה — ${signatureName || brandName}`}
+                    className="h-16 w-auto max-w-full mx-auto object-contain" />
+                : <div className="h-16" />}
               <div className="border-t border-line-strong mt-1 pt-1.5 text-[13px]">
-                {signatureName && <div className="font-semibold">{signatureName}</div>}
+                {signatureName && <div className="font-semibold truncate">{signatureName}</div>}
                 <div className="text-[12px] text-muted">בשם {brandName}</div>
               </div>
             </div>
@@ -168,6 +204,51 @@ export function QuoteDocument({ quote, totals, branding }: {
       )}
     </article>
   );
+}
+
+/** A list item's mark at the start of a line: «• », «- » or «* ». */
+const BULLET = /^\s*[•\-*]\s+/;
+
+/** A short line ending in a colon, and not itself a list item, heads what comes under it. */
+const isHeading = (line: string) => !BULLET.test(line) && /:\s*$/.test(line) && line.trim().length <= 60;
+
+/**
+ * Text as somebody typed it into the intro or the terms, laid out as a document: a line ending in
+ * a colon is a heading, lines starting with «•» or «-» are a list, and everything else is a
+ * paragraph that keeps its line breaks. Nothing is read as markup — every piece is still a text
+ * node — so the worst a stray colon can do is bold a line.
+ */
+export function QuoteText({ text, className }: { text: string; className?: string }) {
+  const blocks: React.ReactNode[] = [];
+  let paragraph: string[] = [];
+  let list: string[] = [];
+  const flush = () => {
+    if (paragraph.length) blocks.push(<p key={blocks.length} className="whitespace-pre-line">{paragraph.join('\n')}</p>);
+    if (list.length) {
+      blocks.push(
+        <ul key={blocks.length} className="list-disc ps-5 space-y-1 marker:text-ghost">
+          {list.map((item, i) => <li key={i}>{item}</li>)}
+        </ul>
+      );
+    }
+    paragraph = [];
+    list = [];
+  };
+  for (const line of text.split('\n')) {
+    if (!line.trim()) flush();
+    else if (BULLET.test(line)) {
+      if (paragraph.length) flush();
+      list.push(line.replace(BULLET, ''));
+    } else if (isHeading(line)) {
+      flush();
+      blocks.push(<h3 key={blocks.length} className="font-semibold text-ink pt-2 first:pt-0">{line.trim()}</h3>);
+    } else {
+      if (list.length) flush();
+      paragraph.push(line);
+    }
+  }
+  flush();
+  return <div className={`space-y-2 ${className ?? ''}`}>{blocks}</div>;
 }
 
 function Row({ label, value, className }: { label: string; value: string; className?: string }) {

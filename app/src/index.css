@@ -94,3 +94,15 @@ body {
   border: 3px solid transparent;
   background-clip: content-box;
 }
+
+/*
+ * A quote saved as PDF from the browser. The page around it goes (each screen marks its own
+ * chrome print:hidden), the card loses its frame, and the header keeps its colour — browsers drop
+ * backgrounds when printing unless told this one is the point.
+ */
+@media print {
+  @page { margin: 12mm; }
+  body { background: #fff !important; }
+  .quote-doc { border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+  .quote-doc, .quote-doc * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

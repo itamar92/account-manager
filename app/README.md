@@ -318,13 +318,16 @@ new default, which is the point of changing it.
 ### Moonlight — price quotes (הצעות מחיר)
 
 Moonlight → הצעות מחיר is where a show is sold before it exists. The full design, including the
-phases still to come (the client's link, the signature, a signed quote becoming a show), is in
+phase still to come (a signed quote becoming a show), is in
 [`../docs/QUOTES-DESIGN.md`](../docs/QUOTES-DESIGN.md).
 
 - **Templates** hold the usual quote: the intro, the lines and the terms. «הצעה חדשה» asks only
   for the client, the date and the price. The price goes into the template's first line, and
   `{client_name}` / `{event_date}` in the title and intro are filled in. A template is a
   `band_quotes` row with `is_template = 1`, edited in the same editor as a quote.
+- **The built-in template** is Moonlight's own quote, moved over from the Google Doc the band
+  used to send (`server/quoteTemplates.ts`). It is added once, on the first start, and «תבניות»
+  can add a fresh copy at any time.
 - **Money** is worked out by `server/quoteMath.ts`, the one file the server saves with and the
   editor previews with. A quote's prices are either before VAT or including it, and the discount
   comes off before VAT. The VAT rate is frozen on the quote when it is made.
@@ -336,6 +339,11 @@ phases still to come (the client's link, the signature, a signed quote becoming 
   with the background removed in the browser before upload. The images are stored in the
   database (`band_quote_files`), so the existing backup covers them. Only the owner can change
   the signature.
+- **Sending:** «שליחה ללקוח» gives the quote a private link (`/q/<token>`) and opens WhatsApp, the
+  mail app or Gmail with the message ready, from the sender's own account. The client reads the
+  quote there without logging in and signs it with a finger. The signed copy is frozen, with the
+  time and IP. The link uses `PUBLIC_BASE_URL` when it is set, and otherwise the address the
+  app was opened at.
 - **Who edits:** every logged-in user, band members included. This is the one Moonlight area
   where the band writes, and the router says so (`server/quoteRoutes.ts`). A signed or cancelled
   quote is closed to edits and is copied (שכפול) instead.

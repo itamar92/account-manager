@@ -656,6 +656,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   event_date TEXT,                        -- YYYY-MM-DD
   event_location TEXT,
   guest_count INTEGER,
+  show_duration TEXT,                     -- free text, as the client reads it: «כ־40 דקות»
   title TEXT NOT NULL DEFAULT '',
   intro TEXT,
   terms TEXT,
@@ -837,6 +838,8 @@ addColumnIfMissing('band_suppliers', 'expects_invoice', 'INTEGER NOT NULL DEFAUL
 // which is neither their name in the band nor the mailbox the calendar knows them by.
 addColumnIfMissing('band_members', 'tax_id', 'TEXT');
 addColumnIfMissing('band_members', 'morning_supplier_id', 'TEXT');
+// How long the band plays — the one blank the old Google Docs quote had that a quote did not.
+addColumnIfMissing('band_quotes', 'show_duration', 'TEXT');
 
 // That bad value is cleared here rather than left for the next sync: the sync only refreshes
 // its own window (90 days by default), so anything older would keep a category that is not a

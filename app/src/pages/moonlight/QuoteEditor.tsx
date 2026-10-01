@@ -1,14 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { ArrowDown, ArrowUp, ChevronLeft, Eye, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronLeft, Eye, Send, X } from 'lucide-react';
 import { del, get, post, put } from '../../api';
 import { Button, Card, Empty, Input, Modal, MoneyInput, Segmented, Textarea, fieldClass } from '../../ui';
 import { QuoteDocument } from '../../quotes/QuoteDocument';
 import { QuoteStatusBadge } from './QuotesTab';
 import { VAT_MODES } from './QuoteModals';
+import { QuoteShareModal } from './QuoteShareModal';
 import {
-  brandingOf, computeTotals, previewOf, quoteDate, usePackages, useQuoteSettings,
-  type Quote, type QuoteItem,
+  brandingOf, computeTotals, israelDateTime, previewOf, quoteDate, usePackages, useQuoteSettings,
+  type Quote, type QuoteItem, type ShareDetails,
 } from './quotes';
 
 /** A line as the editor holds it: figures as typed, and a key that survives reordering. */
@@ -17,7 +18,7 @@ type EditLine = Omit<QuoteItem, 'quantity' | 'unit_price'> & { key: string; quan
 /** The fields the server accepts; the payload is built from these and nothing else. */
 const FIELDS = [
   'template_name', 'client_name', 'client_phone', 'client_email', 'client_tax_id', 'event_type',
-  'event_date', 'event_location', 'guest_count', 'title', 'intro', 'terms', 'valid_until',
+  'event_date', 'event_location', 'guest_count', 'show_duration', 'title', 'intro', 'terms', 'valid_until',
   'contact_name', 'contact_phone', 'internal_note', 'prices_include_vat', 'discount',
 ] as const;
 
@@ -54,6 +55,7 @@ export function QuoteEditor() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [templateName, setTemplateName] = useState<string | null>(null);
+  const [share, setShare] = useState<ShareDetails | null>(null);
   const { data: settingsData } = useQuoteSettings(setError);
   const { packages } = usePackages(setError);
 
@@ -138,6 +140,23 @@ export function QuoteEditor() {
     navigate(`/moonlight/quotes/${form.id}/preview`);
   });
 
+  /**
+   * The link goes out with what is saved, so unsaved typing is saved first. The first send marks
+   * the quote sent; after that it only opens the dialog again with the same link.
+   */
+  const send = () => run(async () => {
+    if (!(await saveFirst())) return;
+    const d = await post(`/moonlight/quotes/${form.id}/send`);
+    accept(d);
+    setShare(d.share);
+  });
+
+  const regenerateLink = () => run(async () => {
+    const d = await post(`/moonlight/quotes/${form.id}/regenerate-link`);
+    accept(d);
+    setShare(d.share);
+  });
+
   const makeDefault = () => run(async () => {
     await put('/moonlight/quotes/settings', { default_template_id: form.id });
     set({ is_default: true });
@@ -207,7 +226,17 @@ export function QuoteEditor() {
             <span className="flex items-center gap-1.5"><Eye size={16} /> תצוגה מקדימה</span>
           </Button>
           {editable && (
-            <Button onClick={save} disabled={!dirty || busy}>{busy ? 'שומר…' : dirty ? 'שמירה' : 'נשמר'}</Button>
+            <Button variant={isTemplate ? 'primary' : 'ghost'} onClick={save} disabled={!dirty || busy}>
+              {busy ? 'שומר…' : dirty ? 'שמירה' : 'נשמר'}
+            </Button>
+          )}
+          {!isTemplate && form.status !== 'cancelled' && (
+            <Button onClick={send} disabled={busy}>
+              <span className="flex items-center gap-1.5">
+                <Send size={16} />
+                {form.status === 'signed' ? 'העותק החתום' : form.status === 'draft' ? 'שליחה ללקוח' : 'שליחה שוב'}
+              </span>
+            </Button>
           )}
         </div>
       </div>
@@ -215,10 +244,33 @@ export function QuoteEditor() {
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
 
       {!editable && (
-        <div className="text-[13.5px] bg-soft border border-line rounded-xl px-4 py-2.5 text-ink-2">
+        <div className={`text-[13.5px] rounded-xl px-4 py-2.5 ${form.status === 'signed' ? 'bg-pos-soft text-ink-2' : 'bg-soft border border-line text-ink-2'}`}>
           {form.status === 'signed'
-            ? `ההצעה נחתמה${form.signer_name ? ` ע״י ${form.signer_name}` : ''} — היא נשמרת כפי שנחתמה. לשינוי, שכפלו אותה.`
+            ? <>
+                <span className="font-semibold text-pos">ההצעה נחתמה</span>
+                {form.signer_name && <> ע״י {form.signer_name}</>}
+                {form.signed_at && <>, <span className="num">{israelDateTime(form.signed_at)}</span></>}
+                {' '}— היא נשמרת כפי שנחתמה. לשינוי, שכפלו אותה.
+              </>
             : 'ההצעה בוטלה. לשינוי, שכפלו אותה להצעה חדשה.'}
+        </div>
+      )}
+
+      {/* Out with the client: the link shows what is saved, so a save is a change they see. */}
+      {!isTemplate && (form.status === 'sent' || form.status === 'viewed') && (
+        <div className="text-[13.5px] bg-accent-soft rounded-xl px-4 py-2.5 text-ink-2">
+          <span className="font-semibold text-accent-ink">
+            {form.display_status === 'expired' ? 'תוקף ההצעה עבר' : form.status === 'viewed' ? 'הלקוח פתח את ההצעה' : 'ההצעה נשלחה ללקוח'}
+          </span>
+          {form.status === 'viewed' && form.last_viewed_at && (
+            <> · {form.view_count === 1 ? 'פעם אחת' : <><span className="num">{form.view_count}</span> פעמים</>}, לאחרונה ב־<span className="num">{israelDateTime(form.last_viewed_at)}</span></>
+          )}
+          {form.status === 'sent' && form.sent_at && <> ב־<span className="num">{israelDateTime(form.sent_at)}</span>, ועוד לא נפתחה</>}
+          <span className="block text-[12.5px] text-muted mt-0.5">
+            {form.display_status === 'expired'
+              ? 'הלקוח רואה את ההצעה אבל לא יכול לחתום. כדי לפתוח אותה שוב, הזיזו את «בתוקף עד» ושמרו.'
+              : 'כל שינוי שתשמרו מופיע ללקוח בקישור מיד. מי שכבר פתח את ההצעה יתבקש לעבור עליה שוב לפני החתימה.'}
+          </span>
         </div>
       )}
 
@@ -267,6 +319,8 @@ export function QuoteEditor() {
               )}
               <Input label="מקום" value={form.event_location ?? ''}
                 onChange={(e) => set({ event_location: e.target.value })} />
+              <Input label="משך ההופעה" placeholder="למשל: כשעה" value={form.show_duration ?? ''}
+                onChange={(e) => set({ show_duration: e.target.value })} />
               <Input label="מספר אורחים" type="number" min={0} value={form.guest_count ?? ''}
                 onChange={(e) => set({ guest_count: e.target.value ? parseInt(e.target.value, 10) : null })} />
             </div>
@@ -360,9 +414,12 @@ export function QuoteEditor() {
 
           <Card className="space-y-3">
             <h2 className="font-semibold">תנאים</h2>
-            <Textarea label="תנאי ההצעה" rows={6} value={form.terms ?? ''}
+            <Textarea label="תנאי ההצעה" rows={12} value={form.terms ?? ''}
               placeholder="מקדמה, ביטולים, מה ההופעה כוללת, מה נדרש מהמקום…"
               onChange={(e) => set({ terms: e.target.value })} />
+            <p className="text-[12px] text-faint">
+              שורה שמסתיימת בנקודתיים היא כותרת, ושורה שמתחילה ב־• או ב־- היא סעיף ברשימה.
+            </p>
           </Card>
 
           <Card className="space-y-3">
@@ -389,9 +446,14 @@ export function QuoteEditor() {
           <div className="text-[12px] text-faint mb-2">
             {isTemplate ? 'כך תיראה הצעה מהתבנית' : `כך הלקוח יראה את ההצעה${form.valid_until ? ` · בתוקף עד ${quoteDate(form.valid_until)}` : ''}`}
           </div>
-          <QuoteDocument branding={brandingOf(settingsData?.settings)} totals={totals} quote={previewOf(form)} />
+          <QuoteDocument branding={brandingOf(settingsData?.settings)} totals={totals} quote={previewOf(form)}
+            clientSignature={form.status === 'signed' && form.signature_png && form.signer_name && form.signed_at
+              ? { name: form.signer_name, signedAt: form.signed_at, png: form.signature_png }
+              : null} />
         </div>
       </div>
+
+      <QuoteShareModal open={!!share} onClose={() => setShare(null)} share={share} quote={form} onRegenerate={regenerateLink} />
 
       <Modal title="שמירה כתבנית" open={templateName !== null} onClose={() => setTemplateName(null)}>
         <form
