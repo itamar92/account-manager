@@ -667,6 +667,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   prices_include_vat INTEGER NOT NULL DEFAULT 0,
   vat_percent REAL NOT NULL,              -- frozen when the quote is made
   discount REAL NOT NULL DEFAULT 0,
+  deposit_percent REAL,                   -- of the quote's price; NULL = no deposit
   subtotal REAL NOT NULL DEFAULT 0,
   net_amount REAL NOT NULL DEFAULT 0,
   vat_amount REAL NOT NULL DEFAULT 0,
@@ -792,6 +793,8 @@ addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
 // NULL means nobody has said: an invoice raised here has never been to Morning, and rows synced
 // before this column existed only learn their figure on the next sync.
 addColumnIfMissing('invoices', 'open_amount', 'REAL');
+// A quote's deposit, as a share of its price rather than a sum typed into its terms.
+addColumnIfMissing('band_quotes', 'deposit_percent', 'REAL');
 // The Morning payload a synced expense was mapped from. Kept so a field Morning spells
 // differently than expected can be seen in the data instead of guessed at — reading the
 // classification object as a scalar once wrote "[object Object]" into every category, and

@@ -6,7 +6,7 @@ import { get } from '../../api';
  * settings every quote screen reads. The arithmetic is not here — it is imported straight from
  * server/quoteMath.ts, so the preview adds up exactly the way the saved quote will.
  */
-export { computeTotals } from '../../../server/quoteMath';
+export { DEPOSIT_PLACEHOLDER, computeTotals, depositAmount } from '../../../server/quoteMath';
 
 export type QuoteStatus = 'draft' | 'sent' | 'viewed' | 'signed' | 'cancelled' | 'expired';
 
@@ -47,6 +47,8 @@ export interface Quote {
   prices_include_vat: number;
   vat_percent: number;
   discount: number;
+  /** Of the price; the terms say it through `{deposit}`. */
+  deposit_percent: number | null;
   subtotal: number;
   net_amount: number;
   vat_amount: number;
@@ -73,6 +75,12 @@ export interface Quote {
   updated_by_name?: string | null;
   first_line_name?: string | null;
   first_line_price?: number | null;
+}
+
+/** A template the system comes with, which «תבניות» can add a fresh copy of. */
+export interface BuiltinTemplate {
+  key: string;
+  template_name: string;
 }
 
 export interface QuotePackage {

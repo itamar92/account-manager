@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { del, post, put, nis } from '../../api';
 import { Button, Input, Modal, MoneyInput, Textarea, fieldClass } from '../../ui';
-import { usePackages, type Quote, type QuotePackage, type QuoteSettings } from './quotes';
+import { usePackages, type BuiltinTemplate, type Quote, type QuotePackage, type QuoteSettings } from './quotes';
 
 type SettingsData = { settings: QuoteSettings; event_types: string[]; vat_percent: number; calendar_ready?: boolean } | null;
 
@@ -10,9 +10,10 @@ export const VAT_MODES = [
   { value: 'incl' as const, label: 'המחיר כולל מע"מ' },
 ];
 
-/** What the quick form starts with: blank, but for what the template already says. */
+/** What the quick form starts with: blank, but for what the template already says — its price too. */
 const quickForm = (template?: Quote) => ({
-  template_id: template?.id ?? '', client_name: '', client_phone: '', event_date: '', price: '',
+  template_id: template?.id ?? '', client_name: '', client_phone: '', event_date: '',
+  price: Number(template?.first_line_price) ? String(template!.first_line_price) : '',
   event_location: template?.event_location ?? '', show_duration: template?.show_duration ?? '',
 });
 
@@ -20,9 +21,10 @@ const quickForm = (template?: Quote) => ({
  * «הצעה חדשה»: pick the template, type the things that change, and the rest of the quote is
  * already written. The new quote opens in the editor, where anything else can still change.
  *
- * The client, the date and the price are asked for; the place and the show's length are there
- * too, because they were the other blanks every quote filled in. Both start as the template has
- * them, so a template that says «כשעה» needs nothing typed.
+ * The client and the date are asked for; the price, the place and the show's length are there
+ * too, because they were the other blanks every quote filled in. Each starts as the template has
+ * it, so a template that already has its price and says «כשעה» needs nothing more typed. Only a
+ * template priced per quote asks for a price.
  */
 export function QuickCreateModal({
   open, onClose, templates, settingsData, onCreated, onBlank, onNewTemplate, onNewBuiltin, onError,
@@ -50,6 +52,7 @@ export function QuickCreateModal({
 
   const template = templates.find((t) => t.id === form.template_id);
   const vatNote = template?.prices_include_vat ? 'כולל מע"מ' : 'לפני מע"מ';
+  const templatePriced = !!Number(template?.first_line_price);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,7 +91,7 @@ export function QuickCreateModal({
                 onChange={(e) => {
                   const next = quickForm(templates.find((t) => t.id === e.target.value));
                   // What was typed about the client stays; what came from the old template goes.
-                  setForm({ ...form, template_id: next.template_id, event_location: next.event_location, show_duration: next.show_duration });
+                  setForm({ ...form, template_id: next.template_id, price: next.price, event_location: next.event_location, show_duration: next.show_duration });
                 }}>
                 {templates.map((t) => (
                   <option key={t.id} value={t.id}>{t.template_name || 'תבנית'}{t.is_default ? ' (ברירת מחדל)' : ''}</option>
@@ -109,11 +112,14 @@ export function QuickCreateModal({
               onChange={(e) => setForm({ ...form, show_duration: e.target.value })} />
           </div>
           <label className="block">
-            <span className="block text-[13px] text-muted mb-1.5">מחיר * ({vatNote})</span>
-            <MoneyInput value={form.price} required onChange={(price) => setForm({ ...form, price })} />
+            <span className="block text-[13px] text-muted mb-1.5">מחיר{templatePriced ? '' : ' *'} ({vatNote})</span>
+            <MoneyInput value={form.price} required={!templatePriced} onChange={(price) => setForm({ ...form, price })}
+              placeholder={templatePriced ? 'המחיר מהתבנית' : undefined} />
             {template?.first_line_name && (
               <span className="block text-[12px] text-faint mt-1.5">
-                המחיר נכנס לשורה «{template.first_line_name}». שאר התבנית נשארת כמו שהיא.
+                {templatePriced
+                  ? <>המחיר מהתבנית, בשורה «{template.first_line_name}». אפשר לשנות אותו להצעה הזו.</>
+                  : <>המחיר נכנס לשורה «{template.first_line_name}». שאר התבנית נשארת כמו שהיא.</>}
               </span>
             )}
           </label>
@@ -143,13 +149,14 @@ export function QuickCreateModal({
 }
 
 /** The templates, which one «הצעה חדשה» opens with, and the way into each. */
-export function TemplatesModal({ open, onClose, templates, onOpen, onNew, onNewBuiltin, onChanged, onError }: {
+export function TemplatesModal({ open, onClose, templates, builtins, onOpen, onNew, onNewBuiltin, onChanged, onError }: {
   open: boolean;
   onClose: () => void;
   templates: Quote[];
+  builtins: BuiltinTemplate[];
   onOpen: (id: string) => void;
   onNew: () => void;
-  onNewBuiltin: () => void;
+  onNewBuiltin: (key: string) => void;
   onChanged: () => void;
   onError: (message: string) => void;
 }) {
@@ -205,7 +212,13 @@ export function TemplatesModal({ open, onClose, templates, onOpen, onNew, onNewB
         </ul>
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => { onClose(); onNew(); }}>+ תבנית חדשה</Button>
-          <Button variant="ghost" onClick={() => { onClose(); onNewBuiltin(); }}>+ התבנית המוכנה של מונלייט</Button>
+        </div>
+        {/* A ready-made one is a fresh copy every time, so one deleted or edited past saving is a click away. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[13px] text-muted">תבנית מוכנה:</span>
+          {builtins.map((b) => (
+            <Button key={b.key} variant="ghost" onClick={() => { onClose(); onNewBuiltin(b.key); }}>+ {b.template_name}</Button>
+          ))}
         </div>
       </div>
     </Modal>

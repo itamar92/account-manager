@@ -46,6 +46,11 @@ test('a quote is sent only once it has a client, a date, a line and a validity s
   q.updateQuote(expired, { valid_until: '2020-01-01' }, USER);
   expectError(() => link.sendQuote(expired, USER, BASE), 400);
   expectError(() => link.sendQuote(q.createTemplate({}, USER), USER, BASE), 400);
+  // A deposit the terms speak of, with no percentage set, would reach the client as «{deposit}».
+  const noDeposit = readyQuote({ terms: 'מקדמה של {deposit} בחתימה.' });
+  expectError(() => link.sendQuote(noDeposit, USER, BASE), 400);
+  q.updateQuote(noDeposit, { deposit_percent: 30 }, USER);
+  assert.ok(link.sendQuote(noDeposit, USER, BASE).url);
 });
 
 test('sending gives the quote its link and marks it sent; sending again changes nothing', () => {

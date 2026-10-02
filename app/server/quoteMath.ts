@@ -70,3 +70,17 @@ export function computeTotals(
   const vat = round2(after * rate);
   return { lines, subtotal, discount: applied, net_amount: after, vat_amount: vat, total: round2(after + vat) };
 }
+
+/** Where a quote's text says its deposit, as the percentage and the sum it comes to. */
+export const DEPOSIT_PLACEHOLDER = '{deposit}';
+
+/**
+ * The deposit is a share of the quote, so it follows the price: a quote that is cheaper by the
+ * time it is sent asks for a smaller deposit, with nobody retyping it. It is taken in the terms
+ * the lines are priced in, the way the quote states every other sum — before VAT on a quote
+ * that adds VAT, out of the total on one that includes it.
+ */
+export function depositAmount(totals: QuoteTotals, percent: unknown, pricesIncludeVat: boolean): number {
+  const share = Math.min(100, amount(percent)) / 100;
+  return round2((pricesIncludeVat ? totals.total : totals.net_amount) * share);
+}

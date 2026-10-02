@@ -2,7 +2,7 @@ import React from 'react';
 import { clsx } from 'clsx';
 import { CalendarDays, MapPin, PartyPopper, Timer, Users } from 'lucide-react';
 import { nis, nisExact } from '../api';
-import type { QuoteTotals } from '../../server/quoteMath';
+import { DEPOSIT_PLACEHOLDER, depositAmount, type QuoteTotals } from '../../server/quoteMath';
 import {
   israelDateTime, issuedOn, quoteDate, type ClientSignature, type LogoPosition, type Quote, type QuoteBranding,
 } from '../pages/moonlight/quotes';
@@ -15,7 +15,7 @@ export type QuoteDocumentQuote = Pick<Quote,
   'quote_number' | 'title' | 'client_name' | 'event_type' | 'event_date' | 'event_location'
   | 'guest_count' | 'show_duration' | 'intro' | 'terms' | 'valid_until' | 'contact_name'
   | 'contact_phone' | 'prices_include_vat' | 'vat_percent'>
-  & Partial<Pick<Quote, 'is_template' | 'created_at'>>;
+  & Partial<Pick<Quote, 'is_template' | 'created_at' | 'deposit_percent'>>;
 
 /**
  * A quote as the client reads it.
@@ -54,6 +54,10 @@ export function QuoteDocument({ quote, totals, branding, clientSignature, client
   const vatPercent = Number(quote.vat_percent) || 0;
   const includesVat = !!quote.prices_include_vat;
   const lines = totals.lines.filter((l) => l.name || l.total);
+  const deposit = depositText(quote, totals);
+  const withDeposit = (text: string | null) => (text && deposit ? text.replaceAll(DEPOSIT_PLACEHOLDER, deposit) : text);
+  const intro = withDeposit(quote.intro);
+  const terms = withDeposit(quote.terms);
   // A template has no date of its own; a quote is dated the day it was made, as the Doc was.
   const issued = quote.quote_number ? issuedOn(quote.created_at) : '';
   const chips = [
@@ -86,7 +90,7 @@ export function QuoteDocument({ quote, totals, branding, clientSignature, client
       </header>
 
       <div className="px-5 py-6 @xl:px-8 @xl:py-7 space-y-7">
-        {quote.intro && <QuoteText text={quote.intro} className="text-[15px] leading-7 text-body" />}
+        {intro && <QuoteText text={intro} className="text-[15px] leading-7 text-body" />}
 
         <section>
           <h2 style={accent} className="text-[12px] font-semibold tracking-[.08em] mb-2">פירוט ההצעה</h2>
@@ -146,10 +150,10 @@ export function QuoteDocument({ quote, totals, branding, clientSignature, client
           </dl>
         </section>
 
-        {quote.terms && (
+        {terms && (
           <section>
             <h2 style={accent} className="text-[12px] font-semibold tracking-[.08em] mb-2">תנאי ההצעה</h2>
-            <QuoteText text={quote.terms} className="text-[13.5px] leading-6 text-body" />
+            <QuoteText text={terms} className="text-[13.5px] leading-6 text-body" />
           </section>
         )}
 
@@ -252,6 +256,21 @@ export function QuoteMasthead({ brandName, logoUrl, position, lines, size = 'doc
       </div>
     </div>
   );
+}
+
+/**
+ * `{deposit}` as the client reads it: the percentage, and the sum it comes to, in the terms the
+ * quote is priced in — «30% (9,750 ₪ + מע״מ)». A template priced per quote has no sum yet, so it
+ * reads as the percentage alone. With no percentage the placeholder is left as typed, so the
+ * preview shows the band what is missing (and the quote cannot be sent like that).
+ */
+function depositText(quote: QuoteDocumentQuote, totals: QuoteTotals): string | null {
+  const percent = Number(quote.deposit_percent) || 0;
+  if (!percent) return null;
+  const share = `${percent.toLocaleString('he-IL', { maximumFractionDigits: 2 })}%`;
+  const includesVat = !!quote.prices_include_vat;
+  const sum = depositAmount(totals, percent, includesVat);
+  return sum ? `${share} (${money(sum)}${includesVat ? '' : ' + מע״מ'})` : share;
 }
 
 /** A list item's mark at the start of a line: «• », «- » or «* ». */
