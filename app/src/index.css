@@ -87,6 +87,16 @@ body {
   letter-spacing: -0.028em;
 }
 
+/*
+ * An iPhone zooms the page in on any field set under 16px the moment it takes focus — the new
+ * quote dialog focuses one as it opens — and leaves it zoomed after, so the page is read through
+ * a keyhole. On a touch screen every field is 16px. Outside any layer on purpose: that is what
+ * lets it win over the `text-sm` the fields carry.
+ */
+@media (pointer: coarse) {
+  input, textarea, select { font-size: 16px; }
+}
+
 ::-webkit-scrollbar { height: 10px; width: 10px; }
 ::-webkit-scrollbar-thumb {
   background: #cbd0d8;
