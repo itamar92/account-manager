@@ -10,7 +10,7 @@ import { QuoteShareModal } from './QuoteShareModal';
 import { QuoteShowCard } from './QuoteShowCard';
 import { QuoteCalendarModal } from './QuoteCalendarModal';
 import {
-  brandingOf, computeTotals, israelDateTime, previewOf, quoteDate, usePackages, useQuoteSettings,
+  DEPOSIT_PLACEHOLDER, brandingOf, computeTotals, depositAmount, israelDateTime, previewOf, quoteDate, usePackages, useQuoteSettings,
   type Quote, type QuoteItem, type QuoteShow, type ShareDetails,
 } from './quotes';
 
@@ -21,7 +21,7 @@ type EditLine = Omit<QuoteItem, 'quantity' | 'unit_price'> & { key: string; quan
 const FIELDS = [
   'template_name', 'client_name', 'client_phone', 'client_email', 'client_tax_id', 'event_type',
   'event_date', 'event_location', 'guest_count', 'show_duration', 'title', 'intro', 'terms', 'valid_until',
-  'contact_name', 'contact_phone', 'internal_note', 'prices_include_vat', 'discount',
+  'contact_name', 'contact_phone', 'internal_note', 'prices_include_vat', 'discount', 'deposit_percent',
 ] as const;
 
 let lineSeq = 0;
@@ -106,6 +106,10 @@ export function QuoteEditor() {
   if (!form) return error ? <Empty text={error} /> : <Empty text="טוען…" />;
 
   const isTemplate = !!form.is_template;
+  // The percentage is set here and said in the text; each without the other is a deposit the client never reads.
+  const depositPercent = Number(form.deposit_percent) || 0;
+  const deposit = depositAmount(totals, depositPercent, !!form.prices_include_vat);
+  const saysDeposit = [form.intro, form.terms].some((t) => t?.includes(DEPOSIT_PLACEHOLDER));
   const editable = isTemplate || ['draft', 'sent', 'viewed'].includes(form.status);
   const set = (patch: Partial<Quote>) => setForm({ ...form, ...patch });
   const setLine = (key: string, patch: Partial<EditLine>) =>
@@ -421,7 +425,11 @@ export function QuoteEditor() {
                     </span>
                   </div>
                   {isTemplate && i === 0 && (
-                    <p className="text-[12px] text-faint">המחיר בשורה הזו נקבע בכל הצעה מחדש.</p>
+                    <p className="text-[12px] text-faint">
+                      {Number(line.unit_price)
+                        ? '«הצעה חדשה» ממלאת את המחיר הזה מראש, ואפשר לשנות אותו שם להצעה אחת.'
+                        : 'בלי מחיר כאן, «הצעה חדשה» תבקש מחיר בכל הצעה.'}
+                    </p>
                   )}
                 </li>
               ))}
@@ -444,14 +452,32 @@ export function QuoteEditor() {
             <h2 className="font-semibold">מחיר</h2>
             <Segmented value={form.prices_include_vat ? 'incl' : 'excl'} options={VAT_MODES}
               onChange={(v) => set({ prices_include_vat: v === 'incl' ? 1 : 0 })} />
-            <label className="block max-w-48">
-              <span className="block text-[13px] text-muted mb-1.5">הנחה (₪)</span>
-              <MoneyInput value={String(form.discount ?? '')} onChange={(v) => set({ discount: v as any })} />
-            </label>
+            <div className="grid grid-cols-2 gap-3 max-w-96">
+              <label className="block">
+                <span className="block text-[13px] text-muted mb-1.5">הנחה (₪)</span>
+                <MoneyInput value={String(form.discount ?? '')} onChange={(v) => set({ discount: v as any })} />
+              </label>
+              <Input label="מקדמה (%)" type="number" min={0} max={100} step="any"
+                value={form.deposit_percent ?? ''} placeholder="ללא"
+                onChange={(e) => set({ deposit_percent: e.target.value === '' ? null : e.target.value as any })} />
+            </div>
             <p className="text-[12.5px] text-muted">
               סה"כ לתשלום <span className="num font-semibold text-ink">{totals.total.toLocaleString('he-IL', { maximumFractionDigits: 2 })} ₪</span>
               {' '}· מע"מ {form.vat_percent}% · לפני מע"מ <span className="num">{totals.net_amount.toLocaleString('he-IL', { maximumFractionDigits: 2 })} ₪</span>
+              {depositPercent > 0 && deposit > 0 && (
+                <>{' '}· מקדמה <span className="num">{deposit.toLocaleString('he-IL', { maximumFractionDigits: 2 })} ₪</span>{!form.prices_include_vat && ' + מע"מ'}</>
+              )}
             </p>
+            {depositPercent > 0 && !saysDeposit && (
+              <p className="text-[12.5px] text-warn-ink">
+                המקדמה לא מופיעה בהצעה עד שכותבים בתנאים <code dir="ltr" className="bg-soft rounded px-1">{DEPOSIT_PLACEHOLDER}</code>.
+              </p>
+            )}
+            {!depositPercent && saysDeposit && (
+              <p className="text-[12.5px] text-warn-ink">
+                בתנאים כתוב <code dir="ltr" className="bg-soft rounded px-1">{DEPOSIT_PLACEHOLDER}</code> — קבעו כאן את אחוז המקדמה. בלעדיו אי אפשר לשלוח את ההצעה.
+              </p>
+            )}
           </Card>
 
           <Card className="space-y-3">
@@ -460,7 +486,8 @@ export function QuoteEditor() {
               placeholder="מקדמה, ביטולים, מה ההופעה כוללת, מה נדרש מהמקום…"
               onChange={(e) => set({ terms: e.target.value })} />
             <p className="text-[12px] text-faint">
-              שורה שמסתיימת בנקודתיים היא כותרת, ושורה שמתחילה ב־• או ב־- היא סעיף ברשימה.
+              שורה שמסתיימת בנקודתיים היא כותרת, ושורה שמתחילה ב־• או ב־- היא סעיף ברשימה.{' '}
+              <code dir="ltr" className="bg-soft rounded px-1">{DEPOSIT_PLACEHOLDER}</code> מוצג כאחוז המקדמה ובסכום שהוא יוצא בשקלים.
             </p>
           </Card>
 

@@ -8,7 +8,7 @@ import {
   FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
 } from './quoteFiles.js';
 import {
-  EVENT_TYPES, cancelQuote, createBlankQuote, createBuiltinTemplate, createFromTemplate, createPackage, createTemplate,
+  EVENT_TYPES, builtinTemplates, cancelQuote, createBlankQuote, createBuiltinTemplate, createFromTemplate, createPackage, createTemplate,
   deletePackage, deleteQuote, duplicateQuote, getQuote, listPackages, listQuotes, listTemplates,
   quoteSettings, saveAsTemplate, saveQuoteSettings, updatePackage, updateQuote,
 } from './quotes.js';
@@ -56,7 +56,7 @@ quoteRouter.get('/', handle((_req, res) => {
 // ---- the fixed paths first, so none of them is read as a quote id ----
 
 quoteRouter.get('/templates', handle((_req, res) => {
-  res.json({ templates: listTemplates() });
+  res.json({ templates: listTemplates(), builtins: builtinTemplates() });
 }));
 
 quoteRouter.post('/templates', handle((req, res) => {
@@ -64,9 +64,9 @@ quoteRouter.post('/templates', handle((req, res) => {
   res.json(getQuote(id));
 }));
 
-/** Another copy of the template the system comes with — Moonlight's own quote. */
+/** Another copy of a template the system comes with: `{ key }`, or Moonlight's own quote. */
 quoteRouter.post('/templates/builtin', handle((req, res) => {
-  res.json(getQuote(createBuiltinTemplate(userId(req))));
+  res.json(getQuote(createBuiltinTemplate(String(req.body?.key ?? 'moonlight'), userId(req))));
 }));
 
 quoteRouter.get('/packages', handle((_req, res) => {

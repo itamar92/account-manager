@@ -1,6 +1,6 @@
 import { randomBytes } from 'crypto';
 import { db, getSetting, sha256 } from './db.js';
-import { computeTotals, type QuoteTotals } from './quoteMath.js';
+import { DEPOSIT_PLACEHOLDER, computeTotals, type QuoteTotals } from './quoteMath.js';
 import { brandingImage, type BrandingKind } from './quoteFiles.js';
 import { QuoteError, displayStatus, hebrewDate, quoteSettings, todayInIsrael, type LogoPosition } from './quotes.js';
 import { fillMessage, whatsappNumber } from './quoteShare.js';
@@ -119,6 +119,8 @@ function readyToSend(row: any): string | null {
   if (!lines.n) return 'אין בהצעה אף שורה';
   if (!row.valid_until) return 'חסר תאריך «בתוקף עד»';
   if (todayInIsrael() > row.valid_until) return 'תוקף ההצעה עבר — עדכנו את «בתוקף עד» ושלחו שוב';
+  const saysDeposit = [row.intro, row.terms].some((t) => t?.includes(DEPOSIT_PLACEHOLDER));
+  if (saysDeposit && !row.deposit_percent) return `בהצעה כתוב ${DEPOSIT_PLACEHOLDER}, אבל לא נקבע אחוז מקדמה`;
   return null;
 }
 
@@ -167,7 +169,7 @@ export function regenerateLink(id: string, baseUrl: string): ShareDetails {
 const CLIENT_FIELDS = [
   'quote_number', 'title', 'client_name', 'event_type', 'event_date', 'event_location',
   'guest_count', 'show_duration', 'intro', 'terms', 'valid_until', 'contact_name',
-  'contact_phone', 'prices_include_vat', 'vat_percent', 'discount', 'created_at',
+  'contact_phone', 'prices_include_vat', 'vat_percent', 'discount', 'deposit_percent', 'created_at',
 ] as const;
 
 export interface PublicBranding {

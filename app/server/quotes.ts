@@ -1,7 +1,7 @@
 import { db, uuid, getSetting, setSetting, getVatPercent } from './db.js';
 import { computeTotals, type QuoteLineInput } from './quoteMath.js';
 import { brandingUrl } from './quoteFiles.js';
-import { BUILTIN_TEMPLATE } from './quoteTemplates.js';
+import { BUILTIN_TEMPLATES } from './quoteTemplates.js';
 import { DEFAULT_MESSAGE, DEFAULT_SUBJECT } from './quoteShare.js';
 
 /**
@@ -262,7 +262,7 @@ const CONTENT_FIELDS = [
   'template_name', 'client_name', 'client_phone', 'client_email', 'client_tax_id',
   'event_type', 'event_date', 'event_location', 'guest_count', 'show_duration', 'title', 'intro',
   'terms', 'valid_until', 'contact_name', 'contact_phone', 'internal_note', 'prices_include_vat',
-  'discount',
+  'discount', 'deposit_percent',
 ] as const;
 
 type Content = Record<(typeof CONTENT_FIELDS)[number], any>;
@@ -317,6 +317,12 @@ function cleanContent(input: Partial<Content>): Partial<Content> {
     else if (field === 'discount') {
       const n = Number(value);
       out[field] = Number.isFinite(n) && n > 0 ? n : 0;
+    } else if (field === 'deposit_percent') {
+      // Blank or 0 is no deposit, and more than the whole price is a typo rather than a deposit.
+      if (value === null || value === undefined || String(value).trim() === '') { out[field] = null; continue; }
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 100) throw new QuoteError(400, 'אחוז המקדמה צריך להיות בין 0 ל־100');
+      out[field] = n || null;
     } else out[field] = text(field, value);
   }
   return out;
@@ -446,24 +452,40 @@ export function createTemplate(input: Record<string, unknown>, userId: string | 
   return id;
 }
 
-/** A fresh copy of the template the system comes with (see quoteTemplates.ts). */
-export function createBuiltinTemplate(userId: string | null): string {
-  return createTemplate({ ...BUILTIN_TEMPLATE }, userId);
+export type BuiltinKey = keyof typeof BUILTIN_TEMPLATES;
+
+/** The templates the system comes with, for the buttons that add a copy of one. */
+export function builtinTemplates() {
+  return (Object.keys(BUILTIN_TEMPLATES) as BuiltinKey[])
+    .map((key) => ({ key, template_name: BUILTIN_TEMPLATES[key].template_name }));
 }
 
+/** A fresh copy of a template the system comes with (see quoteTemplates.ts). */
+export function createBuiltinTemplate(key: string, userId: string | null): string {
+  if (!Object.hasOwn(BUILTIN_TEMPLATES, key)) throw new QuoteError(400, 'אין תבנית מוכנה כזו');
+  return createTemplate({ ...BUILTIN_TEMPLATES[key as BuiltinKey] }, userId);
+}
+
+/** Moonlight's own was the only one when this setting was named, so it keeps the bare name. */
+const seededSetting = (key: BuiltinKey) =>
+  key === 'moonlight' ? 'quote_builtin_template_seeded' : `quote_builtin_template_seeded_${key}`;
+
 /**
- * Puts the built-in template in place the first time the app runs with quotes, and never again:
- * a band that deletes it has decided it does not want it, and «תבניות» can always add another.
- * It becomes the default only where there is no template yet, like any first template.
+ * Puts each built-in template in place the first time the app runs with it, and never again:
+ * a band that deletes one has decided it does not want it, and «תבניות» can always add another.
+ * A template added to the system later reaches a band that already has the others. Only a first
+ * template becomes the default, so Moonlight's own goes first.
  */
-export function seedBuiltinTemplate(): string | null {
-  if (getSetting('quote_builtin_template_seeded', '') === '1') return null;
-  let id: string | null = null;
+export function seedBuiltinTemplates(): string[] {
+  const ids: string[] = [];
   db.transaction(() => {
-    id = createBuiltinTemplate(null);
-    setSetting('quote_builtin_template_seeded', '1');
+    for (const { key } of builtinTemplates()) {
+      if (getSetting(seededSetting(key), '') === '1') continue;
+      ids.push(createBuiltinTemplate(key, null));
+      setSetting(seededSetting(key), '1');
+    }
   })();
-  return id;
+  return ids;
 }
 
 /** `{client_name}` and `{event_date}`, written out once, when a quote is made from a template. */
@@ -488,10 +510,10 @@ const linesOf = (quoteId: string): Line[] =>
   }));
 
 /**
- * The everyday quote: the template's content, with the three things that change every time.
+ * The everyday quote: the template's content, with the things that change every time.
  *
- * The price goes into the template's first line — the show itself — and every other line keeps
- * the price the template gives it. What is taken fresh rather than copied is whatever depends on
+ * A price, when one is given, goes into the template's first line — the show itself — and every
+ * other line keeps the price the template gives it. Without one, the first line keeps its own. What is taken fresh rather than copied is whatever depends on
  * today: the VAT rate, how long the quote is valid for, and who the client should call.
  *
  * The place and the show's length may come too, since they were blanks of the old quote as well;
@@ -511,13 +533,15 @@ export function createFromTemplate(
   if (!clientName) throw new QuoteError(400, 'שם הלקוח חובה');
   const eventDate = isoDate('event_date', input.event_date);
   if (!eventDate) throw new QuoteError(400, 'תאריך האירוע חובה');
-  const price = Number(input.price);
-  if (input.price === undefined || input.price === '' || !Number.isFinite(price) || price < 0) {
-    throw new QuoteError(400, 'מחיר חובה');
-  }
 
+  // A template that already has its price needs none typed; a price that is typed wins, for the
+  // client who is quoted differently. A template priced per quote still needs one.
   const settings = quoteSettings();
   const lines = linesOf(templateId);
+  const given = input.price === undefined || input.price === null || input.price === '' ? null : Number(input.price);
+  if (given !== null && (!Number.isFinite(given) || given < 0)) throw new QuoteError(400, 'המחיר אינו תקין');
+  const price = given ?? (lines[0]?.unit_price || null);
+  if (price === null) throw new QuoteError(400, 'מחיר חובה — בתבנית אין מחיר');
   if (lines.length) lines[0] = { ...lines[0], unit_price: price };
   else lines.push({ name: `הופעת ${settings.brand_name}`, description: null, quantity: 1, unit_price: price, package_id: null });
 

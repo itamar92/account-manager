@@ -11,7 +11,7 @@ import {
   backfillMemberPayments, backfillSupplierPayments, pruneOrphanPayments,
 } from './server/supplierPayments.js';
 import { backfillSupplierAliases } from './server/supplierNames.js';
-import { seedBuiltinTemplate } from './server/quotes.js';
+import { seedBuiltinTemplates } from './server/quotes.js';
 import { publicQuoteRouter } from './server/publicQuotes.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,9 +33,9 @@ pruneOrphanPayments();
 // Moves the invoice names off the supplier's free-text column into the table that can be
 // edited from the screen that notices one is missing.
 backfillSupplierAliases();
-// Moonlight's own quote, as the template a new quote starts from. Once: a band that deletes it
-// has chosen to, and «תבניות» adds it back on request.
-seedBuiltinTemplate();
+// Moonlight's own quote, as the template a new quote starts from, and its Eilat versions. Each
+// once: a band that deletes one has chosen to, and «תבניות» adds it back on request.
+seedBuiltinTemplates();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { computeTotals } from './quoteMath.js';
+import { computeTotals, depositAmount } from './quoteMath.js';
 
 const show = { name: 'הופעה', quantity: 1, unit_price: 10000 };
 
@@ -59,4 +59,15 @@ test('0% VAT stays 0%', () => {
   const t = computeTotals([show], 0, 0, false);
   assert.equal(t.vat_amount, 0);
   assert.equal(t.total, 10000);
+});
+
+test('a deposit is a share of the price, in the terms the quote is priced in', () => {
+  // Before VAT on a quote that adds VAT: 30% of 10,000, and VAT is on top of it as on the rest.
+  assert.equal(depositAmount(computeTotals([show], 0, 18, false), 30, false), 3000);
+  // Out of the total on a quote that includes it.
+  assert.equal(depositAmount(computeTotals([{ ...show, unit_price: 11800 }], 0, 18, true), 30, true), 3540);
+  // After the discount, since that is the price the client agreed to.
+  assert.equal(depositAmount(computeTotals([show], 2000, 18, false), 25, false), 2000);
+  assert.equal(depositAmount(computeTotals([show], 0, 18, false), 250, false), 10000);
+  assert.equal(depositAmount(computeTotals([show], 0, 18, false), null, false), 0);
 });

@@ -5,7 +5,7 @@ import { del, get, post, nis } from '../../api';
 import { Button, DataTable, FilterBar, PageHeader, Pill, SearchInput, StatCard, textMatch } from '../../ui';
 import {
   STATUS_LABELS, STATUS_STYLES, quoteDate, useQuoteSettings,
-  type Quote, type QuoteStatus,
+  type BuiltinTemplate, type Quote, type QuoteStatus,
 } from './quotes';
 import { PackagesModal, QuickCreateModal, TemplatesModal } from './QuoteModals';
 import { QuoteSettingsModal } from './QuoteSettingsModal';
@@ -40,6 +40,7 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [quotes, setQuotes] = useState<Quote[] | null>(null);
   const [templates, setTemplates] = useState<Quote[]>([]);
+  const [builtins, setBuiltins] = useState<BuiltinTemplate[]>([]);
   const { data: settingsData, reload: reloadSettings } = useQuoteSettings(onError);
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
@@ -50,7 +51,9 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
 
   const load = () => {
     get('/moonlight/quotes').then((d) => setQuotes(d.quotes)).catch((e) => onError(e.message));
-    get('/moonlight/quotes/templates').then((d) => setTemplates(d.templates)).catch((e) => onError(e.message));
+    get('/moonlight/quotes/templates')
+      .then((d) => { setTemplates(d.templates); setBuiltins(d.builtins); })
+      .catch((e) => onError(e.message));
   };
   useEffect(load, []);
 
@@ -75,9 +78,9 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
     catch (err: any) { onError(err.message); }
   };
 
-  /** Moonlight's own quote, ready to use — opened so it can be looked over before the first quote. */
-  const createBuiltin = async () => {
-    try { open((await post('/moonlight/quotes/templates/builtin')).quote.id); }
+  /** A ready-made template, Moonlight's own quote unless another is named — opened so it can be looked over before the first quote. */
+  const createBuiltin = async (key = 'moonlight') => {
+    try { open((await post('/moonlight/quotes/templates/builtin', { key })).quote.id); }
     catch (err: any) { onError(err.message); }
   };
 
@@ -143,7 +146,7 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button onClick={createBuiltin}>התבנית המוכנה של מונלייט</Button>
+            <Button onClick={() => createBuiltin()}>התבנית המוכנה של מונלייט</Button>
             <Button variant="ghost" onClick={createTemplate}>תבנית ריקה</Button>
           </div>
         </div>
@@ -230,13 +233,14 @@ export function QuotesTab({ onError }: { onError: (message: string) => void }) {
         onCreated={(id, holdDate) => navigate(`/moonlight/quotes/${id}${holdDate ? '?calendar=1' : ''}`)}
         onBlank={createBlank}
         onNewTemplate={createTemplate}
-        onNewBuiltin={createBuiltin}
+        onNewBuiltin={() => createBuiltin()}
         onError={onError}
       />
       <TemplatesModal
         open={templatesOpen}
         onClose={() => setTemplatesOpen(false)}
         templates={templates}
+        builtins={builtins}
         onOpen={open}
         onNew={createTemplate}
         onNewBuiltin={createBuiltin}

@@ -7,8 +7,9 @@ import path from 'path';
 // db.ts opens its file the moment it is imported, so the directory is set first and the modules
 // are loaded after it — a static import would be hoisted above this line and open the real one.
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'quotes-test-'));
-const { db } = await import('./db.js');
+const { db, setSetting } = await import('./db.js');
 const q = await import('./quotes.js');
+const { BUILTIN_TEMPLATES } = await import('./quoteTemplates.js');
 
 const USER = 'test-user';
 
@@ -75,12 +76,31 @@ test('a quote from a template takes its content and only the client, date and pr
   assert.equal(q.getQuote(templateId).items[0].unit_price, 1);
 });
 
-test('a quote from a template needs the three things that change', () => {
+test('a quote from a template needs a client and a date, and a price only where the template has none', () => {
   const templateId = q.createTemplate({}, USER);
   expectError(() => q.createFromTemplate(templateId, { event_date: '2027-01-01', price: 1 }, USER), 400);
   expectError(() => q.createFromTemplate(templateId, { client_name: 'x', price: 1 }, USER), 400);
   expectError(() => q.createFromTemplate(templateId, { client_name: 'x', event_date: '2027-02-30', price: 1 }, USER), 400);
   expectError(() => q.createFromTemplate(templateId, { client_name: 'x', event_date: '2027-01-01' }, USER), 400);
+  expectError(() => q.createFromTemplate(templateId, { client_name: 'x', event_date: '2027-01-01', price: -5 }, USER), 400);
+
+  const priced = q.createTemplate({ items: [{ name: 'הופעה', quantity: 1, unit_price: 18000 }] }, USER);
+  const kept = q.getQuote(q.createFromTemplate(priced, { client_name: 'x', event_date: '2027-01-01', price: '' }, USER));
+  assert.equal(kept.items[0].unit_price, 18000);
+  // A price that is typed is this client's, and wins over the template's.
+  const typed = q.getQuote(q.createFromTemplate(priced, { client_name: 'x', event_date: '2027-01-01', price: 15000 }, USER));
+  assert.equal(typed.items[0].unit_price, 15000);
+});
+
+test('the deposit is a percentage of the price, carried from the template and checked on save', () => {
+  const templateId = q.createTemplate({ deposit_percent: 30, terms: 'מקדמה של {deposit} בחתימה.' }, USER);
+  const id = q.createFromTemplate(templateId, { client_name: 'x', event_date: '2027-01-01', price: 20000 }, USER);
+  assert.equal(q.getQuote(id).quote.deposit_percent, 30);
+  // The placeholder stays in the text: the sum follows the price, so it is worked out when shown.
+  assert.equal(q.getQuote(id).quote.terms, 'מקדמה של {deposit} בחתימה.');
+  assert.equal(q.updateQuote(id, { deposit_percent: '' }, USER).quote.deposit_percent, null);
+  expectError(() => q.updateQuote(id, { deposit_percent: 150 }, USER), 400);
+  expectError(() => q.updateQuote(id, { deposit_percent: 'כל הסכום' }, USER), 400);
 });
 
 test('quote numbers run in sequence within the year', () => {
@@ -165,11 +185,12 @@ test('templates are not quotes: they are listed apart', () => {
 });
 
 test('the built-in template is Moonlight\'s own quote, with the show priced per quote and sound included', () => {
-  const id = q.createBuiltinTemplate(USER);
+  const id = q.createBuiltinTemplate('moonlight', USER);
   const { quote, items } = q.getQuote(id);
   assert.equal(quote.is_template, 1);
   assert.equal(quote.prices_include_vat, 0);
-  assert.match(quote.terms, /7,000 ₪/);
+  assert.match(quote.terms, /מקדמה של \{deposit\}/);
+  assert.equal(quote.deposit_percent, 30);
   assert.match(quote.terms, /שוטף \+ 30/);
   assert.match(quote.terms, /30% ממחיר ההופעה/);
   assert.deepEqual(items.map((i: any) => [i.name, i.unit_price]), [['הופעה חיה — הרכב מלא', 0], ['הגברה ותאורה', 0]]);
@@ -201,14 +222,45 @@ test('a quote made from a template keeps the template\'s place and length unless
   expectError(() => q.updateQuote(kept.quote.id, { show_duration: 'x'.repeat(81) }, USER), 400);
 });
 
-test('the built-in template is put in place once, and deleting it does not bring it back', () => {
+test('each built-in template is put in place once, and deleting one does not bring it back', () => {
   const defaultBefore = q.quoteSettings().default_template_id;
-  const id = q.seedBuiltinTemplate();
-  assert.ok(id);
+  // An install that already had Moonlight's own template gets only the ones added since.
+  setSetting('quote_builtin_template_seeded', '1');
+  const ids = q.seedBuiltinTemplates();
+  assert.deepEqual(ids.map((id) => q.getQuote(id).quote.template_name), ['מונלייט — אילת, ברכב', 'מונלייט — אילת, בטיסה']);
   // There were templates already, so the one somebody chose stays the default.
   assert.equal(q.quoteSettings().default_template_id, defaultBefore);
-  q.deleteQuote(id!);
-  assert.equal(q.seedBuiltinTemplate(), null);
+  q.deleteQuote(ids[0]);
+  assert.deepEqual(q.seedBuiltinTemplates(), []);
+});
+
+test('an Eilat show by car charges the road as a line of its own; by plane the production books it', () => {
+  const car = q.getQuote(q.createBuiltinTemplate('eilat_car', USER));
+  assert.deepEqual(car.items.map((i: any) => [i.name, i.unit_price]),
+    [['הופעה חיה — הרכב מלא', 30000], ['הגברה ותאורה', 0], ['החזר הוצאות נסיעה', 2500]]);
+  // The template has the show's price, so the quick form needs none.
+  const made = q.getQuote(q.createFromTemplate(car.quote.id, { client_name: 'מייד פיננסים', event_date: '2027-11-06' }, USER));
+  assert.equal(made.quote.event_location, 'אילת');
+  assert.equal(made.quote.show_duration, 'כשעה וחצי');
+  // The price goes to the show and the road keeps its own; both are before VAT.
+  assert.deepEqual(made.items.map((i: any) => i.unit_price), [30000, 0, 2500]);
+  assert.equal(made.quote.net_amount, 32500);
+
+  // A line at no charge reads «כלול», as if the band paid for the flights, so there is none.
+  const plane = q.getQuote(q.createBuiltinTemplate('eilat_plane', USER));
+  assert.equal(plane.items.length, 2);
+  assert.match(plane.quote.terms, /נמל התעופה רמון/);
+  assert.doesNotMatch(plane.quote.terms, /החזר הוצאות הנסיעה/);
+
+  expectError(() => q.createBuiltinTemplate('toString', USER), 400);
+});
+
+test('a built-in template\'s terms are all headings and lists, so each lays out as a section', () => {
+  for (const template of Object.values(BUILTIN_TEMPLATES)) {
+    for (const line of template.terms.split('\n').filter((l) => l.trim())) {
+      assert.ok(line.startsWith('• ') || (line.endsWith(':') && line.length <= 60), line);
+    }
+  }
 });
 
 test('the logo sits in the middle until the settings move it, and only to a side that exists', () => {

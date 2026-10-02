@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   prices_include_vat INTEGER NOT NULL DEFAULT 0,
   vat_percent REAL NOT NULL,                  -- frozen at creation
   discount REAL NOT NULL DEFAULT 0,           -- ₪, applied before VAT
+  deposit_percent REAL,                       -- of the price; NULL = no deposit. See Money
   subtotal REAL NOT NULL DEFAULT 0,
   net_amount REAL NOT NULL DEFAULT 0,         -- before VAT, after discount
   vat_amount REAL NOT NULL DEFAULT 0,
@@ -151,7 +152,7 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
 - `quote_validity_days` (14)
 - `quote_prices_include_vat`
 - `quote_message_template`, `quote_email_subject` (empty = the defaults in `server/quoteShare.ts`)
-- `quote_builtin_template_seeded`
+- `quote_builtin_template_seeded` (Moonlight's own), `quote_builtin_template_seeded_<key>` (the others)
 - `quote_seq_<year>`
 
 **Why items get their own table:** items are rows, not a JSON column. They are the thing that gets reordered and edited, and the rest of the schema is relational. The signed snapshot is the one place JSON is right, because it is a frozen record.
@@ -168,8 +169,13 @@ date and the price change. A **template** is where that usual content lives.
 
 **The built-in template**
 - The app comes with one: Moonlight's own quote, the Google Doc «Template הצעת מחיר — להקת המחווה לקולדפליי» that the band sent for years. Its content lives in `server/quoteTemplates.ts`.
-- It is added once, at startup (`seedBuiltinTemplate`, guarded by the setting `quote_builtin_template_seeded`). After that it is an ordinary template the band edits. Deleting it is final, and «תבניות» → «+ התבנית המוכנה של מונלייט» adds a fresh copy.
+- It is added once, at startup (`seedBuiltinTemplates`, guarded by the setting `quote_builtin_template_seeded`). After that it is an ordinary template the band edits. Deleting it is final, and «תבניות» → «תבנית מוכנה» adds a fresh copy.
 - Like any first template, it becomes the default only when there is no template yet.
+- **Two Eilat versions come with it**, from the quote sent for a show at Isla 42 Play: «אילת, ברכב» and «אילת, בטיסה». Each is seeded once under its own setting, after Moonlight's own, so an install that already had that one gets just these.
+  - Eilat is too far to play and drive home the same night. Both carry a hotel night for the 7 of the band, booked by the production, plus dinner on the day and breakfast with the room. Both also cover a cancellation once the band is on the road, and הנחיות פיקוד העורף as force majeure.
+  - Both price the show at that quote's 30,000 ₪, so quick create needs no price typed.
+  - **By car**, the road is a line of its own, «החזר הוצאות נסיעה», 2,500 ₪ before VAT, kept by quick create like any line after the first.
+  - **By plane**, the production books the flights, the instruments' baggage and the transfers from Ramon, so there is no line for them. A line at no charge reads «כלול», as if the band paid.
 - Where the Doc's parts went:
 
   | In the Doc | In the quote |
@@ -187,7 +193,9 @@ date and the price change. A **template** is where that usual content lives.
 **Quick create**
 - "הצעה חדשה" opens a short form: template (the default is preselected), client name, client phone, event date and price. It then opens the new quote in the editor, where anything else can still be changed.
 - The form also has the place and the show's length, which were the old Doc's other blanks. Both start as the template has them, and whichever the form does not send stays as the template has it.
-- **The price** is written into the unit price of the template's **first line**, and the form names that line ("המחיר נכנס לשורה «הופעה מלאה»"). Every other line keeps its template price. The template's VAT mode decides whether that price is before or including VAT.
+- **The price** belongs to the template's **first line**, and the form names that line. Every other line keeps its template price. The template's VAT mode decides whether that price is before or including VAT.
+  - A template whose first line has a price fills the form's price with it. It is not required, and a price typed over it is this client's and wins.
+  - A template priced per quote (first line at 0) asks for a price, as before.
 - **What is copied fresh:**
   - The VAT rate is today's rate, not the rate frozen on the template.
   - Validity is today plus `quote_validity_days`.
@@ -215,6 +223,10 @@ if prices include VAT:  total = after;  net = round2(total / (1 + rate/100));   
 - **Where totals are computed:** the server recomputes them on every save and ignores totals sent by the client. The editor runs the same function for its live preview.
 - **Quantity:** can be fractional (for example 1.5 hours).
 - **VAT rate:** frozen on the quote at creation, so a later rate change does not rewrite quotes that were already sent.
+- **Deposit:** a percentage (`deposit_percent`), not a sum, so it follows the price with nobody retyping it.
+  - `{deposit}` in the intro or the terms is shown as the percentage and the sum it comes to, for example «30% (9,750 ₪ + מע״מ)». The sum is `depositAmount` in `quoteMath.ts`: of the net before VAT on a quote that adds VAT, and of the total on one that includes it, after the discount either way.
+  - The placeholder stays in the stored text and is filled in when the quote is drawn, the signed snapshot included, which carries `deposit_percent` and the totals.
+  - A quote that says `{deposit}` with no percentage set cannot be sent, and the editor warns of either half missing.
 
 ## Lifecycle
 
@@ -441,6 +453,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 
 - A quote is dated the day it was made, in Israel, under its number.
 - A line at no charge reads «כלול». A template's first line, priced in each quote, reads «נקבע בכל הצעה».
+- `{deposit}` reads as the percentage and the sum (see [Money](#money)). On a template priced per quote there is no sum yet, so it reads as the percentage alone.
 - The intro and the terms are laid out from plain text. A short line ending in a colon is a heading, and lines starting with «•» or «-» are a list. Every piece is still rendered as text.
 
 **Public page** (`src/pages/QuotePublic.tsx`) is built mobile-first, because clients open it from WhatsApp.
