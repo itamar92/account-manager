@@ -633,6 +633,56 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_ai_reports_kind ON ai_campaign_reports(kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_thread ON ai_chat_messages(thread_id, created_at);
 
+-- The ads underneath the campaigns, for what they *said*. Spend is read at campaign level and
+-- stays there; this table exists so the advisor can write a new ad in the voice of the old ones
+-- and see which wording sat on the campaigns that sold tickets cheaply.
+CREATE TABLE IF NOT EXISTS meta_ads (
+  id TEXT PRIMARY KEY,                    -- Meta's ad id
+  campaign_id TEXT NOT NULL,
+  name TEXT,
+  status TEXT,
+  primary_text TEXT,                      -- the body above the image or video
+  headline TEXT,
+  description TEXT,
+  call_to_action TEXT,
+  link_url TEXT,
+  created_time TEXT,
+  synced_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign ON meta_ads(campaign_id);
+
+-- ---------- campaign tasks ----------
+-- The follow-ups a campaign plan implies ("a week in, compare spend to tickets sold"), turned
+-- into dated rows somebody is reminded of by email. One owner per show rather than per task:
+-- a show's promotion is one person's job, and the reminders follow that person.
+CREATE TABLE IF NOT EXISTS campaign_task_owners (
+  event_id TEXT PRIMARY KEY,
+  member_key TEXT NOT NULL                -- band_members.member_key
+);
+
+CREATE TABLE IF NOT EXISTS campaign_tasks (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT,
+  due_date TEXT NOT NULL,                 -- YYYY-MM-DD, Israel time
+  done_at TEXT,                           -- NULL while open
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','ai')),
+  report_id TEXT,                         -- the draft an AI task came from
+  -- Opens the one-click "done" page linked from the reminder email. It closes this task and
+  -- nothing else, so whoever the email was forwarded to can do no more than that.
+  done_token TEXT NOT NULL UNIQUE,
+  -- The Israel-time date of the last reminder sent, and how many went out. The scheduler sends
+  -- on the due date and every REMINDER_REPEAT_DAYS after while the task stays open.
+  last_reminded_on TEXT,
+  reminders_sent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_tasks_event ON campaign_tasks(event_id, due_date);
+CREATE INDEX IF NOT EXISTS idx_campaign_tasks_due ON campaign_tasks(done_at, due_date);
+
 -- ---------- Moonlight quotes (docs/QUOTES-DESIGN.md) ----------
 -- A price quote for a show. A template is a row of the same table with is_template = 1: the
 -- usual intro, lines and terms, with no client, number or validity of its own, so it is
@@ -818,6 +868,9 @@ addColumnIfMissing('band_event_expenses', 'campaign_locked', 'INTEGER NOT NULL D
 // can be read as a proportion ("318 מתוך 420") instead of a bare number, which is the only way
 // to tell a full small room from an empty large one. 0 means nobody has said.
 addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
+// Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
+// due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
+addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');
 // A supplier's standing fee, pre-filled onto the cost line of every show they are staffed on.
 // 0 (the default, and what every supplier entered before this column had) means nobody has
 // said what they charge, and the cost line is left to be typed by hand as before.

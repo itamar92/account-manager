@@ -13,6 +13,7 @@ import {
 import { backfillSupplierAliases } from './server/supplierNames.js';
 import { seedBuiltinTemplates } from './server/quotes.js';
 import { publicQuoteRouter } from './server/publicQuotes.js';
+import { publicCampaignTaskRouter, startReminderScheduler } from './server/campaignTasks.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -45,6 +46,9 @@ app.use('/api/v1', apiV1);
 // A client's quote link: no login, the token is the credential (see server/publicQuotes.ts).
 // Mounted ahead of /api so none of the logged-in routes ever sees it.
 app.use('/api/public/quotes', publicQuoteRouter);
+// The «בוצע» link in a campaign-task reminder: the token closes that one task and nothing else.
+// urlencoded for the page's one-button form, which posts no fields but is still a form post.
+app.use('/api/public/campaign-tasks', express.urlencoded({ extended: false }), publicCampaignTaskRouter);
 app.use('/api', router);
 
 // The page a client's link opens. Kept out of search engines, and it passes its own address on
@@ -71,6 +75,8 @@ async function start() {
     app.use(vite.middlewares);
   }
   app.listen(port, () => console.log(`Account Manager running on http://localhost:${port}`));
+  // Campaign-task reminders by email. Does nothing until SMTP_USER/SMTP_PASS are set.
+  startReminderScheduler();
 }
 
 start();
