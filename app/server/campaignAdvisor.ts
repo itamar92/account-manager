@@ -353,8 +353,23 @@ const DRAFT_SCHEMA = `{
  * written to the database, so a task without a real date or title is dropped here rather than
  * being offered and then refused when somebody presses «הוספה».
  */
+export interface SuggestedTask {
+  title: string;
+  detail: string;
+  due_date: string;
+}
+
+/** The tasks in an answer that could actually be saved — a title and a real date — and no others. */
+export function cleanSuggestedTasks(list: unknown): SuggestedTask[] {
+  if (!Array.isArray(list)) return [];
+  return list
+    .filter((t: any) => typeof t?.title === 'string' && t.title.trim()
+      && typeof t?.due_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due_date)
+      && !Number.isNaN(Date.parse(t.due_date)))
+    .map((t: any) => ({ title: t.title.trim(), detail: typeof t.detail === 'string' ? t.detail.trim() : '', due_date: t.due_date }));
+}
+
 function normaliseDraft(data: any) {
-  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
   // The chosen wording leads its own list of options, so swapping in an alternative on screen
   // never loses the one the plan started with.
   const options = (main: unknown, list: any) => [...new Set(
@@ -369,10 +384,7 @@ function normaliseDraft(data: any) {
           description_options: options(data.creative.description, data.creative.description_options),
         }
       : data?.creative,
-    tasks: tasks
-      .filter((t: any) => typeof t?.title === 'string' && t.title.trim()
-        && typeof t?.due_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due_date))
-      .map((t: any) => ({ title: t.title.trim(), detail: typeof t.detail === 'string' ? t.detail.trim() : '', due_date: t.due_date })),
+    tasks: cleanSuggestedTasks(data?.tasks),
   };
 }
 
@@ -433,6 +445,8 @@ export interface ChatMessage {
   thread_id: string;
   role: 'user' | 'assistant';
   content: string;
+  /** Tasks an answer proposed, each for one show. Empty for a question, or an answer with none. */
+  tasks: Array<SuggestedTask & { event_id: string }>;
   created_at: string;
 }
 
@@ -440,9 +454,16 @@ export interface ChatMessage {
 const CHAT_HISTORY_TURNS = 12;
 
 export function chatHistory(threadId: string): ChatMessage[] {
-  return db
+  const rows = db
     .prepare('SELECT * FROM ai_chat_messages WHERE thread_id = ? ORDER BY created_at, rowid')
-    .all(threadId) as ChatMessage[];
+    .all(threadId) as Array<Omit<ChatMessage, 'tasks'> & { tasks: string | null }>;
+  return rows.map((row) => {
+    let tasks: ChatMessage['tasks'] = [];
+    try {
+      tasks = row.tasks ? JSON.parse(row.tasks) : [];
+    } catch { /* a row that cannot be read proposes nothing */ }
+    return { ...row, tasks };
+  });
 }
 
 export function clearChat(threadId: string): { deleted: number } {
@@ -450,21 +471,51 @@ export function clearChat(threadId: string): { deleted: number } {
   return { deleted: info.changes };
 }
 
-function appendChat(threadId: string, role: 'user' | 'assistant', content: string) {
-  db.prepare('INSERT INTO ai_chat_messages (id, thread_id, role, content) VALUES (?, ?, ?, ?)')
-    .run(uuid(), threadId, role, content);
+function appendChat(threadId: string, role: 'user' | 'assistant', content: string, tasks: ChatMessage['tasks'] = []) {
+  db.prepare('INSERT INTO ai_chat_messages (id, thread_id, role, content, tasks) VALUES (?, ?, ?, ?, ?)')
+    .run(uuid(), threadId, role, content, tasks.length ? JSON.stringify(tasks) : null);
 }
+
+/**
+ * The tasks of a chat answer that name a real show. Unlike a draft, a chat answer is not about
+ * one show fixed in advance, so every task carries its own event_id — and one the agent made up
+ * is dropped rather than offered and then refused.
+ */
+export function cleanChatTasks(list: unknown, eventIds: Set<string>): ChatMessage['tasks'] {
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((raw: any) => {
+    const eventId = typeof raw?.event_id === 'string' ? raw.event_id : '';
+    if (!eventIds.has(eventId)) return [];
+    return cleanSuggestedTasks([raw]).map((task) => ({ event_id: eventId, ...task }));
+  });
+}
+
+const CHAT_SCHEMA = `{
+  "answer": "התשובה בעברית",
+  "tasks": [
+    { "event_id": "מזהה הופעה מ-upcoming_shows", "title": "פעולה קצרה לביצוע",
+      "detail": "מה בדיוק לבדוק או לשנות, ולפי איזה סף", "due_date": "YYYY-MM-DD" }
+  ]
+}`;
 
 /**
  * One follow-up turn.
  *
- * Answers in prose rather than JSON — this is the "why was that show so expensive?" box, and
- * forcing a schema onto a conversation gets a worse answer than asking for a sentence. The reply
- * is still wrapped in JSON so a truncated stream cannot be mistaken for a short answer.
+ * Answers in prose rather than a report — this is the "why was that show so expensive?" box, and
+ * forcing a structure onto a conversation gets a worse answer than asking for a sentence. The reply
+ * is still wrapped in JSON so a truncated stream cannot be mistaken for a short answer, and so an
+ * answer that says "do this next week" can carry it as a task to accept with one click.
  */
 export async function chat(threadId: string, message: string, range: { from?: string; to?: string } = {}): Promise<ChatMessage[]> {
   const history = chatHistory(threadId).slice(-CHAT_HISTORY_TURNS);
-  const context = buildContext(range);
+  // The tasks already open, so an answer proposes what is missing rather than what is planned.
+  const openTasks = db
+    .prepare(
+      `SELECT event_id, title, due_date FROM campaign_tasks
+       WHERE done_at IS NULL ORDER BY due_date LIMIT 60`
+    )
+    .all();
+  const context = { ...buildContext(range), open_tasks: openTasks };
 
   const prompt = buildPrompt(
     [
@@ -472,18 +523,27 @@ export async function chat(threadId: string, message: string, range: { from?: st
       'ענה בעברית, קצר ולעניין, והסתמך על מספרים מהנתונים כשאפשר.',
       'אם הנתונים לא מספיקים כדי לענות — אמור זאת במפורש במקום לנחש.',
       '',
+      'משימות (tasks):',
+      'אם המשתמש מבקש מה לעשות, תוכנית, או משימות להופעה שעוד לא הייתה — או שהתשובה שלך ממליצה',
+      'על פעולות קונקרטיות עם מועד להופעה כזו — החזר אותן גם ב-tasks, כך שאדם יקבל עליהן תזכורת במייל.',
+      'כל משימה: פעולה אחת לביצוע, event_id של הופעה מתוך upcoming_shows בלבד, ו-due_date בין',
+      `היום (${context.today}) לבין יומיים אחרי ההופעה. אל תחזור על משימות שכבר ב-open_tasks.`,
+      'אם השאלה היא שאלת הבנה ולא שאלת "מה לעשות" — החזר tasks ריק.',
+      'אם הוספת משימות, ציין זאת במשפט קצר בסוף התשובה.',
+      '',
       'השיחה עד כה:',
       ...history.map((m) => `${m.role === 'user' ? 'משתמש' : 'יועץ'}: ${m.content}`),
       `משתמש: ${message}`,
     ].join('\n'),
-    '{ "answer": "התשובה בעברית" }',
+    CHAT_SCHEMA,
     context
   );
 
   const { data } = await ask(prompt);
   const answer = typeof data?.answer === 'string' ? data.answer : JSON.stringify(data);
+  const eventIds = new Set(context.upcoming_shows.map((show) => show.id));
 
   appendChat(threadId, 'user', message);
-  appendChat(threadId, 'assistant', answer);
+  appendChat(threadId, 'assistant', answer, cleanChatTasks(data?.tasks, eventIds));
   return chatHistory(threadId);
 }

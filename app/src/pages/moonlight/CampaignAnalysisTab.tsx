@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { clsx } from 'clsx';
-import { del, get, post, put, nis } from '../../api';
+import { del, get, post, nis } from '../../api';
 import { Button, Card, Combobox, Empty, PeriodSelect, StatCard, Textarea } from '../../ui';
 import { eventLabel, useBandMembers, type PeriodTabProps } from './shared';
-import { CampaignTasksPanel, israelToday } from './CampaignTasksPanel';
+import { CampaignTasksPanel } from './CampaignTasksPanel';
+import { TaskPicker } from './TaskPicker';
 
 interface Props extends PeriodTabProps {
   events: any[];
@@ -26,6 +27,13 @@ const EFFORTS: Record<string, string> = { low: 'מאמץ קטן', medium: 'מא�
 /** 'YYYY-MM-DDTHH:MM:SSZ' as something readable, in local time. */
 const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : '';
+
+/** A chat answer's tasks, one group per show, in the order the shows first appear. */
+function groupByShow(tasks: any[]): Array<[string, any[]]> {
+  const groups = new Map<string, any[]>();
+  for (const task of tasks) groups.set(task.event_id, [...(groups.get(task.event_id) ?? []), task]);
+  return [...groups];
+}
 
 /** Other wordings the advisor offered for a headline or description; a click swaps one in. */
 function Alternatives({ options, current, onChoose }: {
@@ -89,12 +97,16 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
   const [draftReportId, setDraftReportId] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // The draft's follow-ups as a checklist: ticked ones become tasks when «הוספה» is pressed.
+  // Every show's tasks and owner, read by the pickers that offer a draft's or an answer's tasks:
+  // who owns the show already, and whether those tasks were taken. Re-read after each add.
   const { members } = useBandMembers();
-  const [picks, setPicks] = useState<Array<{ title: string; detail: string; due_date: string; checked: boolean }>>([]);
-  const [taskOwner, setTaskOwner] = useState('');
-  const [tasksAdded, setTasksAdded] = useState(false);
+  const [taskShows, setTaskShows] = useState<any[]>([]);
   const [tasksKey, setTasksKey] = useState(0);
+  useEffect(() => {
+    get('/moonlight/campaign-tasks?all=1').then((d) => setTaskShows(d.shows)).catch(() => {});
+  }, [tasksKey]);
+  const taskShow = (eventId: string) => taskShows.find((s) => s.event_id === eventId) ?? null;
+  const tasksAdded = () => setTasksKey((k) => k + 1);
 
   const [messages, setMessages] = useState<any[]>([]);
   const [question, setQuestion] = useState('');
@@ -114,27 +126,16 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
   useEffect(() => { threadEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
 
   const showDraft = (report: any) => {
-    const response = report?.response ?? null;
-    setDraft(response);
+    setDraft(report?.response ?? null);
     setDraftReportId(report?.id ?? '');
-    setTasksAdded(false);
-    setPicks((response?.tasks ?? []).map((t: any) => ({ ...t, checked: true })));
   };
 
-  // Choosing a show paints its last plan, if it has one, and who already owns its tasks — a plan
-  // took a minute to make and should not need making again to add its tasks a day later.
+  // Choosing a show paints its last plan, if it has one — a plan took a minute to make and should
+  // not need making again to add its tasks a day later.
   useEffect(() => {
     setCopied(false);
     if (!draftEvent) { showDraft(null); return; }
-    Promise.all([get(`/moonlight/campaign-draft/${draftEvent}`), get('/moonlight/campaign-tasks?all=1')])
-      .then(([d, t]) => {
-        showDraft(d.report);
-        const show = t.shows.find((s: any) => s.event_id === draftEvent);
-        setTaskOwner(show?.owner ?? '');
-        // A plan whose tasks were already taken is shown as taken, so they are not added twice.
-        if (d.report && show?.tasks.some((task: any) => task.report_id === d.report.id)) setTasksAdded(true);
-      })
-      .catch(() => {});
+    get(`/moonlight/campaign-draft/${draftEvent}`).then((d) => showDraft(d.report)).catch(() => {});
   }, [draftEvent]);
 
   const analyze = async () => {
@@ -185,27 +186,6 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
       setMessages([]);
     } catch (err: any) { onError(err.message); }
   };
-
-  const addTasks = async () => {
-    const chosen = picks.filter((p) => p.checked);
-    if (!chosen.length) return;
-    setRunning('tasks');
-    onError('');
-    try {
-      await post('/moonlight/campaign-tasks', {
-        event_id: draftEvent,
-        report_id: draftReportId || null,
-        tasks: chosen.map(({ title, detail, due_date }) => ({ title, detail, due_date })),
-      });
-      if (taskOwner) await put(`/moonlight/campaign-tasks/owner/${draftEvent}`, { member_key: taskOwner });
-      setTasksAdded(true);
-      setTasksKey((k) => k + 1);
-    } catch (err: any) { onError(err.message); }
-    finally { setRunning(''); }
-  };
-
-  const updatePick = (i: number, patch: Partial<(typeof picks)[number]>) =>
-    setPicks((list) => list.map((p, j) => (j === i ? { ...p, ...patch } : p)));
 
   /** Swaps an alternative headline or description into the plan, which is what «העתקה» copies. */
   const chooseCreative = (field: 'headline' | 'description', value: string) =>
@@ -436,45 +416,12 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
                   )}
                 </div>
               )}
-              {picks.length > 0 && (
+              {draft.tasks?.length > 0 && (
                 <div className="border-t border-line pt-2 space-y-2">
                   <div className="text-faint text-xs">משימות מעקב — כל משימה מסומנת תישלח כתזכורת במייל ביום היעד</div>
-                  <ul className="space-y-1.5">
-                    {picks.map((pick, i) => (
-                      <li key={i} className="flex flex-wrap sm:flex-nowrap items-start gap-x-2 gap-y-1">
-                        <input type="checkbox" className="accent-accent mt-1 shrink-0" checked={pick.checked}
-                          disabled={tasksAdded} onChange={(e) => updatePick(i, { checked: e.target.checked })} />
-                        <div className="min-w-0 flex-1">
-                          <div>{pick.title}</div>
-                          {pick.detail && <div className="text-xs text-muted leading-relaxed">{pick.detail}</div>}
-                        </div>
-                        <input type="date" value={pick.due_date} disabled={tasksAdded} min={israelToday()}
-                          className="shrink-0 ms-6 sm:ms-0 bg-surface border border-line rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-accent"
-                          onChange={(e) => updatePick(i, { due_date: e.target.value })} />
-                      </li>
-                    ))}
-                  </ul>
-                  {tasksAdded ? (
-                    <p className="text-xs text-pos">נוספו למשימות ✓</p>
-                  ) : (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-xs text-faint">אחראי לתזכורות:</span>
-                      <select value={taskOwner} onChange={(e) => setTaskOwner(e.target.value)}
-                        className="bg-soft border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent">
-                        <option value="">ללא אחראי (לא יישלחו מיילים)</option>
-                        {members.filter((m) => m.active).map((m) => (
-                          <option key={m.member_key} value={m.member_key}>
-                            {m.name}{m.email ? '' : ' (אין מייל)'}
-                          </option>
-                        ))}
-                      </select>
-                      {running === 'tasks'
-                        ? <Working text="מוסיף" />
-                        : <Button onClick={addTasks} disabled={!picks.some((p) => p.checked && p.due_date) || !!running}>
-                            הוספה למשימות
-                          </Button>}
-                    </div>
-                  )}
+                  <TaskPicker eventId={draftEvent} tasks={draft.tasks} sourceId={draftReportId}
+                    show={taskShow(draftEvent)} members={members} isOwner={isOwner}
+                    onAdded={tasksAdded} onError={onError} />
                 </div>
               )}
               {draft.notes?.length > 0 && (
@@ -501,7 +448,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
         {messages.length === 0 ? (
           <Empty text="אין עדיין שאלות" />
         ) : (
-          <div className="space-y-2 max-h-96 overflow-y-auto">
+          <div className="space-y-2 max-h-[32rem] overflow-y-auto">
             {messages.map((message: any) => (
               <div key={message.id}
                 className={clsx('rounded-xl p-3 text-sm leading-relaxed',
@@ -512,6 +459,17 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
                   {message.role === 'user' ? 'אתם' : 'הסוכן'} · {when(message.created_at)}
                 </div>
                 <p className="whitespace-pre-wrap">{message.content}</p>
+                {message.tasks?.length > 0 && (
+                  <div className="border-t border-line mt-2 pt-2 space-y-3">
+                    <div className="text-faint text-xs">משימות שהסוכן מציע — כל משימה מסומנת תישלח כתזכורת במייל ביום היעד</div>
+                    {groupByShow(message.tasks).map(([eventId, tasks]) => (
+                      <TaskPicker key={eventId} eventId={eventId} tasks={tasks} sourceId={message.id}
+                        label={eventById(eventId) ? eventLabel(eventById(eventId)) : undefined}
+                        show={taskShow(eventId)} members={members} isOwner={isOwner}
+                        onAdded={tasksAdded} onError={onError} />
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             <div ref={threadEnd} />

@@ -736,7 +736,7 @@ load; a run happens only when the owner presses the button. Band members read al
 | `GET /api/moonlight/campaign-draft/:eventId` | the last campaign plan drafted for a show |
 | `POST /api/moonlight/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
 | `GET /api/moonlight/campaign-chat` | the follow-up thread |
-| `POST /api/moonlight/campaign-chat` | ask a follow-up `{message}` (owner) |
+| `POST /api/moonlight/campaign-chat` | ask a follow-up `{message}` (owner); answers may carry proposed `tasks` |
 | `DELETE /api/moonlight/campaign-chat` | clear the thread (owner) |
 | `POST /api/integrations/agent/ping` | connectivity test: opens the session, asks the agent its version |
 | `GET /api/settings/agent` | the stored connection details, minus the secrets (owner) |
@@ -768,6 +768,14 @@ compare spend to tickets sold; a week before the show: raise the daily budget if
 the day after: make sure the campaign stopped. The draft returns them as `tasks`, and the tab
 offers them as a checklist; nothing becomes a task until the owner ticks it and presses «הוספה»,
 so «nothing the agent says takes effect» still holds. Tasks can also be typed by hand.
+
+The follow-up chat does the same: when a question is about what to do (or an answer recommends
+dated actions for an upcoming show), the reply carries `tasks`, each naming its show. They are
+listed under the answer per show, with the same checklist and owner picker. The agent is told
+which tasks are already open so it proposes what is missing, and a task naming a show that is
+not upcoming is dropped. The proposals are stored with the message (`ai_chat_messages.tasks`),
+and an accepted task's `report_id` is the draft or chat message it came from, which is how a
+plan or answer opened again knows its tasks were already taken.
 
 Each show has **one owner**, a band member, and every reminder for that show goes to their
 email from the band roster. The scheduler (`campaignTasks.ts`, started by `server.ts`) looks every

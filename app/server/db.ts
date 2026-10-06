@@ -868,6 +868,9 @@ addColumnIfMissing('band_event_expenses', 'campaign_locked', 'INTEGER NOT NULL D
 // can be read as a proportion ("318 מתוך 420") instead of a bare number, which is the only way
 // to tell a full small room from an empty large one. 0 means nobody has said.
 addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
+// Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
+// due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
+addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');
 // A supplier's standing fee, pre-filled onto the cost line of every show they are staffed on.
 // 0 (the default, and what every supplier entered before this column had) means nobody has
 // said what they charge, and the cost line is left to be typed by hand as before.
