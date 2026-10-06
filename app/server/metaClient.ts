@@ -173,6 +173,72 @@ export async function fetchDailyCampaignInsights(since: string, until: string): 
     }));
 }
 
+export interface MetaAdCopy {
+  id: string;
+  campaign_id: string;
+  name: string | null;
+  status: string | null;
+  primary_text: string | null;
+  headline: string | null;
+  description: string | null;
+  call_to_action: string | null;
+  link_url: string | null;
+  created_time: string | null;
+}
+
+const text = (value: unknown): string | null => {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return s || null;
+};
+
+/**
+ * The words an ad showed, wherever Meta keeps them for that kind of ad.
+ *
+ * There is no single field. A link ad keeps its copy under `object_story_spec.link_data`, a
+ * video ad under `video_data` (where the headline is `title` and the description is
+ * `link_description`), a dynamic-creative ad as lists in `asset_feed_spec` — the first variant is
+ * the one taken — and an ad made from an existing post often has only the creative's own
+ * `body`/`title`. Each is tried in turn, and whatever is missing stays null.
+ */
+export function extractAdCopy(ad: any): MetaAdCopy {
+  const creative = ad?.creative ?? {};
+  const story = creative.object_story_spec ?? {};
+  const link = story.link_data ?? {};
+  const video = story.video_data ?? {};
+  const feed = creative.asset_feed_spec ?? {};
+  const first = (list: any) => (Array.isArray(list) && list.length ? list[0] : undefined);
+
+  return {
+    id: String(ad.id),
+    campaign_id: String(ad.campaign_id ?? ''),
+    name: text(ad.name),
+    status: text(ad.effective_status) ?? text(ad.status),
+    primary_text: text(link.message) ?? text(video.message) ?? text(first(feed.bodies)?.text) ?? text(creative.body),
+    headline: text(link.name) ?? text(video.title) ?? text(first(feed.titles)?.text) ?? text(creative.title),
+    description: text(link.description) ?? text(video.link_description) ?? text(first(feed.descriptions)?.text),
+    call_to_action:
+      text(link.call_to_action?.type) ?? text(video.call_to_action?.type)
+      ?? text(first(feed.call_to_action_types)) ?? text(creative.call_to_action_type),
+    link_url:
+      text(link.link) ?? text(video.call_to_action?.value?.link)
+      ?? text(first(feed.link_urls)?.website_url) ?? text(creative.link_url),
+    created_time: text(ad.created_time),
+  };
+}
+
+/**
+ * Every ad on the account with the copy it ran — for the advisor, which writes new ads in the
+ * band's own voice. Same `ads_read` scope as the rest; nothing here is written.
+ */
+export async function fetchAds(): Promise<MetaAdCopy[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/ads`, {
+    fields:
+      'id,name,status,effective_status,campaign_id,created_time,' +
+      'creative{title,body,call_to_action_type,link_url,object_story_spec,asset_feed_spec}',
+  });
+  return rows.filter((row) => row?.id && row?.campaign_id).map(extractAdCopy);
+}
+
 /** Cheap connectivity probe: proves the token works without pulling any reporting. */
 export async function ping(): Promise<MetaAccount> {
   return fetchAccount();

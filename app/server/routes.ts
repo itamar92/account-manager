@@ -76,6 +76,10 @@ import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfi
 import {
   analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
 } from './campaignAdvisor.js';
+import {
+  createTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
+} from './campaignTasks.js';
+import { mailStatus } from './mailer.js';
 import { quoteRouter } from './quoteRoutes.js';
 import { quoteFollowUps } from './quoteShow.js';
 
@@ -2304,6 +2308,56 @@ router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, re
 
 router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {
   res.json(clearChat(CAMPAIGN_CHAT_THREAD));
+}));
+
+// ---- campaign tasks: the advisor's follow-ups, with email reminders ----
+
+/** Every show with tasks or an owner, plus whether email is set up — the band reads along. */
+router.get('/moonlight/campaign-tasks', requireAuth, handle((req, res) => {
+  res.json({
+    shows: listTaskShows({ all: req.query?.all === '1' }),
+    mail: mailStatus(),
+    done_links: Boolean(process.env.PUBLIC_BASE_URL?.trim()),
+  });
+}));
+
+/**
+ * Adds tasks to a show: `{ event_id, tasks: [{ title, detail, due_date }] }`, or one task's
+ * fields at the top level. `report_id` marks them as accepted from that advisor draft.
+ */
+router.post('/moonlight/campaign-tasks', requireOwner, handle((req, res) => {
+  const body = req.body || {};
+  const eventId = body.event_id ? String(body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const inputs = Array.isArray(body.tasks) ? body.tasks : [body];
+  const reportId = body.report_id ? String(body.report_id) : null;
+  res.json({ tasks: createTasks(eventId, inputs, { source: reportId ? 'ai' : 'manual', reportId }) });
+}));
+
+/** Who on the band gets this show's reminders. `member_key: null` clears it. */
+router.put('/moonlight/campaign-tasks/owner/:eventId', requireOwner, handle((req, res) => {
+  const key = req.body?.member_key ? String(req.body.member_key) : null;
+  res.json(setTaskOwner(req.params.eventId, key));
+}));
+
+/**
+ * Edits a task. The band can tick a task done — it is usually one of them who did it — but only
+ * the owner rewrites, re-dates or deletes one.
+ */
+router.put('/moonlight/campaign-tasks/:id', requireAuth, handle((req, res) => {
+  const body = req.body || {};
+  const patch = req.user.role === 'owner' ? body : { done: body.done };
+  res.json({ task: updateTask(req.params.id, patch) });
+}));
+
+router.delete('/moonlight/campaign-tasks/:id', requireOwner, handle((req, res) => {
+  deleteTask(req.params.id);
+  res.json({ ok: true });
+}));
+
+/** Sends this task's reminder now, whatever its date — also how the email setup is tested. */
+router.post('/moonlight/campaign-tasks/:id/remind', requireOwner, handleAsync(async (req, res) => {
+  res.json(await remindNow(req.params.id));
 }));
 
 /**

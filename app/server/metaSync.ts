@@ -12,7 +12,8 @@
  */
 import { db, uuid, getMetaCurrencyRate, getMetaSyncDays, getSetting, setSetting } from './db.js';
 import {
-  fetchAccount, fetchCampaigns, fetchDailyCampaignInsights, isMetaConfigured,
+  fetchAccount, fetchAds, fetchCampaigns, fetchDailyCampaignInsights, isMetaConfigured,
+  type MetaAdCopy,
 } from './metaClient.js';
 import { eventLabel, recomputeEvent } from './moonlight.js';
 
@@ -34,6 +35,8 @@ export interface MetaPullResult {
   to: string;
   /** Filled in by `applyCampaignSpend`, which every sync runs straight afterwards. */
   applied?: ApplyResult;
+  /** How many ads' copy was read for the campaign advisor. */
+  ads?: number;
   /** Set when the account is not billed in shekels and no rate has been configured. */
   warning?: string;
 }
@@ -142,12 +145,89 @@ export async function pullCampaignsFromMeta(options: { days?: number } = {}): Pr
     from,
     to,
   };
+  const warnings: string[] = [];
   if (account.currency !== 'ILS' && getMetaCurrencyRate() === 1) {
-    result.warning =
+    warnings.push(
       `חשבון הפרסום מחויב ב-${account.currency} ולא הוגדר שער המרה — ` +
-      'הסכומים לא נכתבו לעמודת «קמפיין». הגדירו meta_currency_rate בהגדרות.';
+      'הסכומים לא נכתבו לעמודת «קמפיין». הגדירו meta_currency_rate בהגדרות.'
+    );
   }
+
+  // The ad copy is for the advisor and nothing else, so failing to read it must not fail a sync
+  // whose spend figures already landed — it is reported beside the result instead.
+  try {
+    result.ads = storeAds(await fetchAds());
+  } catch (err) {
+    warnings.push(`נוסחי המודעות לא נקראו: ${(err as Error).message}`);
+  }
+
+  if (warnings.length) result.warning = warnings.join(' · ');
   return result;
+}
+
+/**
+ * Replaces the stored copy of every ad Meta returned. Ads Meta no longer returns are kept: a
+ * deleted ad's wording is still what that campaign ran, and the advisor learns from history.
+ */
+function storeAds(ads: MetaAdCopy[]): number {
+  const upsert = db.prepare(
+    `INSERT INTO meta_ads (id, campaign_id, name, status, primary_text, headline, description,
+       call_to_action, link_url, created_time, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       campaign_id = excluded.campaign_id, name = excluded.name, status = excluded.status,
+       primary_text = excluded.primary_text, headline = excluded.headline,
+       description = excluded.description, call_to_action = excluded.call_to_action,
+       link_url = excluded.link_url, created_time = excluded.created_time,
+       synced_at = excluded.synced_at`
+  );
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const ad of ads) {
+      upsert.run(
+        ad.id, ad.campaign_id, ad.name, ad.status, ad.primary_text, ad.headline, ad.description,
+        ad.call_to_action, ad.link_url, ad.created_time, now
+      );
+    }
+  })();
+  return ads.length;
+}
+
+/**
+ * The distinct wording each campaign ran, newest first — the material the advisor writes a new ad
+ * from. How each campaign did is joined in the prompt by `campaign_id`, from the campaign rows
+ * the advisor already gets. Identical copy across an ad set's placements is collapsed to one.
+ */
+export function pastAdCopy(limit = 40) {
+  const rows = db
+    .prepare(
+      `SELECT a.campaign_id, c.name AS campaign_name, c.objective,
+              COALESCE(c.last_spend_date, c.first_spend_date, a.created_time) AS ran_until,
+              a.primary_text, a.headline, a.description, a.call_to_action
+       FROM meta_ads a LEFT JOIN meta_campaigns c ON c.id = a.campaign_id
+       WHERE COALESCE(a.primary_text, a.headline, a.description) IS NOT NULL
+       ORDER BY ran_until DESC`
+    )
+    .all() as any[];
+
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const row of rows) {
+    const key = [row.campaign_id, row.primary_text, row.headline, row.description].join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      campaign_id: row.campaign_id,
+      campaign_name: row.campaign_name,
+      objective: row.objective,
+      primary_text: row.primary_text,
+      headline: row.headline,
+      description: row.description,
+      call_to_action: row.call_to_action,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- attribution

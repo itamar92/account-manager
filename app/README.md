@@ -43,6 +43,9 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `META_API_VERSION` | `v25.0` | Graph API version |
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
 | `APP_SECRET_KEY` | a generated `secret.key` beside the database | encrypts the secrets saved from the UI (the agent's SSH key). See below |
+| `SMTP_USER` / `SMTP_PASS` | — | Gmail address and app password for campaign-task reminder emails; without them no reminder is sent |
+| `SMTP_FROM` / `SMTP_HOST` / `SMTP_PORT` | `Moonlight <SMTP_USER>` / `smtp.gmail.com` / `465` | sender and server overrides for those emails |
+| `PUBLIC_BASE_URL` | the address the app was opened at | base of client quote links, and of the «סימון כבוצע» link in reminder emails (no link without it) |
 
 The `AGENT_SSH_*` variables below are now the **fallback** for **Settings → סוכן AI**, which is
 where the agent's connection details are normally entered. Anything saved in that form wins;
@@ -757,6 +760,44 @@ and SHA256 fingerprint, and a key is validated with ssh2's own parser on save, s
 paste or a missing passphrase is caught there rather than by a failed analysis a minute later.
 
 Setting the agent host up is in [`../deploy/README.md`](../deploy/README.md).
+
+### Campaign tasks and reminder emails
+
+A drafted plan ends in dated follow-ups — launch day: check the ad was approved; a week in:
+compare spend to tickets sold; a week before the show: raise the daily budget if sales are slow;
+the day after: make sure the campaign stopped. The draft returns them as `tasks`, and the tab
+offers them as a checklist; nothing becomes a task until the owner ticks it and presses «הוספה»,
+so «nothing the agent says takes effect» still holds. Tasks can also be typed by hand.
+
+Each show has **one owner**, a band member, and every reminder for that show goes to their
+email from the band roster. The scheduler (`campaignTasks.ts`, started by `server.ts`) looks every
+10 minutes and sends from 09:00 Israel time: a task gets its first email on its due date and
+another every 2 days while it stays open, all of one person's due tasks in a single email.
+Moving a task's date restarts its reminders.
+
+Each email carries a **«סימון כבוצע»** link (`/api/public/campaign-tasks/:token`) so a member
+without a login can close the task. The link opens a page with a button; only the button's POST
+closes it, so a mail scanner previewing the link changes nothing. The token closes that one
+task and nothing else. The link needs `PUBLIC_BASE_URL` — the scheduler has no request to take an
+address from.
+
+Sending is Gmail SMTP with an app password (`SMTP_USER`, `SMTP_PASS`; see `deploy/.env.example`).
+Without them tasks still work and the tab says that emails are off.
+
+**Past ad copy.** The Meta sync also reads every ad's text, headline and description
+(`meta_ads`) — the same `ads_read` token, no new scope. The advisor gets the most recent distinct
+copy beside the campaign figures, and drafts a headline and description, plus alternatives, in
+the band's own voice, preferring the wording of campaigns that sold tickets cheaply. If that read
+fails, the spend sync still lands and the result carries a warning.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/moonlight/campaign-tasks` | shows with their tasks and owner, and whether email is configured |
+| `POST /api/moonlight/campaign-tasks` | add tasks `{event_id, tasks: [{title, detail?, due_date}], report_id?}` (owner) |
+| `PUT /api/moonlight/campaign-tasks/:id` | edit `{title?, detail?, due_date?, done?}` — the band may only set `done` |
+| `DELETE /api/moonlight/campaign-tasks/:id` | delete a task (owner) |
+| `PUT /api/moonlight/campaign-tasks/owner/:eventId` | set the show's owner `{member_key}` (owner) |
+| `POST /api/moonlight/campaign-tasks/:id/remind` | send this task's reminder now (owner) |
 
 ## MCP server (`/mcp`) — read-only access for AI agents
 

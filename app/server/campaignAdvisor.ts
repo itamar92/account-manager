@@ -16,22 +16,29 @@
 
 import { db, uuid, setSetting } from './db.js';
 import { runAgent, AgentError } from './agentClient.js';
-import { adAnalysis, campaignDaily, listCampaigns, monthlyBreakdown } from './metaSync.js';
+import { adAnalysis, campaignDaily, listCampaigns, monthlyBreakdown, pastAdCopy } from './metaSync.js';
 import { eventLabel } from './moonlight.js';
+import { israelDate } from './campaignTasks.js';
 
 // ---------------------------------------------------------------- context
 
 /** How many campaigns' daily curves are worth sending. The long tail is noise in a prompt. */
 const DAILY_CURVE_CAMPAIGNS = 12;
+/** How many distinct past ads' wording to send — enough to hear the band's voice, newest first. */
+const PAST_ADS = 30;
 
 export interface AdviserContext {
   generated_at: string;
+  /** Today in Israel — what every date the agent writes is relative to. */
+  today: string;
   range: { from?: string; to?: string };
   totals: ReturnType<typeof adAnalysis>['totals'];
   shows: Array<Record<string, unknown>>;
   campaigns: Array<Record<string, unknown>>;
   monthly: ReturnType<typeof monthlyBreakdown>['months'];
   upcoming_shows: Array<{ id: string; label: string; date: string; venue: string; tickets: number }>;
+  /** What the band's earlier ads said, by campaign — join to `campaigns` for how each did. */
+  past_ads: ReturnType<typeof pastAdCopy>;
 }
 
 /**
@@ -66,6 +73,7 @@ export function buildContext(range: { from?: string; to?: string } = {}): Advise
 
   return {
     generated_at: new Date().toISOString(),
+    today: israelDate(),
     range,
     totals: analysis.totals,
     shows: analysis.rows.map((row) => ({
@@ -99,6 +107,7 @@ export function buildContext(range: { from?: string; to?: string } = {}): Advise
     })),
     monthly: monthlyBreakdown(range).months,
     upcoming_shows: upcoming,
+    past_ads: pastAdCopy(PAST_ADS),
   };
 }
 
@@ -324,9 +333,48 @@ const DRAFT_SCHEMA = `{
   "daily_budget": number,
   "schedule": { "start": "YYYY-MM-DD", "end": "YYYY-MM-DD" },
   "placements": ["מיקום פרסום"],
-  "creative": { "primary_text": "טקסט המודעה", "headline": "כותרת", "description": "תיאור" },
-  "notes": ["הערה על מה לבדוק או לשנות תוך כדי"]
+  "creative": {
+    "primary_text": "טקסט המודעה",
+    "headline": "כותרת",
+    "description": "תיאור",
+    "headline_options": ["כותרת חלופית"],
+    "description_options": ["תיאור חלופי"],
+    "based_on": "על אילו מודעות קודמות (campaign_id ושם) הנוסח מבוסס ולמה" | null
+  },
+  "tasks": [
+    { "title": "פעולה קצרה לביצוע", "detail": "מה בדיוק לבדוק או לשנות, ולפי איזה סף",
+      "due_date": "YYYY-MM-DD" }
+  ],
+  "notes": ["הערה כללית שאינה משימה עם תאריך"]
 }`;
+
+/**
+ * Keeps what the UI will render and drops what it cannot use. Tasks are the part that gets
+ * written to the database, so a task without a real date or title is dropped here rather than
+ * being offered and then refused when somebody presses «הוספה».
+ */
+function normaliseDraft(data: any) {
+  const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+  // The chosen wording leads its own list of options, so swapping in an alternative on screen
+  // never loses the one the plan started with.
+  const options = (main: unknown, list: any) => [...new Set(
+    [main, ...(Array.isArray(list) ? list : [])].filter((x): x is string => typeof x === 'string' && !!x.trim())
+  )];
+  return {
+    ...data,
+    creative: data?.creative
+      ? {
+          ...data.creative,
+          headline_options: options(data.creative.headline, data.creative.headline_options),
+          description_options: options(data.creative.description, data.creative.description_options),
+        }
+      : data?.creative,
+    tasks: tasks
+      .filter((t: any) => typeof t?.title === 'string' && t.title.trim()
+        && typeof t?.due_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(t.due_date))
+      .map((t: any) => ({ title: t.title.trim(), detail: typeof t.detail === 'string' ? t.detail.trim() : '', due_date: t.due_date })),
+  };
+}
 
 export async function draftCampaign(eventId: string, brief: string): Promise<StoredReport> {
   const event = db
@@ -348,14 +396,31 @@ export async function draftCampaign(eventId: string, brief: string): Promise<Sto
       'הסתמך על מה שעבד ומה שלא עבד בקמפיינים הקודמים שבנתונים.',
       'התקציב חייב להיות ריאלי ביחס לתקציבים ההיסטוריים ולהכנסה הצפויה מההופעה.',
       'תאריך הסיום של הקמפיין לא יכול להיות אחרי תאריך ההופעה.',
+      `היום ${context.today}. תאריך ההתחלה של הקמפיין לא יכול להיות לפני היום.`,
       brief ? `בקשה מיוחדת מהמשתמש: ${brief}` : '',
+      '',
+      'נוסח המודעה:',
       'כתוב את טקסט המודעה בעברית, בטון של להקת הופעות — לא שיווקי מדי.',
+      'past_ads הן המודעות שהלהקה כבר הריצה. בנה את הכותרת והתיאור בסגנון שלהן, והעדף את הנוסחים',
+      'של קמפיינים שמכרו כרטיסים בעלות נמוכה (חבר past_ads.campaign_id לקמפיינים ולהופעות שבנתונים).',
+      'תן 2-3 חלופות לכותרת (headline_options) ו-2-3 חלופות לתיאור (description_options),',
+      'וב-based_on כתוב על אילו מודעות קודמות התבססת. אם past_ads ריק — כתוב null ב-based_on.',
+      '',
+      'משימות מעקב (tasks):',
+      'פרק את ניהול הקמפיין לרשימת פעולות עם תאריך יעד, שאדם יקבל עליהן תזכורת במייל באותו יום.',
+      'למשל: ביום ההשקה לוודא שהמודעה אושרה ורצה; אחרי שבוע לבדוק כמה הוצא מול כמה כרטיסים נמכרו',
+      'ולהחליט אם להמשיך; שבוע לפני ההופעה לבדוק מצב ולהעלות תקציב יומי אם המכירות חלשות;',
+      'יום אחרי ההופעה לוודא שהקמפיין נעצר ולרשום כמה כרטיסים נמכרו.',
+      'כל משימה: פעולה אחת, ניתנת לביצוע, עם ספים מספריים מהנתונים כשאפשר (למשל עלות לכרטיס מעל X).',
+      'כל due_date בין היום לבין יומיים אחרי ההופעה, בסדר כרונולוגי, בדרך כלל 4-8 משימות.',
+      'notes מיועד רק להערות כלליות שאין להן תאריך.',
     ].filter(Boolean).join('\n'),
     DRAFT_SCHEMA,
     context
   );
 
-  const { data, duration_ms } = await ask(prompt);
+  const { data: raw, duration_ms } = await ask(prompt);
+  const data = normaliseDraft(raw);
   return saveReport({
     kind: 'draft', range: {}, eventId, request: { event_id: eventId, brief }, response: data, durationMs: duration_ms,
   });
