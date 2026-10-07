@@ -38,3 +38,18 @@ test('chat history hands back each answer with the tasks it proposed', () => {
   const history = advisor.chatHistory('t');
   assert.deepEqual(history.map((m) => m.tasks), [[], tasks, []]);
 });
+
+test('every prompt carries the band brief, the judging method, the task and the data — in that order', () => {
+  const prompt = advisor.buildPrompt('המשימה', '{"schema":1}', { shows: [{ label: 'זאפה' }] });
+  const at = (needle: string) => {
+    const index = prompt.indexOf(needle);
+    assert.ok(index >= 0, `missing: ${needle}`);
+    return index;
+  };
+  assert.ok(at('יועץ פרסום דיגיטלי') < at(advisor.ADVISOR_METHOD));
+  assert.ok(at(advisor.ADVISOR_METHOD) < at('המשימה'));
+  assert.ok(at('המשימה') < at('"label":"זאפה"'));
+  // The method is what stops the agent inventing a ROAS the data cannot support.
+  assert.match(advisor.ADVISOR_METHOD, /אל תחשב ROAS/);
+  assert.equal(prompt.split(advisor.ADVISOR_METHOD).length - 1, 1);
+});
