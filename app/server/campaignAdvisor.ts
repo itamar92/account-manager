@@ -135,10 +135,50 @@ const BAND_BRIEF = `
 כל הסכומים בשקלים חדשים. כל התאריכים בפורמט YYYY-MM-DD.
 `.trim();
 
+/**
+ * How to read these numbers — the method of a media buyer, distilled from the `adadvisor-*`
+ * skills in `.claude/skills/`.
+ *
+ * Those skills only load in a Claude Code session opened in this repo. The agent that answers here
+ * is a CLI on another machine that receives this prompt on stdin and never sees the repo, so the
+ * method has to travel inside the prompt or it does not reach the advisor at all. If the skills'
+ * rules change, change this too.
+ */
+export const ADVISOR_METHOD = `
+כללי שיפוט — כך קוראים את הנתונים:
+
+- נקודת ההשוואה היא ההיסטוריה של הלהקה עצמה, לא מספרים מהאינטרנט. חשב את חציון עלות הכרטיס ואת חציון
+  אחוז הפרסום מההכנסה על פני ההופעות שיש להן גם הוצאה וגם כרטיסים, ושפוט כל הופעה מולם.
+  כתוב על כמה הופעות ההשוואה נשענת. פחות מחמש — כתוב במפורש «מדגם קטן» והצג זאת כאינדיקציה בלבד.
+  עלות לכרטיס null היא «אין נתון», לא «חינם».
+- רע בבירור, בלי צורך בהשוואה: אחוז פרסום מההכנסה של 100% ומעלה; הוצאה על הופעה שכבר הייתה בלי כרטיסים;
+  קמפיין שממשיך להוציא אחרי ההופעה (תבקש לעצור אותו); הוצאה שלא שויכה לאף הופעה — היא מקטינה כל מספר
+  אחר, אז ציין אותה לפני שמדרגים הופעות.
+- הוצאה אינה סיבה. שיוך קמפיין להופעה אומר שהכסף היה בשבילה, לא שהמודעות מכרו את הכרטיסים.
+  כתוב «הוצאה מול כרטיסים», לא «המודעות מכרו N כרטיסים». אין כאן המרות ואין ROAS — אל תחשב ROAS.
+- התזמון חשוב כמו הסכום. קרא את העקומה היומית (daily) מול תאריך ההופעה: קמפיין שהוציא את רוב הכסף
+  בימים האחרונים סובל מבעיית תזמון, ועלות כרטיס גבוהה שלו לא מוכיחה שהמודעה או הקהל גרועים.
+- הזמן שנשאר עד ההופעה קובע מה נכון לעשות. יותר משלושה שבועות: יש זמן לבדוק ולהגדיל בהדרגה.
+  שבוע עד שלושה: להתחייב לקמפיין הטוב ולהחליט לפי יומיים-שלושה של נתונים, בלי ניסויים חדשים.
+  פחות משבוע: דחיפה אחרונה, בעיקר למי שכבר התעניין, ועצירה של כל מה שלא עובד. אחרי ההופעה: רק לעצור.
+  ציין תמיד כמה ימים נשארו לפני שאתה ממליץ.
+- סוג המטרה (objective) קובע מה למדוד: קמפיין חשיפה נשפט לפי עלות לאלף חשיפות ופרסום, לא לפי קליקים;
+  קמפיין תנועה לפי עלות לקליק. «קליקים» בנתונים הם כל הקליקים, לא רק קליקים על הקישור, ולכן הם גבוהים
+  מהמספר שמופיע ב-Ads Manager. תדירות = impressions חלקי reach לכל חיי הקמפיין, ואינה תדירות יומית.
+- מה שאין בנתונים: רמת קבוצת מודעות ומודעה, המרות, פיקסל, קהלים. אל תשפוט קהל או קריאייטיב שאתה לא
+  רואה. אם ההמלצה תלויה בנתון כזה, אמור איזה נתון חסר והמלץ לבדוק אותו ב-Ads Manager.
+- המלצות הן הוראות לבן אדם, כי אתה לא משנה דבר בחשבון המודעות. כל המלצה: שם הקמפיין בדיוק כפי שהוא
+  בנתונים, הגדרה אחת, מהערך הנוכחי לערך החדש בשקלים ליום, ותנאי החלטה מספרי («לעצור אם העלות לכרטיס עדיין
+  מעל X בעוד שלושה ימים»). קמפיין חדש נפתח במצב מושהה. העלאות תקציב — בצעדים קטנים ולא בקפיצה,
+  חוץ מכשנשאר פחות משבוע.
+`.trim();
+
 /** Wraps a task and its schema around the context, and demands JSON and nothing else. */
-function buildPrompt(task: string, schema: string, context: unknown): string {
+export function buildPrompt(task: string, schema: string, context: unknown): string {
   return [
     BAND_BRIEF,
+    '',
+    ADVISOR_METHOD,
     '',
     task,
     '',
@@ -218,9 +258,30 @@ export interface StoredReport {
   range_from: string | null;
   range_to: string | null;
   event_id: string | null;
+  /** What was asked — for a draft, the show and the brief, which the tab puts back in its fields. */
+  request: any;
   response: any;
   duration_ms: number | null;
   created_at: string;
+}
+
+/** A stored row as the tab reads it. A request that cannot be parsed reads as nothing asked. */
+function readReport(row: any): StoredReport {
+  let request: any = {};
+  try {
+    request = JSON.parse(row.request);
+  } catch { /* an unreadable request still leaves a readable answer */ }
+  return {
+    id: row.id,
+    kind: row.kind,
+    range_from: row.range_from,
+    range_to: row.range_to,
+    event_id: row.event_id,
+    request,
+    response: JSON.parse(row.response),
+    duration_ms: row.duration_ms,
+    created_at: row.created_at,
+  };
 }
 
 function saveReport(row: {
@@ -245,6 +306,7 @@ function saveReport(row: {
     range_from: row.range.from ?? null,
     range_to: row.range.to ?? null,
     event_id: row.eventId ?? null,
+    request: row.request,
     response: row.response,
     duration_ms: row.durationMs,
     created_at: new Date().toISOString(),
@@ -265,20 +327,128 @@ export function lastReport(kind: string, range: { from?: string; to?: string } =
        WHERE kind = ?
          AND range_from IS ? AND range_to IS ?
          AND (? IS NULL OR event_id = ?)
-       ORDER BY created_at DESC LIMIT 1`
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`
     )
     .get(kind, range.from ?? null, range.to ?? null, eventId ?? null, eventId ?? null) as any;
-  if (!row) return null;
-  return {
-    id: row.id,
-    kind: row.kind,
-    range_from: row.range_from,
-    range_to: row.range_to,
+  return row ? readReport(row) : null;
+}
+
+/** How long after a show its plan is still offered among the saved ones — long enough to look back. */
+const SAVED_PLAN_DAYS = 14;
+
+/**
+ * The newest plan of every show that has one and has not long passed, soonest show first.
+ *
+ * This is what lets the tab open on the plan you were working on. Each plan was already kept,
+ * but only reachable by choosing its show again — so after a reload it looked lost.
+ */
+export function savedDrafts(): Array<{ report_id: string; event_id: string; label: string; date: string; created_at: string }> {
+  const rows = db
+    .prepare(
+      `SELECT r.id, r.event_id, r.created_at, e.venue, e.date
+       FROM (
+         SELECT id, event_id, created_at,
+                ROW_NUMBER() OVER (PARTITION BY event_id ORDER BY created_at DESC, rowid DESC) AS n
+         FROM ai_campaign_reports WHERE kind = 'draft' AND event_id IS NOT NULL
+       ) r
+       JOIN band_events e ON e.id = r.event_id
+       WHERE r.n = 1 AND e.date >= date(?, ?)
+       ORDER BY e.date, r.created_at DESC`
+    )
+    .all(israelDate(), `-${SAVED_PLAN_DAYS} days`) as Array<{ id: string; event_id: string; created_at: string; venue: string; date: string }>;
+  return rows.map((row) => ({
+    report_id: row.id,
     event_id: row.event_id,
-    response: JSON.parse(row.response),
-    duration_ms: row.duration_ms,
+    label: eventLabel(row.venue, row.date),
+    date: row.date,
     created_at: row.created_at,
-  };
+  }));
+}
+
+/**
+ * Keeps the headline or description chosen from a plan's alternatives, so the plan reads the same
+ * after a reload, on another phone, and to the band. Only one of the options the agent offered
+ * can be chosen — this picks between its wordings, it is not an editor.
+ */
+export function chooseDraftCreative(reportId: string, field: string, value: string): StoredReport {
+  if (field !== 'headline' && field !== 'description') throw new AgentError('אפשר לבחור רק כותרת או תיאור', 400);
+  const row = db.prepare(`SELECT * FROM ai_campaign_reports WHERE id = ? AND kind = 'draft'`).get(reportId) as any;
+  if (!row) throw new AgentError('התוכנית לא נמצאה', 404);
+  const report = readReport(row);
+  const creative = report.response?.creative;
+  const options: unknown = creative?.[`${field}_options`];
+  if (!creative || !Array.isArray(options) || !options.includes(value)) {
+    throw new AgentError('הנוסח הזה לא מופיע בחלופות של התוכנית', 400);
+  }
+  report.response = { ...report.response, creative: { ...creative, [field]: value } };
+  db.prepare('UPDATE ai_campaign_reports SET response = ? WHERE id = ?').run(JSON.stringify(report.response), reportId);
+  return report;
+}
+
+// ---------------------------------------------------------------- runs in progress
+
+export type AdvisorJobKind = 'analysis' | 'draft' | 'chat';
+
+/**
+ * A run the agent is working on, or the last one that failed.
+ *
+ * A run takes a minute or two, and a page reloaded in the middle of it used to forget it had
+ * asked: the answer was saved when it came, but nothing on screen said one was coming, so the
+ * natural thing was to press the button again and pay for a second run. The page now reads these
+ * on load and waits for the answer instead.
+ *
+ * In memory on purpose. The run lives inside this process — a restart ends its SSH session — so a
+ * row in the database would outlive the run it describes and say «working» forever.
+ */
+export interface AdvisorJob {
+  kind: AdvisorJobKind;
+  status: 'running' | 'failed';
+  started_at: string;
+  finished_at?: string;
+  error?: string;
+  /** The period an analysis or a chat answer is about. */
+  range?: { from?: string; to?: string };
+  /** The show and the brief a plan is being drafted for. */
+  event_id?: string;
+  brief?: string;
+  /** The question a chat answer is being written to — shown in the thread while it waits. */
+  message?: string;
+}
+
+const jobs = new Map<AdvisorJobKind, AdvisorJob>();
+
+/**
+ * Runs `work` as the one job of its kind. A second request while the first is still running is
+ * refused rather than started: it is almost always the same question asked again after a reload,
+ * and two runs would cost twice for one answer.
+ */
+export async function trackJob<T>(
+  kind: AdvisorJobKind,
+  details: Omit<AdvisorJob, 'kind' | 'status' | 'started_at'>,
+  work: () => Promise<T>
+): Promise<T> {
+  if (jobs.get(kind)?.status === 'running') {
+    throw new AgentError('הסוכן כבר עובד על בקשה כזו — התשובה תופיע כאן כשיסיים', 409);
+  }
+  const job: AdvisorJob = { kind, status: 'running', started_at: new Date().toISOString(), ...details };
+  jobs.set(kind, job);
+  try {
+    const result = await work();
+    jobs.delete(kind);
+    return result;
+  } catch (err: any) {
+    jobs.set(kind, { ...job, status: 'failed', finished_at: new Date().toISOString(), error: String(err?.message || err) });
+    throw err;
+  }
+}
+
+export function listJobs(): AdvisorJob[] {
+  return [...jobs.values()];
+}
+
+/** Forgets a failed run once its error was shown. A running one is never dropped this way. */
+export function dismissJob(kind: string): void {
+  if (jobs.get(kind as AdvisorJobKind)?.status === 'failed') jobs.delete(kind as AdvisorJobKind);
 }
 
 // ---------------------------------------------------------------- the three asks
@@ -298,9 +468,30 @@ const ANALYSIS_SCHEMA = `{
   ],
   "suggestions": [
     { "title": "המלצה קצרה", "detail": "מה בדיוק לעשות",
-      "expected_impact": "מה זה צפוי לשנות", "effort": "low" | "medium" | "high" }
+      "expected_impact": "מה זה צפוי לשנות", "effort": "low" | "medium" | "high",
+      "addresses": [מספרי הממצאים שההמלצה פותרת — מיקומם במערך findings, החל מ-0] }
   ]
 }`;
+
+/**
+ * Keeps `addresses` to real findings. It is what lets the tab show a finding and the advice that
+ * fixes it as one thought instead of saying the same thing twice in two lists; a number pointing
+ * past the findings would link a recommendation to nothing.
+ */
+export function normaliseAnalysis(data: any) {
+  const findings = Array.isArray(data?.findings) ? data.findings.length : 0;
+  if (!Array.isArray(data?.suggestions)) return data;
+  return {
+    ...data,
+    suggestions: data.suggestions.map((s: any) => ({
+      ...s,
+      addresses: [...new Set(
+        (Array.isArray(s?.addresses) ? s.addresses : [])
+          .filter((n: unknown): n is number => Number.isInteger(n) && (n as number) >= 0 && (n as number) < findings)
+      )],
+    })),
+  };
+}
 
 export async function analyzeCampaigns(range: { from?: string; to?: string } = {}): Promise<StoredReport> {
   const context = buildContext(range);
@@ -313,6 +504,7 @@ export async function analyzeCampaigns(range: { from?: string; to?: string } = {
       'נתח את ביצועי הפרסום של ההופעות בנתונים המצורפים.',
       'קבע verdict כולל, ציין ממצאים קונקרטיים (findings) שמסתמכים על מספרים מהנתונים,',
       'ותן המלצות מעשיות (suggestions) מדורגות מהחשובה לפחות חשובה.',
+      'כשהמלצה פותרת ממצא, ציין ב-addresses את מיקום הממצא במערך findings (מ-0), כדי שהם יוצגו יחד.',
       'התייחס במפורש להופעות עם עלות לכרטיס חריגה, לקמפיינים שהמשיכו להוציא אחרי ההופעה,',
       'ולהוצאה שלא שויכה לאף הופעה (unmapped_spend) אם יש כזו.',
       'כל event_id ו-campaign_id חייבים להילקח מהנתונים — אל תמציא מזהים.',
@@ -323,7 +515,7 @@ export async function analyzeCampaigns(range: { from?: string; to?: string } = {
   );
 
   const { data, duration_ms } = await ask(prompt);
-  return saveReport({ kind: 'analysis', range, request: { range }, response: data, durationMs: duration_ms });
+  return saveReport({ kind: 'analysis', range, request: { range }, response: normaliseAnalysis(data), durationMs: duration_ms });
 }
 
 const DRAFT_SCHEMA = `{
