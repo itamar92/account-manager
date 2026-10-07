@@ -1,10 +1,20 @@
 ---
 name: adadvisor-creative
 description: |
-  Meta ad creative strategy — testing frameworks (3-2-2, 5-3-1, Pilothouse 3-3-3), refresh cadence by spend tier, hook → body → CTA hierarchy, and the Dynamic Creative workflow through the AdAdvisor MCP. Use when: "test ads", "creative", "refresh creatives", "fatigue", "what to make next", "new creative", "test new hooks", "creative is tired", "ads are stale", "swap creative", "upload images", "build a creative", "dynamic creative", "asset feed", "find images", "find videos", "preview existing", "ugc". Chain with: adadvisor (always — for business tone, brand colors, AOV); adadvisor-launch when creative is being launched for the first time; adadvisor-diagnose when fatigue is suspected; adadvisor-scale when scaling reveals creative limits. NOT for: image / video generation (use an image-generation skill or external tool, then upload via this skill); copywriting from scratch with no brand context (read the context resource first); managing creatives across non-Meta platforms.
+  Meta ad creative strategy — testing frameworks (3-2-2, 5-3-1, Pilothouse 3-3-3), refresh cadence by spend tier, hook → body → CTA hierarchy, and the Dynamic Creative workflow, as advice and copy for the user to enter in Ads Manager. Use when: "test ads", "creative", "refresh creatives", "fatigue", "what to make next", "new creative", "test new hooks", "creative is tired", "ads are stale", "swap creative", "upload images", "build a creative", "dynamic creative", "asset feed", "find images", "find videos", "preview existing", "ugc". Chain with: adadvisor (always — data limits and show economics); adadvisor-launch when creative is being launched for the first time; adadvisor-diagnose when fatigue is suspected; adadvisor-scale when scaling reveals creative limits. NOT for: image / video generation (use an image-generation skill or external tool, then upload via this skill); copywriting from scratch with no brand context (read the context resource first); managing creatives across non-Meta platforms.
 license: Apache-2.0
-version: 0.1.0
+version: 0.1.0-account-manager
 ---
+
+> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `moonlight_campaigns`, `moonlight_ad_analysis`, `moonlight_shows`, `moonlight_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
+>
+> - Load the `adadvisor` foundation skill first; it defines the data limits and the show economics.
+> - Wherever this skill says `adadvisor:<tool>`, translate it with `../adadvisor/references/mcp-tool-cheatsheet.md`. A **read** maps to a campaign-level tool or is *not available*; a **write** becomes **an instruction for the user to carry out in Ads Manager** (`../adadvisor/references/mutation-safety.md`) — never claim it was done.
+> - Replace break-even ROAS / target CPA / AOV with the band's own cost-per-ticket history (`../adadvisor/references/economics.md`). The show date sets the runway; always state it.
+> - Where a step needs something this connection cannot see (ad set / ad data, pixel, frequency by day, copy), say what is missing and ask the user to paste it from Ads Manager. Do not guess.
+> - Everything below describes the method; the method is sound, the tool calls are not available as written.
+>
+> **For this skill:** there is no creative-level performance data and the ad copy is not exposed through MCP, so you cannot rank ads or detect fatigue from data. The frameworks, hook library, format rules and refresh cadence are strategy and still apply — use them to advise and to write new copy in the band's voice. Ask the user to paste existing copy, the creative's Ads Manager results, and the audience. The in-app advisor's stored report (`moonlight_campaign_advice`) may already hold copy suggestions: read it first.
 
 # AdAdvisor — Creative Strategy
 

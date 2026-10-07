@@ -1,10 +1,20 @@
 ---
 name: adadvisor-audit
 description: |
-  Full Meta ad account audit — pixel/measurement integrity, account structure, performance baseline, and red-flag detection — the workflow a senior media buyer runs on day one of a takeover. Use when: "audit my account", "audit this account", "take over this account", "review my ads", "what's wrong with my account", "give me an overview", "is my account healthy", "I just inherited an account", "what's broken", "scan my ads", "review for me". Chain with: adadvisor (always — read business context first); adadvisor-diagnose when the audit surfaces specific performance issues; adadvisor-pixel for deep pixel/CAPI/EMQ remediation. NOT for: ongoing daily checks (just call get_performance with 7d window directly); single-campaign deep-dives (use adadvisor-diagnose); creative refresh decisions (use adadvisor-creative).
+  Full Meta ad account audit — pixel/measurement integrity, account structure, performance baseline, and red-flag detection — the workflow a senior media buyer runs on day one of a takeover. Use when: "audit my account", "audit this account", "take over this account", "review my ads", "what's wrong with my account", "give me an overview", "is my account healthy", "I just inherited an account", "what's broken", "scan my ads", "review for me". Chain with: adadvisor (always — data limits and show economics); adadvisor-diagnose when the audit surfaces specific performance issues; adadvisor-pixel for deep pixel/CAPI/EMQ remediation. NOT for: ongoing daily checks (just call get_performance with 7d window directly); single-campaign deep-dives (use adadvisor-diagnose); creative refresh decisions (use adadvisor-creative).
 license: Apache-2.0
-version: 0.1.0
+version: 0.1.0-account-manager
 ---
+
+> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `moonlight_campaigns`, `moonlight_ad_analysis`, `moonlight_shows`, `moonlight_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
+>
+> - Load the `adadvisor` foundation skill first; it defines the data limits and the show economics.
+> - Wherever this skill says `adadvisor:<tool>`, translate it with `../adadvisor/references/mcp-tool-cheatsheet.md`. A **read** maps to a campaign-level tool or is *not available*; a **write** becomes **an instruction for the user to carry out in Ads Manager** (`../adadvisor/references/mutation-safety.md`) — never claim it was done.
+> - Replace break-even ROAS / target CPA / AOV with the band's own cost-per-ticket history (`../adadvisor/references/economics.md`). The show date sets the runway; always state it.
+> - Where a step needs something this connection cannot see (ad set / ad data, pixel, frequency by day, copy), say what is missing and ask the user to paste it from Ads Manager. Do not guess.
+> - Everything below describes the method; the method is sound, the tool calls are not available as written.
+>
+> **For this skill:** the pixel, structure and creative checks need ad-set / ad / pixel data that is not available — mark them *not checked* and give the user the Ads Manager steps to check them. What *can* be audited from data: spend by show vs the band's median cost per ticket, unmapped spend, campaigns still spending after their show, spend timing against the show date (daily curve), objective-vs-judgement mismatches, and frequency (lifetime) per campaign. Say up front that this is a **partial audit** and list what was not covered.
 
 # AdAdvisor — Full Account Audit
 

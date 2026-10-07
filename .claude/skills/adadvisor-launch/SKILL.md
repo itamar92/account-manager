@@ -1,10 +1,20 @@
 ---
 name: adadvisor-launch
 description: |
-  End-to-end Meta campaign launch through the AdAdvisor MCP — objective selection, CBO vs ABO vs ASC, ad-set structure, targeting, creative attach, conversion-domain handling, lead-form pairing, and PAUSED-by-default activation. Use when: "launch a campaign", "create a campaign", "set up an ad", "build me a campaign", "start running ads", "spin up", "I want to advertise X", "create an ad set", "create an ad", "make a campaign for", "duplicate this and change", "test a new audience". Chain with: adadvisor (always — break-even ROAS, target CPA, pixel choice); adadvisor-targeting for audience strategy; adadvisor-creative for creative selection and pairing; adadvisor-playbooks for vertical-specific launch SOPs (BFCM, lead-gen, new product). NOT for: scaling existing winners (use adadvisor-scale); diagnosing problems (use adadvisor-diagnose); refresh-only operations (use adadvisor-creative).
+  Plan a Meta campaign launch for a show as a build sheet to enter in Ads Manager — objective selection, CBO vs ABO vs ASC, ad-set structure, targeting, creative, budget and schedule against the show date, and PAUSED-by-default activation. Use when: "launch a campaign", "create a campaign", "set up an ad", "build me a campaign", "start running ads", "spin up", "I want to advertise X", "create an ad set", "create an ad", "make a campaign for", "duplicate this and change", "test a new audience". Chain with: adadvisor (always — data limits and show economics); adadvisor-targeting for audience strategy; adadvisor-creative for creative selection and pairing; adadvisor-playbooks for vertical-specific launch SOPs (BFCM, lead-gen, new product). NOT for: scaling existing winners (use adadvisor-scale); diagnosing problems (use adadvisor-diagnose); refresh-only operations (use adadvisor-creative).
 license: Apache-2.0
-version: 0.1.0
+version: 0.1.0-account-manager
 ---
+
+> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `moonlight_campaigns`, `moonlight_ad_analysis`, `moonlight_shows`, `moonlight_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
+>
+> - Load the `adadvisor` foundation skill first; it defines the data limits and the show economics.
+> - Wherever this skill says `adadvisor:<tool>`, translate it with `../adadvisor/references/mcp-tool-cheatsheet.md`. A **read** maps to a campaign-level tool or is *not available*; a **write** becomes **an instruction for the user to carry out in Ads Manager** (`../adadvisor/references/mutation-safety.md`) — never claim it was done.
+> - Replace break-even ROAS / target CPA / AOV with the band's own cost-per-ticket history (`../adadvisor/references/economics.md`). The show date sets the runway; always state it.
+> - Where a step needs something this connection cannot see (ad set / ad data, pixel, frequency by day, copy), say what is missing and ask the user to paste it from Ads Manager. Do not guess.
+> - Everything below describes the method; the method is sound, the tool calls are not available as written.
+>
+> **For this skill:** nothing can be created. The output of a launch is a **build sheet** the user enters in Ads Manager: show and date, runway, objective, structure, budget (₪/day and total), schedule (start ≥ 3 weeks out where possible), audience, placements, creative and copy, destination URL, names that match the account's existing pattern and contain the show label (so the app's mapping suggestions find it), and **everything created paused**. Skip the `conversion_domain`, lead-form and API-field details unless the user asks for the Ads Manager equivalent. After launch, tell the user to map the campaign to its show in the app.
 
 # AdAdvisor — Campaign Launch
 

@@ -1,10 +1,20 @@
 ---
 name: adadvisor-diagnose
 description: |
-  Diagnose Meta ad performance regressions and decide whether to kill, hold, or scale. Encodes the senior media buyer's diagnostic stack (Hook Rate → Hold Rate → CTR → CVR → AOV) and the canonical "spend up, results down" decision tree. Use when: "CPA went up", "ROAS dropped", "what happened", "why is this campaign not working", "diagnose", "performance is bad", "should I kill this", "should I scale this", "is this ad working", "what's wrong with this campaign", "investigate", "spend without results", "frequency too high". Chain with: adadvisor (always — for break-even ROAS and target CPA); adadvisor-scale when the diagnosis says "scale"; adadvisor-creative when the diagnosis surfaces creative fatigue; adadvisor-targeting when audience saturation is the root cause. NOT for: full account audits (use adadvisor-audit); kill/scale decisions without a specific entity in mind (run audit first); launching new things (use adadvisor-launch).
+  Diagnose Meta ad performance regressions and decide whether to kill, hold, or scale. Encodes the senior media buyer's diagnostic stack (Hook Rate → Hold Rate → CTR → CVR → AOV) and the canonical "spend up, results down" decision tree. Use when: "CPA went up", "ROAS dropped", "what happened", "why is this campaign not working", "diagnose", "performance is bad", "should I kill this", "should I scale this", "is this ad working", "what's wrong with this campaign", "investigate", "spend without results", "frequency too high". Chain with: adadvisor (always — data limits and show economics); adadvisor-scale when the diagnosis says "scale"; adadvisor-creative when the diagnosis surfaces creative fatigue; adadvisor-targeting when audience saturation is the root cause. NOT for: full account audits (use adadvisor-audit); kill/scale decisions without a specific entity in mind (run audit first); launching new things (use adadvisor-launch).
 license: Apache-2.0
-version: 0.1.0
+version: 0.1.0-account-manager
 ---
+
+> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `moonlight_campaigns`, `moonlight_ad_analysis`, `moonlight_shows`, `moonlight_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
+>
+> - Load the `adadvisor` foundation skill first; it defines the data limits and the show economics.
+> - Wherever this skill says `adadvisor:<tool>`, translate it with `../adadvisor/references/mcp-tool-cheatsheet.md`. A **read** maps to a campaign-level tool or is *not available*; a **write** becomes **an instruction for the user to carry out in Ads Manager** (`../adadvisor/references/mutation-safety.md`) — never claim it was done.
+> - Replace break-even ROAS / target CPA / AOV with the band's own cost-per-ticket history (`../adadvisor/references/economics.md`). The show date sets the runway; always state it.
+> - Where a step needs something this connection cannot see (ad set / ad data, pixel, frequency by day, copy), say what is missing and ask the user to paste it from Ads Manager. Do not guess.
+> - Everything below describes the method; the method is sound, the tool calls are not available as written.
+>
+> **For this skill:** the diagnostic stack (Hook Rate → Hold Rate → CTR → CVR → AOV) is only partly computable. Available: CPM, CTR and CPC on *all clicks*, lifetime frequency, the daily spend curve, and cost per ticket against the books. Hook/hold rate and on-site conversion are not available — name the layer you cannot see rather than skipping it, and ask for the Ads Manager column if the diagnosis hinges on it. Kill/hold/scale verdicts become instructions for the user, and must weigh the days left to the show.
 
 # AdAdvisor — Performance Diagnosis & Decisions
 

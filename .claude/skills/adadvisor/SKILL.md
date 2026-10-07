@@ -1,134 +1,128 @@
 ---
 name: adadvisor
 description: |
-  Foundation skill for the AdAdvisor MCP server — Meta (Facebook + Instagram) ad account management. Loads conventions, business-context grounding, and the unit-economics mental model every other AdAdvisor skill assumes. Use when: "adadvisor", "meta ads", "facebook ads", "instagram ads", "my ad account", "look at my ads", "let's work on my account", "connect my meta", or whenever an AdAdvisor MCP tool is about to be called. Chain with: adadvisor-audit for full account audits, adadvisor-diagnose for performance investigations, adadvisor-launch for new campaigns, adadvisor-scale for scaling winners, adadvisor-creative for creative strategy, adadvisor-targeting for audience work, adadvisor-playbooks for tactical SOPs (BFCM, lead-gen, recovery). NOT for: Google Ads / TikTok / Snap / LinkedIn / X — this MCP is Meta-only. NOT for: implementing ad creatives from scratch (use adadvisor-creative + an image/video generation tool). NOT for: analytics platforms outside Meta (use the relevant analytics MCP).
+  Foundation for advice on the band's Meta (Facebook + Instagram) ad campaigns, grounded in this app's own data — the account-manager MCP server, which reads the Meta Marketing API with a read-only `ads_read` token and ties every campaign to the show it promotes. Loads the read-only rules, the show-economics model (cost per ticket, spend share of the fee) and the data limits every other adadvisor-* skill assumes. Use when: "campaign", "campaigns", "ad campaign", "AI campaign", "meta ads", "facebook ads", "instagram ads", "ads for the show", "promotion", "ad spend", "קמפיין", "קמפיינים", "פרסום", "יועץ קמפיינים", or whenever a moonlight_campaigns / moonlight_ad_analysis tool is about to be called. Chain with: adadvisor-audit for a full review, adadvisor-diagnose for a campaign that is not working, adadvisor-launch for planning a new one, adadvisor-scale for a campaign that is working, adadvisor-creative for copy and creative, adadvisor-targeting for audiences, adadvisor-playbooks for multi-week plans. NOT for: Google Ads / TikTok / other platforms (Meta only). NOT for: changing anything in the ad account — this connection cannot write.
 license: Apache-2.0
-version: 0.1.0
+version: 0.1.0-account-manager
 ---
 
-# AdAdvisor — Foundation
+# Campaign advice — Foundation
 
-This skill is the floor. It loads automatically whenever the user mentions Meta ads, AdAdvisor, or their ad account, and it sets the conventions every other AdAdvisor skill builds on. Read this once; the chained skills assume you have.
+This skill is the floor. It loads whenever the user asks for advice about their ad campaigns, and it sets the conventions every `adadvisor-*` skill builds on. Read it once; the chained skills assume you have.
 
-## What AdAdvisor is
+> **Adapted from [AdAdvisor/skills](https://github.com/AdAdvisor/skills) (Apache-2.0).** The upstream skills drive the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does not use that server. It uses the connection this app already has to the Meta account, so the method (diagnostic stack, kill/scale rules, creative testing, targeting strategy) is kept and the tool layer and the economics are replaced. Wherever a chained skill says `adadvisor:<tool>`, translate it with [`references/mcp-tool-cheatsheet.md`](references/mcp-tool-cheatsheet.md).
 
-The AdAdvisor MCP server exposes ~33 tools to read and modify Meta ad accounts. Read tools (campaigns, ad sets, ads, performance, pixel health, targeting, audiences, creatives) return data synced every 30 min. Mutation tools (status, budget, create, duplicate, update targeting) call Meta's Marketing API directly and take effect immediately.
+## What the connection is
 
-You — the agent — are pairing with a real ad account that real spend flows through. Treat every mutation as production. Default to PAUSED, ask before activating, and confirm budget changes match the user's stated intent.
+The app syncs the Meta ad account with a **System User token, scope `ads_read`** (`app/server/metaClient.ts`) into its own database, and exposes that to you through the app's **`account-manager` MCP server** (`app/server/mcpTools.ts`, documented in `app/README.md` under "MCP server"; connected with an API key created in Settings → מפתחות API). If its tools are not in your tool list, the server is not connected in this session — say so, give advice from the skill references only, and do not invent campaign figures. The pieces you can call:
 
-## Workflow — the first 90 seconds of every session
+| Tool | Gives you |
+|---|---|
+| `moonlight_campaigns` | Every campaign: name, status, objective, spend, impressions, clicks, reach, first/last spend date, the shows it is mapped to, and suggested shows when unmapped. With `campaign_id`: that campaign's **day-by-day** spend, impressions, clicks. |
+| `moonlight_ad_analysis` | Per show: tickets, fee, ad spend, `cost_per_ticket`, `spend_share_of_revenue`, clicks, which months it was billed in, whether a campaign kept spending after the show. Plus totals and unmapped spend. |
+| `moonlight_shows` | The shows themselves: venue, date, tickets, fee, expenses, profit. |
+| `moonlight_campaign_advice` | The last verdict the in-app advisor (יועץ קמפיינים) stored for a period. Returns a stored report; never starts a new analysis. |
+| `get_overview` | Orientation and business-level context. |
 
-Do these in order before any analysis or mutation:
+All money is **shekels (ILS)**. Campaign figures were converted from the ad account's currency at the app's stored rate; `spend_original` and `currency` give the untouched numbers.
 
-1. **`adadvisor:list_ad_accounts`** — discover available accounts. Returns `ad_account_id`, currency, timezone, business name, `data_synced`, and a pixel summary per account. If multiple accounts exist, ask which one the user wants to work on; do not guess.
+## It is read-only — say so, do not pretend otherwise
 
-2. **Check `data_synced`.** If `false` on the chosen account, performance reads will be empty or incomplete — the initial import is still running. Tell the user, suggest they wait ~10-30 min, and pause analysis.
+**Nothing here can create, pause, resume, re-budget, duplicate or retarget anything.** There is no tool for it and no write scope on the token. Do not suggest you can, do not call Meta's Graph API directly, and do not ask for a broader token to "just do it".
 
-3. **Read `adadvisor://account/{ad_account_id}/context`** (resource, not tool). This returns:
-   - `business.break_even_roas`, `business.average_order_value`, `business.target_cpl`, `business.daily_budget_cap` — the unit-economics gates for every downstream decision.
-   - `business.storefront_url`, `business.business_name` — used to ground naming and copy.
-   - `research.business_details` — industry, AOV bucket, brand tone, brand colors, target audience summary, key selling points. This is the "what does this business do" snapshot.
-   - `research.research_report` — multi-page AI-generated marketing intelligence.
+So every recommendation ends as **an instruction for the person to carry out in Ads Manager**: name the entity, the exact setting, the value, and the order. Write it so it can be followed without reading the rest of your answer. See [`references/mutation-safety.md`](references/mutation-safety.md) for how to phrase these and what to say to keep a human in the loop.
 
-   Every recommendation downstream is grounded in this. **Decisions made without reading the context resource are ungrounded — they default to generic "good ROAS" thinking and miss what's actually going on at this business.**
+## The data limits — know what you cannot see
 
-4. **Verify the pixel.** Look at `accounts[].pixels` from `list_ad_accounts`. If the account has no pixel, or `last_fired_time` is older than 24 hours, performance data is unreliable — call `adadvisor:get_pixel_health` to confirm and surface to the user before recommending mutations.
+The connection is **campaign-level**. You can see how much was spent, when, and how many people were reached and clicked. You **cannot** see:
 
-After those four checks, you can route to the specific workflow skill (`adadvisor-audit`, `adadvisor-diagnose`, etc.).
+| Not available | Consequence |
+|---|---|
+| Conversions / results / purchases / ROAS | Meta does not tell you tickets sold. **Tickets come from the books** (`moonlight_shows`), not from the pixel. There is no ROAS here; there is cost per ticket. |
+| Ad set and ad level | You cannot say which audience or which creative did it. Say "campaign level" and stop there, or ask for an Ads Manager export. |
+| Daily frequency, CPM/CPC trends by placement, hook/hold rate | Frequency exists only as lifetime `impressions ÷ reach` per campaign. Hook rate, hold rate and creative fatigue curves are not computable. |
+| Pixel health, audiences, targeting, placements | The audit's pixel and structure checks cannot be run from data. Ask the user to check, or to paste a screenshot. |
+| Ad copy | Synced for the in-app advisor but not exposed through MCP. Ask the user to paste the copy. |
+| Data freshness | The tools do not return the last sync time. Use the **latest date in `campaign_id`'s daily curve** and say how stale it is before drawing a conclusion from "recent" days. |
 
-## Unit economics — the operating model
+When a skill step needs something on this list, **do not fill the gap with a plausible guess.** Say what is missing, say what it would have told you, and offer the two ways forward: the user pastes it from Ads Manager, or the app's Meta client is extended to read it (see "Extending the connection" below).
 
-A senior media buyer thinks in **contribution margin**, never raw ROAS. Internalize these:
+## Workflow — the first minutes of every session
 
-- **Break-even ROAS** (from the context resource: `business.break_even_roas`) is `1 ÷ contribution_margin`. At 30% margin, break-even = 3.33×. At 50%, break-even = 2.0×.
-- **Target ROAS** is break-even × the user's desired profit-margin multiple. The context resource may not surface "target" — derive it: target ≈ break-even × 1.3 to 1.5 for healthy scaling, or ask the user.
-- **Kill threshold**: ad-level ROAS < 0.8× of break-even after spending 1.5× target CPA → kill.
-- **Scale threshold**: campaign-level ROAS > target for 3 consecutive days AND new-customer rate stable → scale (see `adadvisor-scale`).
-- **Lead-gen flips the math** — replace ROAS with CPL vs `target_cpl`. If `target_cpl` is null on the context, ask the user what their CPL target is.
+Do these in order before any analysis:
 
-When you report performance to the user, **always pair the number with the business threshold**. "ROAS 2.1×" is meaningless; "ROAS 2.1× against a 3.3× break-even — losing money on every order" is the conversation.
+1. **`get_overview`** if you have not seen this business yet — it says what the app holds and gives the band totals.
+2. **`moonlight_ad_analysis`** for the period being asked about (`from`/`to`, `YYYY-MM-DD`; omit for all). This is the ground truth for "is advertising paying for itself", and it carries `unmapped_spend`.
+3. **Check what is unmapped.** `totals.unmapped_spend` is money spent on campaigns no show claims. If it is a meaningful share of total spend, every per-show number understates the true cost, so say that first. `moonlight_campaigns` with `unmapped_only: true` lists them, with suggested shows.
+4. **Check freshness** via the latest date on the daily curve of the biggest campaign. If it is more than a few days old, tell the user to run the sync in the app before trusting recent days.
+5. **Check the shows' side.** `moonlight_shows` gives dates. A campaign for a show that already happened is history; a campaign for a show in three weeks is live and time-boxed.
+6. **Look for the stored verdict** — `moonlight_campaign_advice` for the period. If the in-app advisor already said something, build on it and say where you agree or disagree, rather than re-deriving a different answer without noticing.
 
-## KPI mental model — read Meta's "Results" column, not legacy fields
+Then route to the specific workflow skill.
 
-Every performance response from `adadvisor:get_performance` and `adadvisor:get_timeseries` includes both **legacy fields** (`purchases`, `leads`, `revenue`, `cpa`, `cpl`) and **canonical Results fields** (`result_count`, `result_value`, `cost_per_result`, `result_action_type`, `conversion_result_name`).
+## Show economics — the operating model
 
-**Prefer the Results fields.** They match what the user sees in Meta Ads Manager's "Results" column, which depends on each ad set's optimization goal:
+A show is a one-off event with a **fixed date** and a **fee**. There is no repeat-purchase LTV and no storefront margin. Think in:
 
-| Optimization goal | `conversion_result_name` | Legacy field that's WRONG |
-|---|---|---|
-| OFFSITE_CONVERSIONS (Purchase) | "Purchase" | use `purchases` — OK |
-| OFFSITE_CONVERSIONS (Subscribe) | "Subscribe" | `purchases`/`revenue` will be 0 |
-| OFFSITE_CONVERSIONS (Lead) | "Lead" | `purchases`/`revenue` will be 0 |
-| LEAD_GENERATION (on-platform form) | "Lead" | `leads` may be 0 if attribution mismatch |
-| Custom conversion | "Complete Registration" / custom name | both legacy fields likely 0 |
-| LANDING_PAGE_VIEWS | "Landing page view" | volume vs spend, not revenue |
+- **Cost per ticket** = ad spend ÷ tickets sold (`cost_per_ticket`; `null` when no ticket count exists — never read `null` as free).
+- **Spend share of the fee** = ad spend ÷ fee (`spend_share_of_revenue`, a percentage).
+- **Show profit after ads** — `profit` on the show already nets expenses; check it includes the ad spend (`campaign_on_row` vs `ad_spend`; a gap means someone typed a different figure by hand).
+- **The band's own history is the benchmark.** There is no industry number worth quoting for a band of this size. Rank this show against the band's other shows (`moonlight_ad_analysis` rows), and say how many shows the comparison rests on. With few shows, say "small sample".
 
-When `has_multiple_conversions=True` on a row, the entity spans mixed KPIs — inspect `kpi_breakdown` (array of per-KPI buckets sorted by volume DESC) instead of summing `result_count` across types. `kpi_breakdown` is returned in `response_format='full'`.
+Full formulas, what to do when the fee is not ticket-driven, and worked examples: [`references/economics.md`](references/economics.md).
 
-For a real example: an account optimizing for "Subscribe" (subscription business) might show `revenue: 19.99, roas: 0.05, result_count: 1, cost_per_result: 379.01, conversion_result_name: "Subscribe"`. The "ROAS 0.05" is misleading — the campaign isn't optimized for purchases, it's optimized for first-month subscription value. Report against `cost_per_result` vs an LTV-implied CPL target, not against ROAS.
+When you report a number, **pair it with the comparison**. "Cost per ticket ₪38" means nothing; "₪38 per ticket against the band's median of ₪24 over 9 shows — this one cost 58% more per ticket" is the conversation.
 
-## Naming conventions for new entities
+## What the fixed date changes
 
-When `create_campaign` is called with no `name`, the MCP auto-generates: `ADADVISOR || CBO/ABO || BOF/MOF/TOF || {strategy} || {business} || {date}`. Ad sets auto-generate: `ADADVISOR || {audience_type} || {summary} || {geo} || {demographics} || AUTO`. **Prefer auto-generated names** when launching multiple entities — they're predictable and grepable.
+Upstream's rules assume an always-on account that can wait 3–5 days for signal and scale 20% at a time. A show has a deadline, so:
 
-Override when the user has an existing naming convention (look at `list_campaigns` results to detect — e.g., `WSO ||`, `MCP ||`, `ADADVISOR ||` prefixes). Match the existing pattern.
+- **The runway is the constraint.** Always compute days until the show first. A decision that is right for an evergreen campaign (wait a week, scale slowly) can be wrong with ten days left.
+- **Late spend sells fewer tickets.** The daily curve (`moonlight_campaigns` with `campaign_id`) says whether money went out early enough. A campaign that spent most of its budget in the last 3 days reads very differently from one that ramped over three weeks.
+- **A campaign still spending after the show** (`spending_after_show`) is money with no event to sell. Flag it as an action: pause it in Ads Manager.
 
-## Currency and units
+Still true: do not kill or scale on one day of data, and small budgets are noisy. Defer to `adadvisor-diagnose` for the kill and scale rules and apply them with the runway in mind.
 
-All budget params and budget responses are in **major units** in account currency (e.g. `daily_budget: 50.0` for $50/day in USD, ¥50 in JPY, $50.000 in KWD). The MCP server converts to Meta's minor units (cents) internally. **Never** write `daily_budget: 5000` thinking in cents — the server will treat that as $5,000/day.
+## Common mistakes (avoid these)
 
-Each list/performance response includes a `currency` field and a `_units` legend. Trust those.
-
-## Status invariant — everything starts PAUSED
-
-Every entity returned by `create_campaign`, `create_adset`, `create_ad`, `create_creative`, `create_lead_form`, and the `duplicate_*` tools defaults to `status: "PAUSED"`. **Always** activate explicitly via `adadvisor:change_entity_status(entity_type, entity_ids=[id], action='resume')`.
-
-Activation does NOT cascade. If you create a campaign + ad set + ad in one flow and only resume the ad, the ad is still off because the parent ad set and campaign are paused. Activate from the leaf up: ad → ad set → campaign. The MCP tools' `next_steps` strings list the exact calls.
-
-## Mutation safety
-
-- **`change_entity_budget` rejects changes >2× or <0.5× of the current value.** Pass `force=True` to override, or split into staged changes (e.g. 1.5× then 1.3× over two days). Resetting learning is real cost.
-- **`change_entity_status` and `change_entity_budget` are idempotent.** Re-applying the same action / value succeeds without side effects.
-- **`create_*` and `duplicate_*` are NOT idempotent.** Each call creates a new entity. If a call fails partway through a batch, inspect `errors[]` before retrying — the successful entities are real.
-- **Token-expiry errors (Meta code 190)** mean the user must reconnect their Meta account via the AdAdvisor app. The MCP can't refresh tokens silently.
-
-## Common LLM mistakes (avoid these)
-
-- **Calling `get_performance` before reading the context resource.** You can't tell the user whether their ROAS is good without knowing their break-even.
-- **Treating Subscribe / Lead campaigns by `purchases`.** That field is 0. Use `result_count`.
-- **Confusing `daily_budget` with `lifetime_budget`.** They're mutually exclusive per entity. Lifetime budgets require `stop_time`/`end_time`.
-- **Activating a single ad and reporting "campaign is live".** Activation doesn't cascade — check the parent ad set and campaign too.
-- **Making one-day decisions on small budgets.** Meta needs 3–5 days of stable signal. 24-hour calls on $50/day budgets are noise. Defer to `adadvisor-diagnose` for the kill/scale rules.
-- **Reusing image hashes from a previous session.** Image hashes are conversation-scoped — must come from `search_ad_images` or `complete_upload` in the current conversation.
-- **Forgetting `conversion_domain` on `create_ad`.** Required for pixel-tracked campaigns (Meta subcode 2490408). Format: registrable second-level domain like `'example.com'`, not the full URL.
-- **Calling Meta API directly.** Don't `curl https://graph.facebook.com/...`. Every interaction goes through the MCP — it handles auth, retries, currency, and audit logging.
+- **Quoting ROAS, CPA, CPL or `result_count`.** None of them exist in this data. Do not compute a ROAS from the fee — the fee is not revenue attributed to ads.
+- **Attributing tickets to ads.** Mapping a campaign to a show says the money was *for* that show, not that it *caused* the tickets. Say "spend against tickets", not "ads sold N tickets".
+- **Trusting per-show numbers with unmapped spend outstanding.** Check `unmapped_spend` first.
+- **Claiming you paused, changed or created something.** You cannot.
+- **Calling Meta's Graph API directly** or asking for the token. Everything goes through the MCP tools; the token never leaves the app.
+- **Reading `spend` as the account currency.** It is already ILS; `spend_original` is in `currency`.
+- **Judging a live campaign by its show's profit.** The show has not happened; its tickets and fee are incomplete.
 
 ## When to chain to another skill
 
 | User says | Load |
 |---|---|
-| "audit my account", "take over this account", "what's wrong" | `adadvisor-audit` |
-| "CPA went up", "ROAS dropped", "what happened", "diagnose" | `adadvisor-diagnose` |
-| "launch", "create a campaign", "set up", "build me a campaign" | `adadvisor-launch` |
-| "scale", "increase budget", "winner", "expand" | `adadvisor-scale` |
-| "test ads", "creative", "refresh", "fatigue", "what to make next" | `adadvisor-creative` |
-| "audience", "lookalike", "retargeting", "interests", "exclude" | `adadvisor-targeting` |
-| "BFCM", "Black Friday", "product launch", "lead gen", "banned account", "recovery" | `adadvisor-playbooks` |
+| "review my campaigns", "how are the ads doing overall", "what's wrong" | `adadvisor-audit` |
+| "cost per ticket went up", "this campaign isn't working", "should I stop this" | `adadvisor-diagnose` |
+| "plan a campaign for the show on…", "set up ads for…" | `adadvisor-launch` |
+| "this one is working, should I put more in" | `adadvisor-scale` |
+| "what should the ad say", "new creative", "the ads are stale" | `adadvisor-creative` |
+| "who should I target", "lookalike", "retargeting" | `adadvisor-targeting` |
+| "plan the weeks before the show", "festival run", "account got restricted" | `adadvisor-playbooks` |
 
-If the request spans multiple — e.g. "audit my account and tell me what to scale" — load both, then run audit first, then scale.
+If the request spans several — "review the campaigns and tell me what to put more money into" — load both, audit first, then scale.
+
+## Extending the connection
+
+If advice keeps stopping at a limit above, the right fix is in the app, not a different server: `app/server/metaClient.ts` already pages the Graph API and can read ad sets (`/adsets`), ad-level insights, and results (`actions`, `cost_per_action_type`) under the same `ads_read` scope, still read-only. That is a code change in this repo — propose it to the user with what it would unlock; do not make it as part of answering a campaign question.
 
 ## References
 
-- [`references/mcp-tool-cheatsheet.md`](references/mcp-tool-cheatsheet.md) — one-line summary of every AdAdvisor MCP tool with its typical use-case.
-- [`references/economics.md`](references/economics.md) — break-even ROAS, MER, LTV:CAC, payback period — the senior buyer's math.
-- [`references/kpi-decoder.md`](references/kpi-decoder.md) — Meta optimization goals → `conversion_result_name` mapping, when legacy fields lie.
-- [`references/currency-and-units.md`](references/currency-and-units.md) — zero-decimal, two-decimal, three-decimal currencies; budget format gotchas.
-- [`references/mutation-safety.md`](references/mutation-safety.md) — idempotency table, the 2× guardrail, how to handle partial-failure batch responses.
+- [`references/mcp-tool-cheatsheet.md`](references/mcp-tool-cheatsheet.md) — every `adadvisor:<tool>` the other skills mention, mapped to what this connection offers (or "not available").
+- [`references/economics.md`](references/economics.md) — cost per ticket, spend share, the runway, worked examples.
+- [`references/kpi-decoder.md`](references/kpi-decoder.md) — which numbers exist in this data and what each one can and cannot say.
+- [`references/currency-and-units.md`](references/currency-and-units.md) — ILS conversion and the `spend` / `spend_original` pair.
+- [`references/mutation-safety.md`](references/mutation-safety.md) — the read-only rule and how to write an instruction for Ads Manager.
 
 ## Anti-patterns
 
-- ❌ Quoting "ROAS 4.2×" with no business context. ✅ "ROAS 4.2× against your 3.3× break-even — profitable, but margin is thinner than the 5× target we'd usually scale on."
-- ❌ "I'll create a campaign with daily_budget: 5000." (means $5,000/day, not $50/day). ✅ "Creating with `daily_budget: 50.0` in USD per your account currency."
-- ❌ Recommending "kill this campaign" after one bad day. ✅ "Spend is ~1.2× target CPA for one day — that's noise. Check again in 72 hours; kill threshold is 3× target CPA with zero conversions."
-- ❌ Calling `create_ad` without `conversion_domain` on a pixel-optimized campaign. ✅ Read the parent campaign's objective; if `OUTCOME_SALES`, pass `conversion_domain` matching the destination URL's domain.
-- ❌ Telling the user "campaign is active" after resuming the campaign but not the ad set or ad. ✅ Resume from leaf upward; confirm each level via the response's `state_after`.
+- ❌ "Cost per ticket is ₪38." ✅ "₪38 per ticket against the band's median of ₪24 across 9 shows — the most expensive show this year."
+- ❌ "I'll pause that campaign now." ✅ "In Ads Manager, pause campaign *<name>* — it is still spending ₪40/day and the show was on 12 March."
+- ❌ "Your ROAS is 3.1×." ✅ "Meta's data here has no conversions, so no ROAS. Against the books: ₪6,200 of ads for 140 tickets."
+- ❌ Judging an ad set or a creative. ✅ "I can only see campaign level. Paste the ad-set breakdown from Ads Manager, or I can propose reading it into the app."
+- ❌ Ranking the shows when a third of the spend is unmapped. ✅ "₪4,100 of ₪11,800 is on campaigns no show claims. Map those first, otherwise every figure below is low."

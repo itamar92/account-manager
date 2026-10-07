@@ -1,133 +1,82 @@
-# Unit economics for Meta ad decisions
+# Show economics — what "good" means for a band's ads
 
-Every kill, scale, hold, or launch decision is a function of unit economics, not "good ROAS." Internalize these formulas — they make the decision rules in the skills brand-agnostic and parametric.
+Upstream's economics assume an online shop: contribution margin, break-even ROAS, AOV, LTV. None of that applies. This band sells **tickets to dated shows** and the books already say what each one earned. Every decision here is a function of these numbers.
 
-## The five numbers that matter
+## The numbers that matter
 
-| Number | Where to get it | What it tells you |
+| Number | Where it comes from | What it tells you |
 |---|---|---|
-| **Contribution margin %** | User OR derived | What you keep per dollar of revenue after COGS, shipping, fulfillment, payment processing, returns |
-| **Break-even ROAS** | `business.break_even_roas` from the context resource | The revenue-per-dollar-spent that exactly covers ad spend — no profit, no loss |
-| **Target ROAS** | Break-even × profit-margin multiple | The ROAS at which scaling makes sense |
-| **AOV** | `business.average_order_value` from context | Average revenue per order; used to derive target CPA |
-| **LTV** | User-provided (rare on context) | Lifetime customer value; used for subscription / repeat-purchase math |
-
-## Formulas
-
-```
-break_even_ROAS  = 1 / contribution_margin
-target_ROAS      = break_even_ROAS × (1 + desired_profit_margin)
-target_CPA       = AOV × contribution_margin × (1 / target_ROAS_multiplier)
-                 = AOV / target_ROAS
-target_CPL       = (lead_to_customer_rate × LTV × contribution_margin) - margin_buffer
-MER              = total_revenue / total_marketing_spend
-LTV:CAC          = LTV / CAC; healthy ≥ 3:1, elite ≥ 5:1
-CAC_payback      = CAC / monthly_contribution_per_customer
-```
-
-## Worked examples
-
-### Ecom DTC, 30% contribution margin, $100 AOV, target 30% profit
+| **Ad spend (per show)** | `moonlight_ad_analysis` → `ad_spend` (from the campaign↔show mapping) | What Meta charged for the show's promotion |
+| **Tickets** | `moonlight_ad_analysis` → `tickets` (from the books) | What the show sold |
+| **Fee** | `revenue` (pre-VAT) | What the show earned |
+| **Cost per ticket** | `cost_per_ticket` | Ad spend ÷ tickets. `null` when no ticket count — never "free" |
+| **Spend share of the fee** | `spend_share_of_revenue` (%) | How much of the fee the ads consumed |
+| **Show profit** | `profit` | After all of the show's expenses |
+| **Runway** | show `date` − today | Days left to sell; the real constraint |
 
 ```
-break_even_ROAS = 1 / 0.30                  = 3.33×
-target_ROAS     = 3.33 × 1.3                = 4.33×
-target_CPA      = $100 / 4.33               = $23
+cost_per_ticket        = ad_spend / tickets
+spend_share_of_fee     = ad_spend / fee × 100
+ads_per_profit_shekel  = ad_spend / profit          (when profit > 0)
+band_median_cpt        = median(cost_per_ticket over shows with ad_spend > 0 and tickets > 0)
 ```
 
-Kill if ROAS < 0.8 × 3.33 = 2.66× for 3+ days. Scale if ROAS ≥ 4.33 × 1.2 = 5.2× for 3+ days.
+## There is no break-even ROAS here — build the benchmark from the band's own history
 
-### Ecom DTC, 50% contribution margin, $80 AOV, target 25% profit
+No industry cost-per-ticket figure is worth quoting for a band of this size and genre. The benchmark is the band's own shows:
 
-```
-break_even_ROAS = 1 / 0.50                  = 2.00×
-target_ROAS     = 2.00 × 1.25               = 2.50×
-target_CPA      = $80 / 2.50                = $32
-```
+1. Take every show in the period with `ad_spend > 0` and `tickets > 0` from `moonlight_ad_analysis`.
+2. Compute the **median** cost per ticket and the **median** spend share. Report how many shows the median rests on.
+3. Judge a show against that: better or worse than the median, and by how much.
+4. **Fewer than ~5 comparable shows → say "small sample"** and give the comparison as indicative, not a rule.
 
-### B2B SaaS, $50 MRR, 12-month gross retention, 80% margin, 6-month payback target
+A show whose fee is a **flat guarantee** (the same whatever the ticket count) is not "earning" more per ticket sold — the ads buy a fuller room (and the venue relationship), not more fee. Ask which kind of fee the show has before treating tickets as revenue. If you cannot tell, give the cost-per-ticket view and say the revenue view depends on it.
 
-```
-12-mo LTV       = $50 × 12 × 0.80           = $480
-target CAC      = $480 / 6 × 2              = $160 (matched payback / 2 for buffer)
-```
+## What counts as clearly bad (no benchmark needed)
 
-If pixel-tracked as a "Subscribe" event, `cost_per_result` from the MCP corresponds to CAC.
+- **Spend share of the fee ≥ 100%** — the ads cost more than the show paid. Always flag.
+- **Spend with zero tickets** (`tickets` = 0, `ad_spend` > 0 on a show that already happened).
+- **A campaign still spending after the show** (`spending_after_show` > 0 on a settled show) — pause it.
+- **Spend on unmapped campaigns** — not "bad", but unaccounted: every per-show figure is low by that amount.
 
-### Subscription, $19.99 first-month, LTV $200, 50% margin
+Anything between those and the band's median is a judgement; say it is one.
 
-```
-break_even on first-month   = $19.99 × 0.50 = $9.99 (you lose money on month 1)
-LTV gross profit            = $200 × 0.50   = $100
-target CAC                  = $100 / 2      = $50 (50% payback ratio)
-```
+## Spend ≠ cause
 
-Don't look at ROAS for subscription. Look at `cost_per_result` (the Subscribe event) against the LTV-implied target CAC.
+Mapping a campaign to a show says the money was *for* that show. It does not say the ads *sold* the tickets — word of mouth, the venue's own audience, and earlier shows' fans sell tickets too. Say "spend against tickets", never "the ads sold N tickets". The signal is comparative: this show cost more or less per ticket than the others, not that ads are or are not worth it in absolute terms.
 
-## MER vs blended ROAS
+## The runway changes the decision
 
-**MER (Marketing Efficiency Ratio)** = Total Revenue / Total Marketing Spend, including organic, retargeting, brand, every channel.
+Upstream waits 3–5 days for signal and scales 20% at a time. With a fixed date:
 
-Most mature DTC brands target 3.0×-5.0× MER (ATTN Agency, Foxwell, MHI). MER is the company-level number; ROAS is the campaign-level number. **At scale (>$5K/day), MER tells you more than ROAS** — it captures the cannibalization between paid and organic, retargeting and brand, that per-campaign ROAS hides.
-
-Peter Quadrel's 2026 caveat: separate **new-customer MER** from blended MER. Blended averages a $200 new CAC with $20 retargeting CPA and calls it "efficiency" — masking that you're not actually acquiring new customers efficiently.
-
-## The iceberg
-
-> "ROAS tells you how efficiently you're buying revenue. Contribution margin tells you how much of that revenue you actually keep." — Ciaran Finn
-
-A 4× ROAS on 20% contribution-margin product is silently going broke. Always pair ROAS with margin in user-facing reports.
-
-## Lead-gen flips the math
-
-For OUTCOME_LEADS campaigns, ROAS is meaningless. Use CPL vs target_CPL:
-
-```
-target_CPL = (lead_to_customer_rate × deal_value × margin) / desired_payback_ratio
-```
-
-Example: 5% lead-to-customer rate, $5,000 deal value, 60% gross margin, 6-month payback target:
-
-```
-target_CPL = (0.05 × $5,000 × 0.60) / 6_months_of_revenue_per_customer_per_month
-           ≈ $150
-```
-
-If `business.target_cpl` is set on the context resource, use it. If null, ask the user.
-
-## Decision thresholds tied to economics
-
-| Action | Threshold |
+| Days to the show | What it means |
 |---|---|
-| Kill (ecom) | ROAS < 0.5 × break-even for 3+ days |
-| Kill (lead-gen) | CPL > 1.5 × target_CPL for 3+ days with ≥10 leads |
-| Hold (ecom) | ROAS in [0.8× break-even, 1.2× target] — within variance |
-| Hold (lead-gen) | CPL in [target, 1.3 × target] — re-check in 48h |
-| Scale (ecom) | ROAS ≥ 1.2 × target for 3+ consecutive days |
-| Scale (lead-gen) | CPL ≤ 0.9 × target for 3+ consecutive days |
+| > 21 | Time to test: run the creative and audience tests in `adadvisor-creative` / `-targeting`; scale in steps. |
+| 7–21 | Commit: the best campaign gets the budget; limited room to learn. Decide on 2–3 days of data, not 5. |
+| < 7 | Last push: retargeting people who already engaged, and a hard stop on anything not converting. No new tests. |
+| show passed | The campaign is history — the only action is to stop it. The numbers are for next time. |
 
-All assume the entity is past learning (≥50 conversions / 7 days). In learning, give it time before any decision.
+Always state the runway before recommending anything.
 
-## Cohort & new-customer rate
+## The curve says more than the total
 
-A "scaling winner" that's actually retargeting existing customers won't survive vertical scale. Senior buyer's check: what % of conversions are new customers vs returning?
+`moonlight_campaigns` with a `campaign_id` returns daily spend. Read it against the show date:
 
-The MCP doesn't surface new-customer rate directly. Use one of:
+- **Ramped early** (spend spread over weeks) → had time to reach people; a poor result is about the offer or audience.
+- **Spent late** (most of the money in the final days) → a timing problem; the cost per ticket is not a fair verdict on the creative.
+- **Flat and thin** → under-funded; the result says nothing either way.
 
-- Custom-event tracking ("first_purchase" event fired only on first purchase, separately from "Purchase")
-- Shopify / DB-side cross-reference outside the MCP
-- Proxy via creative type — retargeting creatives optimize on returning customers by definition
+## Worked example (illustrative numbers)
 
-Curtis Howland's framing (LinkedIn 2026): "**Net New Reach**" — % of impressions delivered to people who haven't interacted with the brand. Falling Net New Reach forecasts ROAS decline before CPA moves.
+Band history, 9 shows with spend and tickets: median cost per ticket **₪24**, median spend share **11%**.
 
-## When the user has no margin number
+Show at *The Venue*, 12 March: ad spend ₪3,420, 90 tickets, fee ₪18,000.
 
-If the user doesn't know their contribution margin, ask. If they can't give a clean answer, derive from gross margin minus reasonable fixed/variable costs:
+```
+cost_per_ticket    = 3,420 / 90        = ₪38     (median ₪24 → +58%)
+spend_share_of_fee = 3,420 / 18,000    = 19%     (median 11%)
+```
 
-- Apparel: 60-70% gross margin → 30-40% contribution after fulfillment / returns
-- Beauty / supplements: 70-80% gross → 40-50% contribution
-- Electronics: 30-50% gross → 15-30% contribution
-- Subscription / SaaS: 80-90% gross → 60-80% contribution (low fulfillment)
-- Furniture: 40-60% gross → 20-30% contribution (high shipping)
+Daily curve: ₪300 in the final 4 days of an 18-day run, ₪80 over the first 14.
 
-These are coarse — push the user to verify, but unblock the decision conversation.
+Read: expensive per ticket and heavy against the fee, **but** most of the money went out in the last 4 days at premium late-auction rates. This is a timing problem before it is a creative problem. Next show: start spending at least three weeks out, at a steady rate. Do not conclude that the audience or creative failed — the data cannot show that at campaign level.

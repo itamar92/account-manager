@@ -1,10 +1,20 @@
 ---
 name: adadvisor-targeting
 description: |
-  Meta audience and targeting strategy — broad-first prospecting, lookalike tiers, retargeting funnels, custom-audience creation, exclusion logic. Wraps the AdAdvisor MCP's search_targeting, estimate_audience_size, list_custom_audiences, create_website_audience, create_lookalike_audience, and update_adset_targeting tools. Use when: "audience", "lookalike", "lal", "retargeting", "interests", "exclude", "custom audience", "broad targeting", "audience size", "who should I target", "estimate reach", "build a lookalike", "exclude purchasers", "audience overlap". Chain with: adadvisor (always); adadvisor-launch when targeting is part of a new campaign; adadvisor-scale when expanding horizontally. NOT for: account audits (use adadvisor-audit); copy-driven targeting (use adadvisor-creative); customer-list upload (done in-app).
+  Meta audience and targeting strategy — broad-first prospecting, lookalike tiers, retargeting funnels, custom-audience creation, exclusion logic. Strategy and exact audience definitions for the user to build in Ads Manager. Use when: "audience", "lookalike", "lal", "retargeting", "interests", "exclude", "custom audience", "broad targeting", "audience size", "who should I target", "estimate reach", "build a lookalike", "exclude purchasers", "audience overlap". Chain with: adadvisor (always); adadvisor-launch when targeting is part of a new campaign; adadvisor-scale when expanding horizontally. NOT for: account audits (use adadvisor-audit); copy-driven targeting (use adadvisor-creative); customer-list upload (done in-app).
 license: Apache-2.0
-version: 0.1.0
+version: 0.1.0-account-manager
 ---
+
+> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `moonlight_campaigns`, `moonlight_ad_analysis`, `moonlight_shows`, `moonlight_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
+>
+> - Load the `adadvisor` foundation skill first; it defines the data limits and the show economics.
+> - Wherever this skill says `adadvisor:<tool>`, translate it with `../adadvisor/references/mcp-tool-cheatsheet.md`. A **read** maps to a campaign-level tool or is *not available*; a **write** becomes **an instruction for the user to carry out in Ads Manager** (`../adadvisor/references/mutation-safety.md`) — never claim it was done.
+> - Replace break-even ROAS / target CPA / AOV with the band's own cost-per-ticket history (`../adadvisor/references/economics.md`). The show date sets the runway; always state it.
+> - Where a step needs something this connection cannot see (ad set / ad data, pixel, frequency by day, copy), say what is missing and ask the user to paste it from Ads Manager. Do not guess.
+> - Everything below describes the method; the method is sound, the tool calls are not available as written.
+>
+> **For this skill:** audiences, reach estimates and targeting specs cannot be read or created. Treat this as **strategy only**: recommend the audience approach (broad vs interests, lookalike seeds and tiers, retargeting windows, exclusions) and write the exact definitions for the user to build in Ads Manager, then ask them to confirm the estimated reach there before spending. For a local show, geography and the radius around the venue matter more than most upstream examples assume.
 
 # AdAdvisor — Audience & Targeting Strategy
 

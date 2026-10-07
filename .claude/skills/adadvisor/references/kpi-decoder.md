@@ -1,144 +1,48 @@
-# KPI decoder — which Meta number to trust
+# KPI decoder — which numbers exist here and what they can say
 
-The MCP's `get_performance` and `get_timeseries` responses include both **legacy fields** and **canonical Results fields**. Legacy fields are correct for some optimization goals and wrong for others. This reference tells you which to use, when.
+Upstream's decoder is about Meta's "Results" columns (`result_count`, `cost_per_result`, `purchases`, `roas`…). **None of those are in this data.** The sync pulls five fields per campaign per day (`app/server/metaClient.ts` → `fetchDailyCampaignInsights`): `spend`, `impressions`, `clicks`, `reach`, plus the campaign's `status` and `objective`. This file says what each can and cannot support.
 
 ## The fields
 
-Every row from `get_performance(level='campaign'|'adset'|'ad')` and every day from `get_timeseries(entity_type=...)` contains:
-
-| Field | Source | Meaning |
-|---|---|---|
-| `result_count` | Meta canonical | The "Results" column volume — count of the entity's primary optimization event |
-| `result_value` | Meta canonical | Total value attributed to those results (when applicable, e.g. revenue for Purchase) |
-| `cost_per_result` | Meta canonical | Spend / `result_count` |
-| `result_action_type` | Meta canonical | The raw event string (e.g. `offsite_conversion.fb_pixel_purchase`, `subscribe_website`, `lead`) |
-| `conversion_result_name` | MCP-humanized | Display string ("Purchase", "Subscribe", "Lead") |
-| `purchases` | Legacy | Count of Purchase pixel events — 0 if optimization isn't Purchase |
-| `leads` | Legacy | Count of Lead pixel events — 0 if optimization isn't Lead |
-| `revenue` | Legacy | Sum of Purchase event values — 0 if no Purchase events |
-| `cpa` | Legacy | Spend / `purchases` — wrong if optimization isn't Purchase |
-| `cpl` | Legacy | Spend / `leads` — wrong if optimization isn't Lead |
-| `roas` | Legacy | `revenue` / spend — wrong if not Purchase-optimized |
-
-`has_multiple_conversions: true` means the entity (often a multi-ad-set campaign or a campaign with mixed objectives) spans multiple KPIs. In that case, `result_count` aggregates across types and **misleads**. Inspect `kpi_breakdown` (array of per-KPI buckets sorted by volume DESC, returned in `response_format='full'`) instead.
-
-## Mapping — optimization goal → which field to trust
-
-| Optimization goal | `conversion_result_name` | Use this | Don't use this |
+| Field | Level | Meaning | Caution |
 |---|---|---|---|
-| OFFSITE_CONVERSIONS (Purchase) | "Purchase" | `result_count` / `revenue` / `roas` | — |
-| OFFSITE_CONVERSIONS (Subscribe) | "Subscribe" | `result_count` / `cost_per_result` | `revenue` / `roas` (will be 0) |
-| OFFSITE_CONVERSIONS (Lead) | "Lead" | `result_count` / `cost_per_result` | `revenue` / `roas` (will be 0) |
-| OFFSITE_CONVERSIONS (ViewContent / AddToCart / InitiateCheckout / CompleteRegistration / StartTrial / Schedule) | varies | `result_count` / `cost_per_result` | `purchases` / `revenue` (will be 0) |
-| LEAD_GENERATION (Meta on-platform forms) | "Lead" | `result_count` / `cost_per_result` | `leads` field (may diverge due to attribution differences) |
-| LANDING_PAGE_VIEWS | "Landing page view" | `result_count` (volume) — use against spend, not target_CPA | revenue/ROAS (n/a) |
-| LINK_CLICKS | "Link click" | `clicks`, `ctr` | revenue/ROAS (n/a) |
-| IMPRESSIONS / REACH | "Impressions" / "Reach" | `impressions` | everything monetary |
-| THRUPLAY (video) | "ThruPlay" | `result_count` | revenue/ROAS (n/a) |
-| VALUE (LOWEST_COST_WITH_MIN_ROAS) | "Purchase" / "Subscribe" | `result_value` / `roas` | — |
+| `spend` | campaign / day | Money spent, **already converted to ILS** | `spend_original` + `currency` are the untouched figures |
+| `impressions` | campaign / day | Times the ads were shown | |
+| `clicks` | campaign / day | **All** clicks (reactions, expands, profile, link) — not link clicks | Overstates the click to the ticket page |
+| `reach` | campaign, lifetime | Unique people reached | Not additive across days or campaigns |
+| `status` | campaign | `ACTIVE`, `PAUSED`, `ARCHIVED`… | Says what it is now, not what it was |
+| `objective` | campaign | Meta's campaign objective | Tells you what Meta optimised for — which sets what the other numbers mean |
 
-## Worked examples
+## Derived metrics
 
-### Example 1 — Subscription ($19.99/mo product)
+| Metric | Formula | Fair for |
+|---|---|---|
+| CPM | spend ÷ impressions × 1000 | Comparing campaigns' cost of attention; rises as the show nears and in competitive weeks |
+| CTR (all clicks) | clicks ÷ impressions | Ranking campaigns against each other — **not** against published CTR benchmarks, which use link clicks |
+| CPC (all clicks) | spend ÷ clicks | Same |
+| Frequency (lifetime) | impressions ÷ reach | A rough read on saturation. ≳ 4–5 over a short run is a prompt to look, not a verdict; it is not daily |
+| Cost per ticket | spend ÷ tickets *(tickets from the books)* | The headline. Not an attributed conversion cost |
 
-Performance row:
-```
-{
-  "name": "WSO || Subscribe || RET || CBO",
-  "spend": 293.20,
-  "revenue": 49.99,
-  "roas": 0.17,
-  "purchases": 1,           ← misleading
-  "cpa": 293.20,            ← misleading
-  "result_count": 1,
-  "result_action_type": "subscribe_website",
-  "conversion_result_name": "Subscribe",
-  "cost_per_result": 293.20
-}
-```
+## The objective sets the meaning
 
-Report to user: "1 subscription at $293/CAC. Against an LTV-implied target CAC of ~$50 (LTV $200, 50% margin, 50% payback target), this is bleeding."
+Because there are no results columns, **read `objective`** before judging a campaign's clicks and reach:
 
-NOT: "ROAS 0.17, kill it" — that's the wrong frame for a subscription business.
+| `objective` | What Meta was buying | So judge by |
+|---|---|---|
+| `OUTCOME_AWARENESS` | Reach / impressions | CPM and reach. Clicks are incidental; a low CTR is expected, not a failure. |
+| `OUTCOME_TRAFFIC` | Link clicks / landing page views | CPC and CTR. Whether those clicks became tickets is a question for the books and the ticket page, not for this data. |
+| `OUTCOME_ENGAGEMENT` | Reactions, shares, event responses | Engagement is not visible here; CPM and reach only. |
+| `OUTCOME_LEADS` / `OUTCOME_SALES` | Leads / purchases | Meta optimised for conversions this data does not contain. Cost per ticket against the books is the only verdict available — and cannot say which ad set drove it. |
+| older `LINK_CLICKS`, `REACH`, `CONVERSIONS` | Same ideas, old names | As above |
 
-### Example 2 — Pure ecom (Purchase optimization)
+Mismatch to flag: an awareness campaign judged on clicks, or a traffic campaign judged on reach.
 
-Performance row:
-```
-{
-  "spend": 1200.00,
-  "revenue": 4800.00,
-  "roas": 4.0,
-  "purchases": 48,
-  "cpa": 25.00,
-  "result_count": 48,
-  "conversion_result_name": "Purchase"
-}
-```
+## What this data cannot say — say so, do not guess
 
-Either set of fields works here — `purchases`/`revenue`/`roas` and `result_count`/`result_value` will match.
+- **Whether a click became a ticket.** No conversion tracking comes through. Tickets are in the books only.
+- **Which ad set, audience, placement or creative did well.** Campaign level only.
+- **Hook rate, hold rate, creative fatigue.** Not computable.
+- **Learning-phase status** and **attribution window.** Not in the data. The upstream references `learning-phase.md` and `attribution-windows.md` describe how Meta behaves; use them as background on what the user will see in Ads Manager, not as something you can verify here.
+- **ROAS.** Never compute one from the fee: the fee is not revenue attributed to ads.
 
-### Example 3 — Awareness campaign
-
-Performance row:
-```
-{
-  "spend": 500.00,
-  "revenue": 0,
-  "roas": 0,
-  "purchases": 0,
-  "result_count": 156000,
-  "result_action_type": "impressions",
-  "conversion_result_name": "Impressions",
-  "cost_per_result": 0.0032
-}
-```
-
-Report: "$500 spend / 156,000 impressions = $3.21 CPM. That's slightly elevated but the campaign objective is awareness — revenue/ROAS aren't applicable."
-
-### Example 4 — `has_multiple_conversions: true`
-
-```
-{
-  "name": "ACC level rollup",
-  "spend": 5000,
-  "result_count": 130,        ← sum across types, misleading
-  "has_multiple_conversions": true,
-  "kpi_breakdown": [
-    {"result_action_type": "offsite_conversion.fb_pixel_purchase", "result_count": 90, "result_value": 3600, "cost_per_result": 33.3},
-    {"result_action_type": "subscribe_website", "result_count": 40, "result_value": 800, "cost_per_result": 50.0}
-  ]
-}
-```
-
-Report by bucket: "90 purchases at $33.3 CAC; 40 subscriptions at $50 CAC. Don't sum — they're different KPIs."
-
-## The "modeled conversions" caveat
-
-For iOS 14.5+ traffic, Meta uses statistical modeling to fill the attribution gap. The fields above include modeled conversions by default. They are not "fake" but they are not deterministic — a 7-day-click ROAS of 4.0 on modeled data might be 2.5 on 1-day-click data.
-
-Cross-check matters:
-- **Shopify / DB orders** = ground truth for ecom.
-- **Triple Whale / Northbeam** = multi-touch view; usually 30-50% lower ROAS than Meta-reported.
-- **GA4 with UTMs** = alternate frame; usually undercounts.
-
-If Meta-reported revenue ÷ Shopify revenue is:
-- 0.4 - 0.8: normal (Meta over-attributes to itself via view-through)
-- > 1.0: deduplication bug in pixel/CAPI
-- < 0.3: pixel or CAPI broken
-
-## Attribution window
-
-Default is `7d_click + 1d_view`. Meta optimizes to whatever window you report. The MCP doesn't expose per-request window selection — what you see is what Meta returns at the account's default. Note Meta's 2026 attribution overhaul:
-
-- View-through being phased into "engaged-view" (1-day)
-- Click-attribution window is the dominant signal for buyers in 2026 (Mitch Barham, LinkedIn 2026)
-- Expect click-based ROAS numbers to drop and "engaged-view" to fill in — re-baseline targets when the change rolls out fully
-
-## Quick reference
-
-If you're not sure which field to use:
-1. Check `result_action_type` and `conversion_result_name`.
-2. If `conversion_result_name = "Purchase"`, the legacy fields are fine.
-3. Otherwise, use `result_count` and `cost_per_result`.
-4. If `has_multiple_conversions: true`, decompose via `kpi_breakdown`.
+When a skill step needs one of these, ask the user to paste it from Ads Manager (columns: Results, Cost per result, Frequency, Link clicks; breakdown by ad set / ad) and say which step you are unblocking.

@@ -1,96 +1,64 @@
-# AdAdvisor MCP — Tool Cheatsheet
+# Tool cheatsheet — upstream `adadvisor:*` tools → this connection
 
-A one-line per-tool summary. Use this to look up *which* tool to call; use the MCP's `inputSchema` for parameter details. Tools are referenced as `adadvisor:<name>` in SKILL.md prose.
+The other `adadvisor-*` skills were written for the adadvisor.ai MCP server (~33 tools, reads **and** writes). This project does not use it. Use this table to translate every `adadvisor:<tool>` the skills mention.
 
-## Discovery & reads
+**Rule of thumb:** a *read* maps to one of the `account-manager` tools below, at **campaign level only**; a *write* has no equivalent and becomes **an instruction for the user to do in Ads Manager** (see `mutation-safety.md`).
 
-| Tool | What it does | When to call |
+## What exists
+
+| Tool | Arguments | Returns |
 |---|---|---|
-| `adadvisor:list_ad_accounts` | All accessible Meta ad accounts with pixel summary | First call of every session |
-| `adadvisor:list_pages` | Facebook Pages reachable from an ad account | Before `create_lead_form`; verify ADVERTISE + MANAGE_LEADS tasks |
-| `adadvisor:list_campaigns` | Campaigns with config (no metrics) | "What campaigns do I have"; before mutation |
-| `adadvisor:list_adsets` | Ad sets with targeting + config | After picking a campaign; inspecting targeting before update |
-| `adadvisor:list_ads` | Ads with creative info | "Which ads are running" |
-| `adadvisor:get_performance` | Aggregated KPIs at campaign/adset/ad level over a date range | Performance analysis, audit, diagnosis |
-| `adadvisor:get_timeseries` | Daily metrics for a single entity | Trend analysis, fatigue detection, learning-phase tracking |
-| `adadvisor:get_pixel_health` | Pixel metadata, event counts, source breakdown | Audit step 1; before trusting performance data |
-| `adadvisor:search_targeting` | Find valid targeting IDs (interests, geo, behaviors, income, life events, industries, work positions/employers, locale) | Before `create_adset`/`update_adset_targeting` whenever using interests/geo |
-| `adadvisor:estimate_audience_size` | Reach estimate for a targeting spec | Before committing to an ad-set audience |
-| `adadvisor:list_custom_audiences` | Existing custom audiences (CUSTOM, LOOKALIKE, WEBSITE, ENGAGEMENT, IG_BUSINESS) | When user mentions audiences by name |
-| `adadvisor:list_creatives` | Existing ad creatives | For reuse via `create_ad(creative_id=...)` |
-| `adadvisor:search_ad_images` | Find uploaded images by name/hash (visual picker) | Before `create_creative(format='image_link')` |
-| `adadvisor:search_ad_videos` | Find uploaded videos by name (visual picker) | Before `create_creative(format='video')` |
-| `adadvisor:preview_existing_creatives` | Preview creatives that share an asset, with engagement | Before `create_creative` — preserve social proof if it exists |
+| `moonlight_campaigns` | none · `campaign_id` · `unmapped_only` | All campaigns with status, objective, spend (ILS), `spend_original` + `currency`, impressions, clicks, reach, first/last spend date, mapped shows (`events[]` with `share` and `attributed` spend), `suggestions[]` for unmapped ones. With `campaign_id`: `daily[]` of `{date, spend, impressions, clicks}`. |
+| `moonlight_ad_analysis` | `from`, `to` (`YYYY-MM-DD`) | `rows[]` per show: `tickets`, `revenue` (the fee), `ad_spend`, `campaign_on_row`, `cost_per_ticket`, `spend_share_of_revenue`, `clicks`, `impressions`, `spend_months`, `spending_after_show`, `settled`, `profit`. `totals` incl. `unmapped_spend`. `monthly_invoices`. |
+| `moonlight_shows` | `from`, `to` | Shows: venue, date, tickets, fee, expenses, profit. |
+| `moonlight_summary` | `from`, `to` | Band totals and follow-up lists (incl. upcoming shows). |
+| `moonlight_campaign_advice` | `from`, `to` | The last stored in-app advisor report — findings and ranked suggestions. Never triggers a new analysis. |
+| `get_overview` | `year` | Orientation, P&L by month, band totals. |
 
-## Resource (read via `ReadMcpResourceTool`)
+## Reads: upstream tool → what to do
 
-| URI | What it returns |
+| Upstream | Here |
 |---|---|
-| `adadvisor://account/{account_id}/context` | Business name, storefront URL, break-even ROAS, AOV, target CPL, daily budget cap, brand details, AI research report |
-| `ui://adadvisor/asset-picker` | Visual picker widget for image selection (used internally by `search_ad_images`) |
-| `ui://adadvisor/creative-preview` | Visual preview widget for existing creatives (used internally by `preview_existing_creatives`) |
-| `ui://adadvisor/upload-creatives` | Upload widget (drag-drop + URL) (used internally by `upload_creatives`) |
+| `list_ad_accounts` | Not needed — there is one account, fixed in the app. Currency is ILS in all outputs. |
+| `adadvisor://account/{id}/context` (break-even ROAS, AOV, target CPL, budget cap, brand details) | **No equivalent.** Replace with the show economics in `economics.md`: the band's own cost-per-ticket history from `moonlight_ad_analysis`. Brand voice and audience: ask the user, or use the stored advisor report. |
+| `list_campaigns` | `moonlight_campaigns` |
+| `get_performance(level=campaign)` | `moonlight_campaigns` (lifetime) or `moonlight_ad_analysis` (per show). Spend, impressions, clicks, reach only. |
+| `get_performance(level=adset\|ad)` | **Not available.** Say "campaign level only"; ask the user to paste the Ads Manager breakdown. |
+| `get_timeseries` (campaign) | `moonlight_campaigns` with `campaign_id` — daily spend, impressions, clicks. No daily reach or frequency. |
+| `get_timeseries` (adset / ad) | **Not available.** |
+| `list_adsets`, `list_ads`, `list_creatives` | **Not available.** |
+| `get_pixel_health` | **Not available.** The pixel/EMQ checks in the audit cannot be run from data; ask the user to check Events Manager, and say the audit is therefore partial. |
+| `search_targeting`, `estimate_audience_size`, `list_custom_audiences`, `list_pages` | **Not available.** Targeting advice is strategic only; the user checks reach estimates in Ads Manager. |
+| `search_ad_images`, `search_ad_videos`, `preview_existing_creatives` | **Not available.** Ask the user for the creative or its screenshot. |
 
-## Mutations — status & budget
+## Metrics you can compute (and the ones you cannot)
 
-| Tool | What it does | Idempotent? | Destructive? |
-|---|---|---|---|
-| `adadvisor:change_entity_status` | Pause / resume campaigns, ad sets, or ads | Yes | Yes |
-| `adadvisor:change_entity_budget` | Update daily or lifetime budget (campaign or adset) | Yes | Yes |
-| `adadvisor:update_entity` | Long-tail edits (name, bid strategy, schedule, DSA fields, spend cap, etc.) | Yes | Yes |
-| `adadvisor:update_adset_targeting` | Update ad-set targeting with validation + auto-fix for deprecated interests | Yes | Yes |
+| From | You can derive | Caveat |
+|---|---|---|
+| spend, impressions | **CPM** = spend ÷ impressions × 1000 | ILS, converted. |
+| clicks, impressions | **CTR (all clicks)** = clicks ÷ impressions | `clicks` is **all** clicks, not link clicks — it overstates the click-through to the ticket page and runs higher than Ads Manager's link CTR. Compare campaign to campaign, not to outside benchmarks. |
+| spend, clicks | **CPC (all clicks)** = spend ÷ clicks | Same caveat. |
+| impressions, reach | **Frequency (lifetime)** = impressions ÷ reach | Per campaign over its whole life. Not daily; reach is not additive across days. |
+| spend, show tickets | **Cost per ticket** | Spend against tickets from the books — not attributed conversions. |
+| spend, show fee | **Spend share of the fee** | |
 
-The `change_entity_budget` rejects >2× or <0.5× changes by default. Pass `force=True` to override.
+**Cannot derive:** ROAS, CPA, CPL, hook rate, hold rate, conversion rate, any ad-set or ad ranking, creative fatigue curves, learning-phase status.
 
-## Mutations — duplication
+## Writes: upstream tool → what to do
 
-| Tool | What it does |
+Every row below becomes a **written instruction** with the entity name, setting, value and order — never a claim that it was done.
+
+| Upstream | Instruction to give |
 |---|---|
-| `adadvisor:duplicate_campaign` | Duplicate a campaign (deep or shell) into the same account |
-| `adadvisor:duplicate_adset` | Duplicate an ad set; can move to a different campaign |
-| `adadvisor:duplicate_ad` | Duplicate an ad; can attach to a different ad set |
+| `change_entity_status` (pause / resume) | "In Ads Manager, pause/resume *<campaign / ad set / ad name>*." Resume leaf-up: ad → ad set → campaign. |
+| `change_entity_budget` | "Set *<name>* daily budget to ₪X (from ₪Y)." Keep the stepping rules in `adadvisor-scale`. |
+| `update_entity` | The specific setting, with the exact value. |
+| `update_adset_targeting` | The targeting change, written out. |
+| `create_campaign`, `create_adset`, `create_ad`, `create_creative`, `create_lead_form` | A build sheet: objective, budget type, audience, placements, creative, copy, destination URL, name. Everything starts **paused**; say so. |
+| `duplicate_campaign`, `duplicate_adset`, `duplicate_ad` | "Duplicate *<name>* in Ads Manager; set the copy to paused; change *<setting>*." |
+| `create_website_audience`, `create_lookalike_audience` | The audience definition (seed, source events, retention days, ratio, country). |
+| `upload_*` | "Upload *<asset>* in Ads Manager." |
 
-All produce entities with `status='PAUSED'` by default. NOT idempotent — each call creates a new copy.
+## Naming
 
-## Mutations — creation
-
-| Tool | What it does |
-|---|---|
-| `adadvisor:create_campaign` | Create one or more campaigns (batched) |
-| `adadvisor:create_adset` | Create one or more ad sets with targeting + validation (batched) |
-| `adadvisor:create_creative` | Create one or more ad creatives (image_link / video / existing_post) (batched) |
-| `adadvisor:create_ad` | Attach creatives to ad sets (batched) |
-| `adadvisor:create_lead_form` | Create one or more Meta Lead Forms on a Page (batched) |
-
-All produce entities with `status='PAUSED'`. NOT idempotent.
-
-## Audiences
-
-| Tool | What it does |
-|---|---|
-| `adadvisor:create_website_audience` | Build a custom audience from pixel events (Purchase, AddToCart, ViewContent, etc.) |
-| `adadvisor:create_lookalike_audience` | Build a lookalike from a seed audience (1%-20% ratio, country-scoped) |
-
-Note: customer-list audiences are uploaded in the AdAdvisor app, not via MCP. Use `list_custom_audiences` to surface them.
-
-## Uploads
-
-| Tool | What it does |
-|---|---|
-| `adadvisor:upload_creatives` | Open the upload widget (LLM-visible entrypoint) |
-| `adadvisor:upload_ad_image` | Upload a single image (called by the widget — agents rarely call directly) |
-| `adadvisor:upload_ad_video` | Upload a single video (called by the widget — agents rarely call directly) |
-
-Image limit 30MB; video limit 4GB. Allowed: `image/jpeg`, `image/png`, `video/mp4`, `video/quicktime`. `image_hash` returned by `upload_ad_image` must be used in the same conversation — do not reuse across sessions.
-
-## Pagination
-
-Every list / search tool returns `{total, count, offset, has_more, next_offset}`. When `has_more=true`, call again with `offset=next_offset`.
-
-## Currency
-
-All budget parameters (`daily_budget`, `lifetime_budget`, `spend_cap`, `bid_amount`) are in **major units** in the account's currency. The server converts to Meta's minor units internally.
-
-## Status invariant
-
-Every `create_*` and `duplicate_*` returns `status='PAUSED'`. Activation requires explicit `change_entity_status(action='resume')` at each hierarchy level (ad → ad set → campaign).
+Upstream auto-generates names like `ADADVISOR || CBO || TOF || …`. Do not. When proposing names in a build sheet, **match what the account already uses** — read the names from `moonlight_campaigns` and follow the pattern, and where a show is involved, include the show's label (`label` from `moonlight_shows`) so the app's mapping suggestions can match it later (`suggestions[]` are based on the campaign name).
