@@ -18,7 +18,7 @@ Every recommendation that implies a change gets an action line. Format:
 
 Rules:
 
-1. **Name the entity exactly** as `moonlight_campaigns` returns it (and the level: campaign / ad set / ad). If you only know the campaign, say "the ad set inside it that…" and ask.
+1. **Name the entity exactly** as `band_campaigns` returns it (and the level: campaign / ad set / ad). If you only know the campaign, say "the ad set inside it that…" and ask.
 2. **One setting per line**, with from → to values and units (₪/day vs ₪ total).
 3. **Order matters.** Leaf-up for activation (ad → ad set → campaign); pause top-down. Say so.
 4. **New things start paused.** Say "create it paused and switch it on when the checks are done."
@@ -33,4 +33,4 @@ A recommendation that moves real money — pausing the biggest campaign, doublin
 
 ## After the user acts
 
-Data only reaches you after the app's next Meta sync. Do not look for a change the same minute: tell the user to run the sync in the app (or wait for the next one) and name the date you will look at. Judge the effect on the daily curve (`moonlight_campaigns` with `campaign_id`), starting from the day of the change.
+Data only reaches you after the app's next Meta sync. Do not look for a change the same minute: tell the user to run the sync in the app (or wait for the next one) and name the date you will look at. Judge the effect on the daily curve (`band_campaigns` with `campaign_id`), starting from the day of the change.

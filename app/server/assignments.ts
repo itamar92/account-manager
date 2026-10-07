@@ -1,5 +1,5 @@
 import { db, uuid } from './db.js';
-import { ensureExpenseRow, expenseRowForEvent, recomputeEvent } from './moonlight.js';
+import { ensureExpenseRow, expenseRowForEvent, recomputeEvent } from './band.js';
 import { aliasTextBySupplier } from './supplierNames.js';
 import { isAssignmentRole, requiredRoleKeys, roleKeys, type AssignmentRole } from './supplierRoles.js';
 

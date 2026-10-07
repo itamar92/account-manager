@@ -1,8 +1,10 @@
 # Account Manager — Web App
 
-Unified accounting dashboard replacing the Google Sheets workbook: personal freelance
-accounting (clients → works → invoices) + Moonlight Finance (band) in one app, with an
-external API for the Morning app / client management system.
+Unified accounting dashboard: a small business's books (clients → works → invoices →
+Israeli VAT and income tax) and a second set of books for a sub-business — a band, by
+default — in one app, with an external API and a read-only MCP server for AI agents.
+The main README at the repository root is the place to start; this file is the detailed
+design of the web app.
 
 ## Stack
 
@@ -33,8 +35,8 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 |-----|---------|---------|
 | `PORT` | 3000 | server port |
 | `DATA_DIR` | `app/data` | where the SQLite file lives |
-| `SEED_OWNER_PASSWORD` | `changeme123` | initial owner password |
-| `SEED_BAND_PASSWORD` | `moonlight123` | initial band members password |
+| `SEED_OWNER_EMAIL` / `SEED_OWNER_NAME` | `owner@example.com` / `בעל/ת העסק` | the owner account created on first run |
+| `SEED_OWNER_PASSWORD` | `changeme123` | its initial password (required in production) |
 | `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` | — | Morning API credentials; without them the Morning sync is disabled |
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs `calendar.readonly`, and `calendar.events` too for quotes to create their «אופציה» events — see `deploy/README.md` |
@@ -44,7 +46,7 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
 | `APP_SECRET_KEY` | a generated `secret.key` beside the database | encrypts the secrets saved from the UI (the agent's SSH key). See below |
 | `SMTP_USER` / `SMTP_PASS` | — | Gmail address and app password for campaign-task reminder emails; without them no reminder is sent |
-| `SMTP_FROM` / `SMTP_HOST` / `SMTP_PORT` | `Moonlight <SMTP_USER>` / `smtp.gmail.com` / `465` | sender and server overrides for those emails |
+| `SMTP_FROM` / `SMTP_HOST` / `SMTP_PORT` | `<band name> <SMTP_USER>` / `smtp.gmail.com` / `465` | sender and server overrides for those emails |
 | `PUBLIC_BASE_URL` | the address the app was opened at | base of client quote links, and of the «סימון כבוצע» link in reminder emails (no link without it) |
 
 The `AGENT_SSH_*` variables below are now the **fallback** for **Settings → סוכן AI**, which is
@@ -60,16 +62,20 @@ a field left empty there falls back to these, so an existing deployment keeps wo
 | `AGENT_COMMAND` | `claude -p --output-format json` | the fixed command run on that machine; the prompt goes to its stdin |
 | `AGENT_TIMEOUT_MS` | `120000` | how long a single run may take before the connection is dropped |
 
-## Seeded users
+## Users and roles
 
-| Email | Role | Access |
-|-------|------|--------|
-| `itamar92@gmail.com` | owner | everything |
-| `amir@moonlight.band`, `yuval@moonlight.band`, `guy@moonlight.band` | band | `/moonlight` only, read-only — except הצעות מחיר, which they edit too |
+First run creates **one owner account** from `SEED_OWNER_EMAIL` / `SEED_OWNER_NAME` /
+`SEED_OWNER_PASSWORD` and nothing else — no clients, no shows, no band members. The owner
+is also seeded as the band's first (and only) member and its manager. Invoices and expenses
+arrive from Morning, shows from Google Calendar, and the rest is typed in.
 
-**Change the default passwords** (or set the `SEED_*` env vars before first run).
-First run also imports `../invoices_2026.csv` (Green Invoice export) and the Moonlight
-Finance data as the initial dataset.
+| Role | Access |
+|------|--------|
+| `owner` | everything |
+| `band` | `/band` only, read-only — except הצעות מחיר, which they edit too |
+
+**Change the default password** on a laptop install (production refuses to start without
+`SEED_OWNER_PASSWORD`). Band members get a login from **Settings → משתמשים**.
 
 Members are editable in **Settings → משתמשים**: name, email, role, and a new password —
 left blank, the existing password stands, so details can be corrected without resetting
@@ -96,15 +102,15 @@ cannot demote yourself.
   next sync would recreate both it and its works; and uninvoiced works are only deleted
   along with it when the caller asks (`?delete_works=1`), which the UI does after saying
   how many.
-- **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
+- **Band private area**: `/band` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
-- **A show is one page** (`/moonlight/shows/:id`). Its income, its twelve cost lines, who is
+- **A show is one page** (`/band/shows/:id`). Its income, its twelve cost lines, who is
   staffed on it, and how its profit divides all live there and are edited in place —
-  `GET /api/moonlight/events/:id` returns the lot in one request. The three tables this
+  `GET /api/band/events/:id` returns the lot in one request. The three tables this
   replaced (הכנסות / הוצאות הופעות / שיבוצים) meant one gig's numbers had to be assembled by
   reading across three tabs. What stayed at list level is what genuinely spans shows: the
   summary, the supplier ledger, costs belonging to no show, and ad spend.
-- **Deleting an expense row** (`DELETE /api/moonlight/event-expenses/:id`) means two
+- **Deleting an expense row** (`DELETE /api/band/event-expenses/:id`) means two
   different things, because every show owns exactly one row. A row assigned to a show is
   **emptied** — its amounts go, the empty row stays behind to type into, and the show's
   totals are recomputed (`{deleted: 0, cleared: 1}`). A row assigned to nothing — a leftover
@@ -155,11 +161,11 @@ cannot demote yourself.
 
 ### The shell — two workspaces, one app
 
-The app is split into a **business** side and a **Moonlight** side, switched from the pill in
+The app is split into a **business** side and a **band** side, switched from the pill in
 the header. They are separate books, so they get separate navigation and separate accent
 colours: the switch sets `data-ws` on `<html>`, and every accent, canvas and border in
 `src/index.css` hangs off that one attribute — no component knows which workspace it is being
-shown in. Band members only ever see the Moonlight side, enforced server-side as before.
+shown in. Band members only ever see the band side, enforced server-side as before.
 
 Colours are named for what they are for rather than what they are (`bg-surface`, `text-muted`,
 `border-line`, `text-pos` / `text-warn` / `text-neg`), so a page never hard-codes a palette.
@@ -271,13 +277,13 @@ set in **Settings → דוחות מס** (2.25 by default).
 
 ### Filtering by period
 
-Every dated list — works, invoices, expenses and all four Moonlight tabs — filters by year and,
+Every dated list — works, invoices, expenses and all four band tabs — filters by year and,
 within it, by a single month. A month is only meaningful inside a year, so the month select is
 disabled while the year is "כל השנים" and the server ignores a month sent without one: "March"
 of no particular year is not a period. Both selects go through one `dateRange` on the server, so
 every list narrows the same way and there is one place where a period is turned into dates.
 
-### Moonlight — how the division is worked out
+### The band — how the division is worked out
 
 The band's summary shows what each member is owed **and how that figure was reached**, laid out
 in the three steps their spreadsheet has always used, because the point is that the total can be
@@ -288,8 +294,8 @@ checked rather than trusted:
    that is a refund, not a share of anything;
 3. **minus** an equal part of what the band's float (קופה) covered, since everybody bore it.
 
-`paid` on a general expense is what settled means here — the moonlight migration set it from the
-sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/moonlight/division`
+`paid` on a general expense is what settled means here — the band migration set it from the
+sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/band/division`
 returns each step with the rows behind it.
 
 The card always shows two figures per member: **חלק ברווח**, their share once the shared costs
@@ -303,37 +309,63 @@ list of exactly which expenses were refunded and which the float paid — so no 
 unaccounted for. The shared costs come off before the refunds go back on, so both of the figures
 on the card appear in the working as lines of it.
 
-### Moonlight — the producer fee
+### The band — the producer fee
 
-`computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, going to
-איתמר and אמיר in equal halves, and the rest is shared equally by all four. The percentage is the
-**whole** fee, so 20% nets 30/30/20/20 and 40% nets 35/35/15/15. It is stored per show, because
-what the fee is worth is a decision about that show, and it is set with the stepper on the show
-page beside the tick that turns it on. With the fee off (or at 0%) it is a plain
-quarter each; a row set to manual keeps whatever was typed on it.
+`computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, shared
+equally by the members marked **manager** in the roster, and the rest is shared equally by every
+active member. The percentage is the **whole** fee, so in a band of four with two managers 20%
+nets 30/30/20/20; in a band with one owner-manager it is simply the owner's cut before the equal
+split. It is stored per show, because what the fee is worth is a decision about that show, and it
+is set with the stepper on the show page beside the tick that turns it on. With the fee off (or at
+0%) it is an equal share each; a row set to manual keeps whatever was typed on it.
 
-The default is **20% (30/30/20/20)**. It was a fixed 40% before, so a one-time migration stamps
-`commission_percent = 40` on shows already marked «שולם לנגנים» — their profit has changed hands
-under the old figure, and the boot recompute would otherwise silently re-divide it while leaving
-the percentage on the row unable to explain the shares beside it. Every show still open takes the
-new default, which is the point of changing it.
+The default percentage a new show starts with is **Settings → כללי → דמי הפקה ברירת מחדל** (20%
+out of the box).
 
-### Moonlight — price quotes (הצעות מחיר)
+### The band — the roster and the name
 
-Moonlight → הצעות מחיר is where a show is sold before it exists. The full design is in
+The roster lives in **הלהקה → ספקים וחברים**: name, email, instrument, whether the member is a
+manager, and what kind of business they run (which decides what their share costs the band once
+they invoice for it). A fresh database has one member, the owner. The band's name is
+**Settings → כללי → שם הלהקה** and is used everywhere the second set of books is named: the
+workspace switch, the inbox, the quote templates, the reminder emails and the advisor prompt.
+
+### The band — the cost lines of a show
+
+The lines a show's costs are typed into are **data**, managed in **ספקים וחברים → שורות עלות
+בהופעה** (`GET/POST/PUT/DELETE /api/band/expense-categories`). The app ships with twelve —
+lighting, sound, singer, PA company, hall, wristbands, royalties, campaign, refreshments, design,
+other, extra — and a band that pays a roadie or rents a van adds a line and every show page lists
+it from then on. A line can be renamed, switched off (it stays visible on shows that carry an
+amount on it), and marked **משולמת בנפרד**: settled separately after the show, so it carries an
+open/paid state, as opposed to a card payment that is over when it is typed. Built-in lines can
+be switched off but not deleted; a line the band added can be deleted while no show holds an
+amount on it.
+
+Underneath, each line is a column on `band_event_expenses` (`<key>` and `<key>_paid`), added by
+`ALTER TABLE` when the line is created, so every existing reader of the expense row — totals,
+supplier payments, the Meta sync, the MCP tools — works unchanged. Every line is also a supplier
+role in waiting (`band_supplier_roles`), switched off until the band says it hires somebody for
+it. The `campaign` line is where the Meta Ads sync writes a show's ad spend.
+
+### The band — price quotes (הצעות מחיר)
+
+הלהקה → הצעות מחיר is where a show is sold before it exists. The full design is in
 [`../docs/QUOTES-DESIGN.md`](../docs/QUOTES-DESIGN.md).
 
 - **Templates** hold the usual quote: the intro, the lines and the terms. «הצעה חדשה» asks only
   for the client, the date and the price. The price goes into the template's first line, and
   `{client_name}` / `{event_date}` in the title and intro are filled in. A template is a
   `band_quotes` row with `is_template = 1`, edited in the same editor as a quote.
-- **The built-in template** is Moonlight's own quote, moved over from the Google Doc the band
-  used to send (`server/quoteTemplates.ts`). It is added once, on the first start, and «תבניות»
-  can add a fresh copy at any time.
+- **The built-in templates** (`server/quoteTemplates.ts`) are a standard show quote and two
+  versions for a show far from home, written for a live band in Israel with the band's name
+  filled in from the settings. They are added once, on the first start, and «תבניות» can add a
+  fresh copy at any time; every word is editable once a copy exists.
 - **Money** is worked out by `server/quoteMath.ts`, the one file the server saves with and the
   editor previews with. A quote's prices are either before VAT or including it, and the discount
   comes off before VAT. The VAT rate is frozen on the quote when it is made.
-- **Numbers** run per year: `ML-2026-001`. Validity is set in days in the quote settings, and a
+- **Numbers** run per year: `Q-2026-001`, the prefix being **קידומת מספור** in the quote
+  settings. Validity is set in days in the quote settings, and a
   quote with a client expires at the end of its last day, Israel time. Expiry is worked out, never
   stored.
 - **Branding** (quote settings → מיתוג, חתימה): a logo, two colours (header and accent; the
@@ -351,9 +383,9 @@ Moonlight → הצעות מחיר is where a show is sold before it exists. The 
   Google's invitations to the members and any suppliers chosen, and the sync makes the show from
   it. When the client signs, the quote's price goes into that show if it has none
   (`server/quoteShow.ts`), and the quote offers to take «אופציה» off the event. Several shows on
-  the date, a price that differs, or an event still «אופציה» is a follow-up on the Moonlight
+  the date, a price that differs, or an event still «אופציה» is a follow-up on the band
   summary and in the inbox, settled from the quote's «יומן והופעה» card.
-- **Who edits:** every logged-in user, band members included. This is the one Moonlight area
+- **Who edits:** every logged-in user, band members included. This is the one band area
   where the band writes, and the router says so (`server/quoteRoutes.ts`). A signed or cancelled
   quote is closed to edits and is copied (שכפול) instead.
 
@@ -402,7 +434,7 @@ books and can only be credited.
 ## Integrations
 
 Both are owner-only, run on demand from **Settings → חיבורים** (the calendar sync also has
-a button on the Moonlight shows page), and report their configuration status in the UI so
+a button on the band shows page), and report their configuration status in the UI so
 a missing credential is visible rather than silent.
 
 ### Morning (Green Invoice)
@@ -528,12 +560,12 @@ freelance client is another rule, not a code change.
 
 **Matching is title-only unless you opt in**, because descriptions carry running orders —
 `17:30-19:30 בלנס / 20:30 הופעה` — that contain the keyword while saying nothing about
-whose show it is. Against the real calendar, searching descriptions pulled four Karni Band
-gigs into the band rule.
+whose show it is. Against a real calendar, searching descriptions pulled four gigs played with
+another band into the band rule.
 
 An event is included when a keyword matches **or** the organiser is listed. The organiser
 path exists because an invitation you didn't create often doesn't carry the keyword at
-all — a gig from `udi@karni-band.com` is just titled `קרניבנד חוליו איגלסיאס בפרדסיה`.
+all — a gig from `booker@other-band.example` is just titled `להקה אחרת — ערב מחווה בפרדסיה`.
 Because that same organiser also sends rehearsals, ignore words are checked first and beat
 both include rules.
 
@@ -565,7 +597,7 @@ defaults use stems for this reason.
    column too. Only leading occurrences go, since a keyword in the middle of a name is
    usually part of it.
 
-So a rule keyed on `קולדפליי` stores `הופעה קולדפליי גריי תל אביב` as **`גריי תל אביב`**. A
+So a rule keyed on `הלהקה` stores `הופעה הלהקה גריי תל אביב` as **`גריי תל אביב`**. A
 title made entirely of these words keeps its original text rather than being stored blank,
 and the preview shows the name each row would actually be stored under.
 
@@ -590,7 +622,7 @@ which ignore word caught it, or declined. Pass `:id` as `draft` with a `rule` bo
 a rule that hasn't been saved yet.
 
 Everything about a rule is editable while the app runs, and a change takes effect on the
-next preview or sync. Deciding that Karni Band rehearsals are billable after all is just
+next preview or sync. Deciding that another band's rehearsals are billable after all is just
 clearing `חזר` out of that rule's ignore words — no redeploy, no migration.
 
 ### Manual overrides — when a rule gets one wrong
@@ -599,7 +631,7 @@ Rules are patterns, so they will always be slightly wrong at the edges. Any sing
 can be pinned by hand, and **a manual decision beats every rule**:
 
 - **אל תמשוך / לא הופעה / לא עבודה** — never draw this event again. Available on a preview
-  row, on a synced show in Moonlight, and on a synced work in the works list.
+  row, on a synced show in the band workspace, and on a synced work in the works list.
 - **משוך בכל זאת** — always draw this event for this rule, whatever the keywords say. Pinned
   to one rule, so it cannot leak into another.
 
@@ -629,7 +661,7 @@ Settings, each with an undo.
 ### Meta Ads → what a show's promotion cost
 
 Ad spend per show, pulled from the Meta Marketing API. It fills a column the band's books
-already had: **קמפיין** on each show's expense row, typed by hand until now. **Moonlight →
+already had: **קמפיין** on each show's expense row, typed by hand until now. **הלהקה →
 פרסום** is where the result is read and where the mapping is done.
 
 Setup is a system-user token, described in [`.env.example`](../.env.example) — reading your own
@@ -699,10 +731,10 @@ at all rather than putting dollars in a shekel column.
 | `GET /api/integrations/meta/campaigns/:id/daily` | one campaign's daily spend curve |
 | `POST /api/integrations/meta/campaigns/:id/mappings` | map to a show `{event_id, weight?}` |
 | `DELETE /api/integrations/meta/campaigns/:id/mappings/:eventId` | unmap (the show keeps its figure) |
-| `GET /api/moonlight/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
-| `GET /api/moonlight/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
+| `GET /api/band/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
+| `GET /api/band/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
 
-## יועץ קמפיינים — the AI advisor (Moonlight → יועץ קמפיינים)
+## יועץ קמפיינים — the AI advisor (הלהקה → יועץ קמפיינים)
 
 The פרסום tab says what a show's promotion **cost**. This one asks whether it was worth it:
 a verdict on the period, findings tied to specific shows and campaigns, ranked suggestions, a
@@ -731,13 +763,13 @@ load; a run happens only when the owner presses the button. Band members read al
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/moonlight/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
-| `POST /api/moonlight/campaign-analysis?year=&month=` | spend a run: analyse the period afresh (owner) |
-| `GET /api/moonlight/campaign-draft/:eventId` | the last campaign plan drafted for a show |
-| `POST /api/moonlight/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
-| `GET /api/moonlight/campaign-chat` | the follow-up thread |
-| `POST /api/moonlight/campaign-chat` | ask a follow-up `{message}` (owner); answers may carry proposed `tasks` |
-| `DELETE /api/moonlight/campaign-chat` | clear the thread (owner) |
+| `GET /api/band/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
+| `POST /api/band/campaign-analysis?year=&month=` | spend a run: analyse the period afresh (owner) |
+| `GET /api/band/campaign-draft/:eventId` | the last campaign plan drafted for a show |
+| `POST /api/band/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
+| `GET /api/band/campaign-chat` | the follow-up thread |
+| `POST /api/band/campaign-chat` | ask a follow-up `{message}` (owner); answers may carry proposed `tasks` |
+| `DELETE /api/band/campaign-chat` | clear the thread (owner) |
 | `POST /api/integrations/agent/ping` | connectivity test: opens the session, asks the agent its version |
 | `GET /api/settings/agent` | the stored connection details, minus the secrets (owner) |
 | `POST /api/settings/agent` | save them (owner) |
@@ -800,12 +832,12 @@ fails, the spend sync still lands and the result carries a warning.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/moonlight/campaign-tasks` | shows with their tasks and owner, and whether email is configured |
-| `POST /api/moonlight/campaign-tasks` | add tasks `{event_id, tasks: [{title, detail?, due_date}], report_id?}` (owner) |
-| `PUT /api/moonlight/campaign-tasks/:id` | edit `{title?, detail?, due_date?, done?}` — the band may only set `done` |
-| `DELETE /api/moonlight/campaign-tasks/:id` | delete a task (owner) |
-| `PUT /api/moonlight/campaign-tasks/owner/:eventId` | set the show's owner `{member_key}` (owner) |
-| `POST /api/moonlight/campaign-tasks/:id/remind` | send this task's reminder now (owner) |
+| `GET /api/band/campaign-tasks` | shows with their tasks and owner, and whether email is configured |
+| `POST /api/band/campaign-tasks` | add tasks `{event_id, tasks: [{title, detail?, due_date}], report_id?}` (owner) |
+| `PUT /api/band/campaign-tasks/:id` | edit `{title?, detail?, due_date?, done?}` — the band may only set `done` |
+| `DELETE /api/band/campaign-tasks/:id` | delete a task (owner) |
+| `PUT /api/band/campaign-tasks/owner/:eventId` | set the show's owner `{member_key}` (owner) |
+| `POST /api/band/campaign-tasks/:id/remind` | send this task's reminder now (owner) |
 
 ## MCP server (`/mcp`) — read-only access for AI agents
 
@@ -830,12 +862,12 @@ Every tool calls the same reader the browser's own screens call (`queries.ts`, `
 | `list_invoices` | Issued documents, with document type and whether each counts as revenue |
 | `list_expenses` | Expenses with categories and the input-VAT summary |
 | `get_tax_report` | מע"מ and income tax for a year |
-| `moonlight_shows` | The band's shows: tickets, fee, expenses, profit, division |
-| `moonlight_summary` | Band totals, what each member is owed, and the follow-up lists |
-| `moonlight_assignments` | Staffing per show, suppliers, and what each is owed |
-| `moonlight_ad_analysis` | Ad spend per show against tickets and revenue |
-| `moonlight_campaigns` | Meta campaigns, their mappings, and daily spend curves |
-| `moonlight_campaign_advice` | The last stored verdict from the in-app advisor |
+| `band_shows` | The band's shows: tickets, fee, expenses, profit, division |
+| `band_summary` | Band totals, what each member is owed, and the follow-up lists |
+| `band_assignments` | Staffing per show, suppliers, and what each is owed |
+| `band_ad_analysis` | Ad spend per show against tickets and revenue |
+| `band_campaigns` | Meta campaigns, their mappings, and daily spend curves |
+| `band_campaign_advice` | The last stored verdict from the in-app advisor |
 
 Results are capped at 500 rows per call (`truncated: true` says when the cap bit), so one broad
 question cannot pull the whole database into a context window.
@@ -860,7 +892,7 @@ attached. Add to `claude_desktop_config.json`:
       "command": "node",
       "args": ["/absolute/path/to/account-manager/app/bin/mcp-bridge.mjs"],
       "env": {
-        "AM_URL": "https://im-tools.org/mcp",
+        "AM_URL": "https://<your-domain>/mcp",
         "AM_API_KEY": "am_…"
       }
     }
@@ -873,7 +905,7 @@ Restart Claude Desktop; the tools appear in the connector list. Point `AM_URL` a
 whatsoever — every protocol decision lives in `server/mcpServer.ts`, so adding a tool changes the
 server and the bridge keeps working untouched.
 
-Any client that can send a header can skip the bridge and POST straight to `https://im-tools.org/mcp`.
+Any client that can send a header can skip the bridge and POST straight to `https://<your-domain>/mcp`.
 
 ### Protocol notes
 

@@ -1,6 +1,6 @@
 # Business Automation Architecture — n8n + Google Sheets + Cowork Agents
 
-Goal: run the finance side of the business (עוסק מורשה, music industry) with minimal
+Goal: run the finance side of a small business (עוסק מורשה; a musician is the example) with minimal
 manual work: invoice intake, bank monitoring, tax compliance, receivables (גבייה),
 payables (ספקים), and a live projection of the annual report.
 
@@ -51,7 +51,7 @@ All agent definitions live in `.claude/agents/` so Cowork can run them directly.
 - **Sources:** `deadline-calendar.json`, `freelancer-profile.json`, `Yearly_Report` sheet.
 - **Does:**
   - Remind upcoming/overdue: מע״מ (bi-monthly, 15th), ביטוח לאומי (monthly, 15th), annual report.
-  - **מקדמות מס check:** currently no שוברים issued for 2026 (see deadline-calendar). Each
+  - **מקדמות מס check:** whether advances are required is recorded in the profile. Each
     run re-verifies: (a) has the Tax Authority issued an assessment? (b) does YTD profit
     trajectory imply you *should* be paying advances to avoid a year-end lump + interest?
     If projected annual tax > ~threshold, recommend voluntary מקדמות and the amount.

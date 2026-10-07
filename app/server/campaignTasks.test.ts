@@ -10,7 +10,7 @@ import nodemailer from 'nodemailer';
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'campaign-tasks-test-'));
 process.env.SMTP_USER = 'band@example.com';
 process.env.SMTP_PASS = 'abcd efgh ijkl mnop';
-process.env.PUBLIC_BASE_URL = 'https://im-tools.org/';
+process.env.PUBLIC_BASE_URL = 'https://example.com/';
 const { db } = await import('./db.js');
 const tasks = await import('./campaignTasks.js');
 const mailer = await import('./mailer.js');
@@ -31,8 +31,8 @@ const OTHER = 'show-barby';
 before(() => {
   db.prepare("INSERT INTO band_events (id, venue, date) VALUES (?, 'זאפה הרצליה', '2026-11-04')").run(SHOW);
   db.prepare("INSERT INTO band_events (id, venue, date) VALUES (?, 'בארבי', '2026-11-20')").run(OTHER);
-  db.prepare("INSERT OR IGNORE INTO band_members (id, member_key, name, email) VALUES ('m1', 'yuval', 'יובל', 'yuval@example.com')").run();
-  db.prepare("UPDATE band_members SET email = 'yuval@example.com', name = 'יובל' WHERE member_key = 'yuval'").run();
+  db.prepare("INSERT OR IGNORE INTO band_members (id, member_key, name, email) VALUES ('m1', 'm_dana', 'דנה', 'dana@example.com')").run();
+  db.prepare("UPDATE band_members SET email = 'dana@example.com', name = 'דנה' WHERE member_key = 'm_dana'").run();
 });
 
 /** 2026-10-13 at the given Israel hour (UTC+3 in October). */
@@ -76,7 +76,7 @@ test('the scheduler emails the owner once per day, grouped, and stops when done'
   assert.equal(run.sent, 0);
   assert.equal(run.unassigned, 2);
 
-  tasks.setTaskOwner(SHOW, 'yuval');
+  tasks.setTaskOwner(SHOW, 'm_dana');
 
   // Before 9:00 nothing goes out.
   run = await tasks.runReminders(at('2026-10-13', 8));
@@ -87,10 +87,10 @@ test('the scheduler emails the owner once per day, grouped, and stops when done'
   assert.equal(run.sent, 1);
   assert.equal(run.tasks, 1);
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].to, 'yuval@example.com');
+  assert.equal(sent[0].to, 'dana@example.com');
   assert.match(sent[0].subject, /לבדוק הוצאה מול כרטיסים/);
   const token = (db.prepare('SELECT done_token FROM campaign_tasks WHERE id = ?').get(weekIn.id) as any).done_token;
-  assert.ok(sent[0].html.includes(`https://im-tools.org/api/public/campaign-tasks/${token}`), 'done link, base without the trailing slash');
+  assert.ok(sent[0].html.includes(`https://example.com/api/public/campaign-tasks/${token}`), 'done link, base without the trailing slash');
 
   // Ten minutes later, the same day: already sent.
   run = await tasks.runReminders(at('2026-10-13', 10));
@@ -115,7 +115,7 @@ test('the email lists every due task for that person in one message', () => {
     { id: 'a', title: 'ראשונה', detail: 'פירוט <b>', due_date: '2026-10-10', done_token: 'tok-a', venue: 'זאפה', date: '2026-11-04' },
     { id: 'b', title: 'שנייה', detail: null, due_date: '2026-10-13', done_token: 'tok-b', venue: 'בארבי', date: '2026-11-20' },
   ];
-  const mail = tasks.reminderEmail('יובל', rows, '2026-10-13', null);
+  const mail = tasks.reminderEmail('דנה', rows, '2026-10-13', null);
   assert.match(mail.subject, /2 משימות \(1 באיחור\)/);
   assert.ok(mail.html.includes('פירוט &lt;b&gt;'), 'detail is escaped');
   assert.ok(!mail.html.includes('/api/public/'), 'no done link without a base URL');
@@ -126,11 +126,11 @@ test('ad copy is found wherever Meta keeps it for that kind of ad', () => {
   const link = extractAdCopy({
     id: '1', campaign_id: 'c1', name: 'ad', effective_status: 'ACTIVE',
     creative: { object_story_spec: { link_data: {
-      message: 'ב-4 בנובמבר חוזרים לזאפה', name: 'Moonlight בזאפה | 4.11', description: 'מספר המקומות מוגבל',
+      message: 'ב-4 בנובמבר חוזרים לזאפה', name: 'הלהקה בזאפה | 4.11', description: 'מספר המקומות מוגבל',
       link: 'https://tickets.example', call_to_action: { type: 'BUY_TICKETS' } } } },
   });
   assert.equal(link.primary_text, 'ב-4 בנובמבר חוזרים לזאפה');
-  assert.equal(link.headline, 'Moonlight בזאפה | 4.11');
+  assert.equal(link.headline, 'הלהקה בזאפה | 4.11');
   assert.equal(link.description, 'מספר המקומות מוגבל');
   assert.equal(link.call_to_action, 'BUY_TICKETS');
   assert.equal(link.status, 'ACTIVE');

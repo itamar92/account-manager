@@ -20,7 +20,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst folderPath = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Docs Itamar - Buisness\\\\חשבוניות - קבלות\";\nconst processedFile = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Scripts\\\\Claude-code\\\\temp\\\\processed-invoices.json\";\n\n// Ensure temp dir exists\nconst tempDir = path.dirname(processedFile);\nif (!fs.existsSync(tempDir)) {\n  fs.mkdirSync(tempDir, { recursive: true });\n}\n\n// Load processed files list\nlet processed = [];\nif (fs.existsSync(processedFile)) {\n  try {\n    processed = JSON.parse(fs.readFileSync(processedFile, 'utf8'));\n  } catch (e) {\n    processed = [];\n  }\n}\n\n// Get all PDF files that haven't been processed\nconst files = fs.readdirSync(folderPath)\n  .filter(f => {\n    const fullPath = path.join(folderPath, f);\n    const stat = fs.statSync(fullPath);\n    return stat.isFile() && f.toLowerCase().endsWith('.pdf');\n  })\n  .filter(f => !processed.includes(f));\n\nif (files.length === 0) {\n  return [];\n}\n\n// Return each file as separate item for processing\nreturn files.map(f => ({\n  json: {\n    fileName: f,\n    filePath: path.join(folderPath, f)\n  }\n}));"
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst folderPath = \"C:\\\\Path\\\\To\\\\Invoices\";\nconst processedFile = \"C:\\\\Path\\\\To\\\\Claude-code\\\\temp\\\\processed-invoices.json\";\n\n// Ensure temp dir exists\nconst tempDir = path.dirname(processedFile);\nif (!fs.existsSync(tempDir)) {\n  fs.mkdirSync(tempDir, { recursive: true });\n}\n\n// Load processed files list\nlet processed = [];\nif (fs.existsSync(processedFile)) {\n  try {\n    processed = JSON.parse(fs.readFileSync(processedFile, 'utf8'));\n  } catch (e) {\n    processed = [];\n  }\n}\n\n// Get all PDF files that haven't been processed\nconst files = fs.readdirSync(folderPath)\n  .filter(f => {\n    const fullPath = path.join(folderPath, f);\n    const stat = fs.statSync(fullPath);\n    return stat.isFile() && f.toLowerCase().endsWith('.pdf');\n  })\n  .filter(f => !processed.includes(f));\n\nif (files.length === 0) {\n  return [];\n}\n\n// Return each file as separate item for processing\nreturn files.map(f => ({\n  json: {\n    fileName: f,\n    filePath: path.join(folderPath, f)\n  }\n}));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -30,7 +30,7 @@
     },
     {
       "parameters": {
-        "command": "=cd \"C:\\Users\\itama\\Dropbox\\Docs Itamar\\Scripts\\Claude-code\" && claude -m \"Parse the invoice PDF at: {{ $json.filePath }}. Read the file, extract all text (handle both text PDFs and scanned images), identify the vendor, and use the appropriate parser from vendor-parsers/. Return ONLY JSON with invoice data.\"",
+        "command": "=cd \"C:\\Path\\To\\Claude-code\" && claude -m \"Parse the invoice PDF at: {{ $json.filePath }}. Read the file, extract all text (handle both text PDFs and scanned images), identify the vendor, and use the appropriate parser from vendor-parsers/. Return ONLY JSON with invoice data.\"",
         "timeout": 180000
       },
       "type": "n8n-nodes-base.executeCommand",
@@ -51,7 +51,7 @@
     },
     {
       "parameters": {
-        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst processedFile = \"C:\\\\Users\\\\itama\\\\Dropbox\\\\Docs Itamar\\\\Scripts\\\\Claude-code\\\\temp\\\\processed-invoices.json\";\n\n// Load existing processed list\nlet processed = [];\nif (fs.existsSync(processedFile)) {\n  try {\n    processed = JSON.parse(fs.readFileSync(processedFile, 'utf8'));\n  } catch (e) {\n    processed = [];\n  }\n}\n\n// Add this file to processed list\nconst fileName = $input.first().json.originalFile;\nif (!processed.includes(fileName)) {\n  processed.push(fileName);\n  fs.writeFileSync(processedFile, JSON.stringify(processed, null, 2), 'utf8');\n}\n\n// Pass through the invoice data\nreturn { json: $input.first().json };"
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst processedFile = \"C:\\\\Path\\\\To\\\\Claude-code\\\\temp\\\\processed-invoices.json\";\n\n// Load existing processed list\nlet processed = [];\nif (fs.existsSync(processedFile)) {\n  try {\n    processed = JSON.parse(fs.readFileSync(processedFile, 'utf8'));\n  } catch (e) {\n    processed = [];\n  }\n}\n\n// Add this file to processed list\nconst fileName = $input.first().json.originalFile;\nif (!processed.includes(fileName)) {\n  processed.push(fileName);\n  fs.writeFileSync(processedFile, JSON.stringify(processed, null, 2), 'utf8');\n}\n\n// Pass through the invoice data\nreturn { json: $input.first().json };"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,

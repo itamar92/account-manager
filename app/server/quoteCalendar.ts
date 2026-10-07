@@ -1,4 +1,4 @@
-import { db } from './db.js';
+import { db, getBandName } from './db.js';
 import {
   CalendarError, getEventById, insertEvent, isCalendarConfigured, patchEvent,
   type CalendarAttendee, type CalendarEvent,
@@ -33,13 +33,14 @@ function quoteRow(id: string): any {
 }
 
 /**
- * The title a new event starts with, as the band writes them: «אופציה - הופעה קולדפליי אירוע
- * חברה קיסריה». What the event is, or for whom when that is all there is, and where. A quote
- * already signed is no option, so its event starts without the prefix.
+ * The title a new event starts with: «אופציה - הופעה <הלהקה> אירוע חברה קיסריה». The show
+ * keyword the calendar rule looks for, the band's name, what the event is (or for whom when
+ * that is all there is), and where. A quote already signed is no option, so its event starts
+ * without the prefix.
  */
 export function defaultTitle(quote: { status?: string; event_type?: string | null; client_name?: string | null; event_location?: string | null }) {
   const what = [quote.event_type || quote.client_name, quote.event_location].filter(Boolean).join(' ');
-  const title = `הופעה קולדפליי${what ? ` ${what}` : ''}`;
+  const title = `הופעה ${getBandName()}${what ? ` ${what}` : ''}`;
   return quote.status === 'signed' ? title : `${OPTION_PREFIX} - ${title}`;
 }
 

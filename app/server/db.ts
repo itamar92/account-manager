@@ -240,13 +240,12 @@ CREATE TABLE IF NOT EXISTS band_events (
   has_commission INTEGER NOT NULL DEFAULT 0,
   commission_amount REAL NOT NULL DEFAULT 0,
   paid_to_musicians INTEGER NOT NULL DEFAULT 0,
-  amir REAL NOT NULL DEFAULT 0,
-  itamar REAL NOT NULL DEFAULT 0,
-  yuval REAL NOT NULL DEFAULT 0,
-  guy REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One row per show, one column per cost line. The twelve columns below are the built-in cost
+-- lines; a line added from the UI (band_expense_categories) is a column added to this table
+-- at runtime, with its own <key>_paid flag. See server/expenseCategories.ts.
 CREATE TABLE IF NOT EXISTS band_event_expenses (
   id TEXT PRIMARY KEY,
   event TEXT NOT NULL,
@@ -277,11 +276,27 @@ CREATE TABLE IF NOT EXISTS band_general_expenses (
   event TEXT,
   paid_by TEXT,
   amount REAL NOT NULL DEFAULT 0,
-  amir REAL NOT NULL DEFAULT 0, amir_returned TEXT,
-  itamar REAL NOT NULL DEFAULT 0, itamar_returned TEXT,
-  yuval REAL NOT NULL DEFAULT 0, yuval_returned TEXT,
-  fund REAL NOT NULL DEFAULT 0, fund_returned TEXT,
+  -- Set once the member who fronted the expense (or the band's float) has been squared.
+  paid INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The cost lines a show can carry, as the band defines them. Each row is a column on
+-- band_event_expenses (amount) plus a <key>_paid flag. «settles» marks a line paid separately
+-- after the show — it carries a paid/open state — as opposed to one settled the moment it is
+-- typed (a card payment). «builtin» rows shipped with the app and cannot be deleted, only
+-- renamed or switched off; a line added later can be deleted while no show carries an amount
+-- on it. The key is generated and never shown: renaming a line changes nothing underneath.
+--
+-- The «campaign» line is special in one way: it is where the Meta Ads sync writes a show's
+-- ad spend (see metaSync.ts), so it is the one line that can be locked against the sync.
+CREATE TABLE IF NOT EXISTS band_expense_categories (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  settles INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  builtin INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
 );
 
 -- The band's regular suppliers: who answers to each email, and in what role. The role keys
@@ -370,15 +385,8 @@ CREATE INDEX IF NOT EXISTS idx_band_supplier_aliases_supplier
 -- member_key is what ties a row here to that member's shares in band_event_shares. It is
 -- generated once and never changes, so a member can be renamed without orphaning a single
 -- show they played.
--- What each member takes home from one show. This is the authoritative division: it replaced
--- the amir/itamar/yuval/guy columns on band_events, which is what capped the band at exactly
--- those four people. A row per member per show means the roster can grow, shrink, or be
--- renamed without touching the schema.
---
--- The old columns are still on band_events and are deliberately left there: they are the
--- source the backfill read from, and freezing them rather than dropping them keeps a way back
--- if a division ever looks wrong. Nothing writes them any more — moonlight_shares_v1 in
--- settings marks the moment they stopped being the truth.
+-- What each member takes home from one show. This is the authoritative division: a row per
+-- member per show means the roster can grow, shrink, or be renamed without touching the schema.
 CREATE TABLE IF NOT EXISTS band_event_shares (
   event_id TEXT NOT NULL,
   member_key TEXT NOT NULL,
@@ -683,7 +691,7 @@ CREATE TABLE IF NOT EXISTS campaign_tasks (
 CREATE INDEX IF NOT EXISTS idx_campaign_tasks_event ON campaign_tasks(event_id, due_date);
 CREATE INDEX IF NOT EXISTS idx_campaign_tasks_due ON campaign_tasks(done_at, due_date);
 
--- ---------- Moonlight quotes (docs/QUOTES-DESIGN.md) ----------
+-- ---------- band quotes (docs/QUOTES-DESIGN.md) ----------
 -- A price quote for a show. A template is a row of the same table with is_template = 1: the
 -- usual intro, lines and terms, with no client, number or validity of its own, so it is
 -- edited in the same editor and a new quote is a copy of it with three fields filled in.
@@ -694,7 +702,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   id TEXT PRIMARY KEY,
   is_template INTEGER NOT NULL DEFAULT 0,
   template_name TEXT,
-  quote_number TEXT UNIQUE,               -- ML-2026-001; NULL on a template
+  quote_number TEXT UNIQUE,               -- Q-2026-001; NULL on a template
   public_token TEXT UNIQUE,               -- the client's link; set when first sent
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft','sent','viewed','signed','cancelled')),
@@ -886,7 +894,7 @@ addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0'
 // them can be added from the screen that noticed it was missing and can never point at two
 // suppliers at once. The `aliases` column is frozen rather than dropped: it is what the
 // migration read from, and keeping it is the way back if a mapping ever looks wrong. Nothing
-// reads it any more — moonlight_supplier_aliases_v1 in settings marks when it stopped being
+// reads it any more — the supplier-aliases migration flag in settings marks when it stopped being
 // the truth.
 addColumnIfMissing('band_suppliers', 'tax_id', 'TEXT');
 addColumnIfMissing('band_suppliers', 'morning_supplier_id', 'TEXT');
@@ -1039,6 +1047,27 @@ export function getVatPercent(): number {
   return parseFloat(getSetting('vat_percent', '18'));
 }
 
+/** What the sub-business is called until somebody names it — the band is the default kind. */
+export const DEFAULT_BAND_NAME = 'הלהקה';
+
+/**
+ * The name of the band (or whatever the second set of books is for), as the UI, the quote
+ * templates, the advisor prompt and the reminder emails show it. Set in Settings → כללי.
+ */
+export function getBandName(): string {
+  return getSetting('band_name', '').trim() || DEFAULT_BAND_NAME;
+}
+
+/**
+ * The producer fee a new show starts with, as a percentage of its profit. 20% with two
+ * managers in a band of four nets 30/30/20/20; with one owner-manager it is the owner's cut.
+ * Set in Settings → כללי; each show can still override it.
+ */
+export function getDefaultCommissionPercent(): number {
+  const percent = parseFloat(getSetting('band_commission_percent', '20'));
+  return Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 20;
+}
+
 /** How far back each Morning pull looks, in days. */
 export function getMorningSyncDays(): number {
   return parseInt(getSetting('morning_sync_days', '90'), 10) || 90;
@@ -1163,6 +1192,41 @@ function seedSupplierRoles() {
 }
 
 seedSupplierRoles();
+
+/**
+ * The cost lines the app ships with — the twelve columns band_event_expenses is created with.
+ * Seeded once; from then on the band owns the list (server/expenseCategories.ts). The seven
+ * «settles» lines are the ones paid to somebody after the show and so carry an open/paid state.
+ */
+function seedExpenseCategories() {
+  const seeded = db.prepare('SELECT COUNT(*) AS n FROM band_expense_categories').get() as { n: number };
+  if (seeded.n) return;
+  const insert = db.prepare(
+    'INSERT INTO band_expense_categories (key, name, settles, active, builtin, sort_order) VALUES (?, ?, ?, 1, 1, ?)'
+  );
+  const rows: Array<[string, string, number]> = [
+    ['lightman', 'תאורן', 1],
+    ['soundman', 'סאונדמן', 1],
+    ['singer', 'זמר/ת', 1],
+    ['sound_company', 'חברת הגברה', 1],
+    ['hall_fee', 'שכירות אולם', 1],
+    ['bracelets', 'צמידים', 1],
+    ['akom', 'אקו"ם', 1],
+    ['campaign', 'קמפיין', 0],
+    ['refreshments', 'כיבוד', 0],
+    ['design', 'עיצוב', 0],
+    ['other', 'אחר', 0],
+    ['expense_amount', 'הוצאה נוספת', 0],
+  ];
+  // A database that renamed a role before the categories table existed keeps that name.
+  const roleName = db.prepare('SELECT name FROM band_supplier_roles WHERE key = ?');
+  rows.forEach(([key, name, settles], i) => {
+    const role = roleName.get(key) as { name: string } | undefined;
+    insert.run(key, role?.name || name, settles, i);
+  });
+}
+
+seedExpenseCategories();
 
 /**
  * Rewrites the supplier tables that were shaped around exactly four roles and exactly one kind

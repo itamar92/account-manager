@@ -14,10 +14,10 @@
  * token and no write path: nothing it says takes effect until a person acts on it.
  */
 
-import { db, uuid, setSetting } from './db.js';
+import { db, uuid, setSetting, getBandName } from './db.js';
 import { runAgent, AgentError } from './agentClient.js';
 import { adAnalysis, campaignDaily, listCampaigns, monthlyBreakdown, pastAdCopy } from './metaSync.js';
-import { eventLabel } from './moonlight.js';
+import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
 
 // ---------------------------------------------------------------- context
@@ -116,13 +116,13 @@ export function buildContext(range: { from?: string; to?: string } = {}): Advise
 /**
  * What the agent needs to know about this band to judge a campaign at all.
  *
- * The economics are the whole point: a Moonlight campaign is not selling a product with a margin,
+ * The economics are the whole point: a show campaign is not selling a product with a margin,
  * it is filling a room on one night for a fee that is fixed before the ads start. So reach and
  * impressions are means, tickets are the end, and a campaign that spent well after the show is
  * money that could not possibly have worked.
  */
-const BAND_BRIEF = `
-אתה יועץ פרסום דיגיטלי של להקת "Moonlight" — להקת הופעות חיה בישראל.
+const bandBrief = () => `
+אתה יועץ פרסום דיגיטלי של להקת "${getBandName()}" — להקת הופעות חיה בישראל.
 הלהקה מפרסמת הופעות בפייסבוק ובאינסטגרם דרך Meta Ads. הכלכלה של קמפיין כאן:
 
 - לכל הופעה יש תאריך אחד. אחרי התאריך, כל שקל שהקמפיין ממשיך להוציא הוא בזבוז מוחלט.
@@ -176,7 +176,7 @@ export const ADVISOR_METHOD = `
 /** Wraps a task and its schema around the context, and demands JSON and nothing else. */
 export function buildPrompt(task: string, schema: string, context: unknown): string {
   return [
-    BAND_BRIEF,
+    bandBrief(),
     '',
     ADVISOR_METHOD,
     '',

@@ -5,9 +5,17 @@ import {
 } from './calendarRules.js';
 import {
   ensureExpenseRow, eventSharesTotal, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel,
-} from './moonlight.js';
+} from './band.js';
 import { setEventAttendees } from './assignments.js';
 import { linkQuotesByCalendar } from './quoteShow.js';
+
+/** Who a synced show's money is received by, by default: the person whose books these are. */
+function ownerName(): string | null {
+  const owner = db
+    .prepare("SELECT name FROM users WHERE role = 'owner' ORDER BY created_at LIMIT 1")
+    .get() as { name: string } | undefined;
+  return owner?.name ?? null;
+}
 
 export interface RuleSyncResult {
   ruleId: string;
@@ -162,7 +170,7 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   db.prepare(
     `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver)
      VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, title, date, event.id, location, 'איתמר');
+  ).run(id, title, date, event.id, location, ownerName());
   ensureExpenseRow(getEvent(id));
   setEventAttendees(id, guests);
   tally.created++;

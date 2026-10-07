@@ -88,6 +88,8 @@ export function updateRole(key: string, patch: { name?: unknown; required?: unkn
     // A role nobody is staffed on cannot be missing from a show: switching it off has to take
     // the nag with it, or every show would ask for somebody the band no longer hires.
     .run(name, active ? required : 0, active, key);
+  // The role and the cost line it pays out of are one thing wearing one name.
+  db.prepare('UPDATE band_expense_categories SET name = ? WHERE key = ?').run(name, key);
   return db.prepare('SELECT * FROM band_supplier_roles WHERE key = ?').get(key) as SupplierRole;
 }
 

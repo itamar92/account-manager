@@ -2,7 +2,7 @@ name: Deploy
 
 # The `git pull && docker compose up -d --build` from deploy/README.md, run for
 # you when master changes something the running app is built from. Everything
-# else in this repo — the Python scripts, the JSON ledgers, docs — is not part of
+# else in this repo — the Python scripts, docs — is not part of
 # the image, so a commit touching only those does not redeploy.
 on:
   push:
@@ -10,7 +10,6 @@ on:
     paths:
       - 'app/**'
       - 'deploy/**'
-      - 'invoices_2026.csv'   # baked into the image for the first-run seed
       - '.github/workflows/deploy.yml'
       - '.github/workflows/ci.yml'
   workflow_dispatch:          # redeploy the current master on demand
@@ -32,7 +31,6 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production
-      url: https://im-tools.org
 
     steps:
       # Fail with something readable rather than an ssh error nobody can place.

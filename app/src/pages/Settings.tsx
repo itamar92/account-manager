@@ -27,7 +27,7 @@ const SECTION_TITLES: Record<Section, string> = {
 };
 
 const SECTION_SUBS: Record<Section, string> = {
-  general: 'מע"מ וטווח הסנכרון מ-Morning',
+  general: 'שמות, מע"מ, דמי הפקה וטווח הסנכרון מ-Morning',
   business: 'פרטי העוסק כפי שהם מופיעים על מסמכים',
   connections: 'מקורות הנתונים והסוכן — הרצה ידנית ובדיקת חיבור',
   agent: 'חיבור ה-SSH ליועץ הקמפיינים — שרת, משתמש ומפתח',
@@ -55,6 +55,9 @@ export function Settings() {
   const [editUser, setEditUser] = useState<any | null>(null);
   const [vat, setVat] = useState('');
   const [syncDays, setSyncDays] = useState('90');
+  const [appName, setAppName] = useState('');
+  const [bandName, setBandName] = useState('');
+  const [commission, setCommission] = useState('20');
   const [generalSaved, setGeneralSaved] = useState('');
   const [vatFrequency, setVatFrequency] = useState('bimonthly');
   const [creditPoints, setCreditPoints] = useState('2.25');
@@ -72,6 +75,9 @@ export function Settings() {
         setData(d);
         setVat(String(d.settings.vat_percent));
         setSyncDays(String(d.settings.morning_sync_days));
+        setAppName(String(d.settings.app_name ?? ''));
+        setBandName(String(d.settings.band_name ?? ''));
+        setCommission(String(d.settings.band_commission_percent ?? 20));
         setVatFrequency(d.settings.vat_report_frequency);
         setCreditPoints(String(d.settings.tax_credit_points));
         setMetaRate(String(d.settings.meta_currency_rate));
@@ -102,7 +108,7 @@ export function Settings() {
               ? ` · ${r.applied.settled} שולמו לנגנים (מוקפאות${r.applied.settled_stale ? `, מתוכן ${r.applied.settled_stale} עם הוצאה שגדלה מאז` : ''})`
               : '') +
             (r.applied.unmapped_campaigns
-              ? `\n· ${r.applied.unmapped_campaigns} קמפיינים ללא שיוך להופעה — ${amount(r.applied.unmapped_spend)} ₪ ממתינים לשיוך ב-Moonlight → פרסום`
+              ? `\n· ${r.applied.unmapped_campaigns} קמפיינים ללא שיוך להופעה — ${amount(r.applied.unmapped_spend)} ₪ ממתינים לשיוך ב-הלהקה → פרסום`
               : '') +
             (r.warning ? `\n⚠ ${r.warning}` : '')
           : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
@@ -174,7 +180,10 @@ export function Settings() {
     setError('');
     setGeneralSaved('');
     try {
-      await post('/settings', { vat_percent: parseFloat(vat), morning_sync_days: parseInt(syncDays, 10) });
+      await post('/settings', {
+        vat_percent: parseFloat(vat), morning_sync_days: parseInt(syncDays, 10),
+        app_name: appName, band_name: bandName, band_commission_percent: parseFloat(commission),
+      });
       setGeneralSaved('ההגדרות נשמרו');
       load();
     } catch (err: any) { setError(err.message); }
@@ -253,12 +262,20 @@ export function Settings() {
           כך שהרחבת הטווח וסנכרון חוזר היא הדרך לתקן שורות ישנות שנמשכו בעבר.
         </p>
         {generalSaved && <div className="text-sm text-pos mb-3">{generalSaved}</div>}
-        <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
+        <div className="grid gap-3 md:grid-cols-2 max-w-xl">
+          <Input label="שם האפליקציה" value={appName} onChange={(e) => setAppName(e.target.value)} />
+          <Input label="שם הלהקה (העסק המשני)" value={bandName} onChange={(e) => setBandName(e.target.value)} />
           <Input label='מע"מ (%)' type="number" step="0.1" value={vat} onChange={(e) => setVat(e.target.value)} />
+          <Input label="דמי הפקה ברירת מחדל (%)" type="number" step="1" min="0" max="100" value={commission}
+            onChange={(e) => setCommission(e.target.value)} />
           <Input label="טווח סנכרון מ-Morning (ימים)" type="number" min="1" max="1825" value={syncDays}
             onChange={(e) => setSyncDays(e.target.value)} />
-          <Button variant="ghost" onClick={saveGeneral}>שמירה</Button>
+          <div className="flex items-end"><Button variant="ghost" onClick={saveGeneral}>שמירה</Button></div>
         </div>
+        <p className="text-xs text-faint mt-3">
+          שם הלהקה מופיע בכל מסך של האזור השני, בתבניות הצעות המחיר, במיילי התזכורת ובפנייה ליועץ הקמפיינים.
+          דמי ההפקה הם אחוז הרווח שעובר למנהלי הלהקה לפני החלוקה השווה — ניתן לשנות בכל הופעה בנפרד.
+        </p>
       </Card>
       )}
 
@@ -425,7 +442,7 @@ export function Settings() {
 
         <p className="text-xs text-faint mt-4">
           סנכרון Meta מושך את הקמפיינים וההוצאה היומית שלהם, ומזין את עמודת «קמפיין» של כל הופעה
-          שקמפיין שויך אליה. השיוך עצמו נעשה ב-Moonlight → פרסום, ידנית: שם של קמפיין נכתב לבני
+          שקמפיין שויך אליה. השיוך עצמו נעשה ב-הלהקה → פרסום, ידנית: שם של קמפיין נכתב לבני
           אדם, וקמפיין שקידם כמה הופעות לא ניתן לפצל לפי שום כלל אוטומטי.
         </p>
       </Card>
@@ -438,7 +455,7 @@ export function Settings() {
       {sec === 'users' && (
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-faint">חברי להקה (role: band) רואים רק את אזור Moonlight</p>
+          <p className="text-xs text-faint">חברי להקה (role: band) רואים רק את אזור הלהקה</p>
           <Button onClick={openNewUser}>+ משתמש</Button>
         </div>
         <div className="divide-y divide-line">
@@ -516,7 +533,7 @@ export function Settings() {
             <span className="block text-sm text-muted mb-1">תפקיד</span>
             <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
               className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
-              <option value="band">חבר להקה (Moonlight בלבד)</option>
+              <option value="band">חבר להקה (אזור הלהקה בלבד)</option>
               <option value="owner">בעלים (גישה מלאה)</option>
             </select>
           </label>

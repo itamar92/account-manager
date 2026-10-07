@@ -14,7 +14,8 @@ set -euo pipefail
 
 # Through the tunnel rather than localhost, so the cloudflared connection counts
 # as network activity too. Falls back to the container if the tunnel is down.
-APP_URL="${APP_URL:-https://im-tools.org/api/health}"
+# Set APP_URL to your deployment's health endpoint, e.g. https://your-domain.com/api/health
+APP_URL="${APP_URL:?set APP_URL to the app's /api/health URL}"
 
 curl -fsS --max-time 20 "$APP_URL" >/dev/null \
   || docker compose -f /opt/account-manager/deploy/docker-compose.yml exec -T app \

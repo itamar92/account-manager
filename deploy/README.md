@@ -1,11 +1,11 @@
-# Deploying Account Manager to `im-tools.org`
+# Deploying Account Manager to your own domain
 
 Oracle Cloud Always Free VM running the app in Docker, exposed through a
 Cloudflare Tunnel. No open ports, no public IP, no certificate to renew.
 
 ```
 browser ──https──▶ Cloudflare edge ──tunnel──▶ cloudflared ──▶ app:3000
-                    (im-tools.org)              (on the VM, outbound only)
+                    (your-domain.com)           (on the VM, outbound only)
 ```
 
 ## Why this shape
@@ -83,7 +83,7 @@ In **Cloudflare Zero Trust → Networks → Tunnels → Create a tunnel** (Cloud
 1. Name it `account-manager`. Copy the **token** from the install command shown —
    that single value is all the VM needs.
 2. Under **Public Hostnames**, add:
-   - Subdomain: *(blank)* · Domain: `im-tools.org` · Path: *(blank)*
+   - Subdomain: *(blank)* · Domain: `your-domain.com` · Path: *(blank)*
    - Service: `HTTP` → `app:3000`
 
    `app` is the compose service name; cloudflared resolves it on the compose
@@ -94,7 +94,7 @@ In **Cloudflare Zero Trust → Networks → Tunnels → Create a tunnel** (Cloud
 
 ```bash
 sudo mkdir -p /opt/account-manager && sudo chown $USER /opt/account-manager
-git clone https://github.com/itamar92/account-manager.git /opt/account-manager
+git clone https://github.com/<your-github-user>/account-manager.git /opt/account-manager
 cd /opt/account-manager/deploy
 cp .env.example .env && chmod 600 .env
 $EDITOR .env          # TUNNEL_TOKEN + SEED_* are required
@@ -104,21 +104,22 @@ docker compose logs -f
 
 The first build compiles `better-sqlite3` from source for ARM64 and takes a few
 minutes. On first start the app creates and seeds the database inside the
-`am-data` volume, importing `invoices_2026.csv` and the Moonlight data.
+`am-data` volume with a single owner account (`SEED_OWNER_EMAIL`, `SEED_OWNER_PASSWORD`).
+Everything else arrives through the integrations or is typed in.
 
-`im-tools.org` should now serve the app over HTTPS.
+Your domain should now serve the app over HTTPS.
 
 ### Set the passwords before you start
 
-`SEED_OWNER_PASSWORD` and `SEED_BAND_PASSWORD` are read **only** when the
+`SEED_OWNER_EMAIL` and `SEED_OWNER_PASSWORD` are read **only** when the
 database is first created. The app now refuses to start in production if they
-are unset, rather than seeding the defaults that are written down in the repo.
+is unset, rather than seeding the default that is written down in the repo.
 To change a password afterwards, do it in the app — editing `.env` later has no
 effect.
 
 ## 4a. The AI agent (optional)
 
-**Moonlight → יועץ קמפיינים** asks an AI agent whether the band's ad spend was worth it. It
+**הלהקה → יועץ קמפיינים** asks an AI agent whether the band's ad spend was worth it. It
 reaches that agent **over SSH**, not over an HTTP API: the agent is a command-line tool on a
 machine where it is already logged in, and the app opens a session, writes the prompt to its
 stdin and reads the answer back.
@@ -302,12 +303,12 @@ The app's MCP server (`/mcp`, `app/README.md`) exposes the whole dataset as read
 Create a key in **Settings → מפתחות API**, then:
 
 ```bash
-claude mcp add --transport http account-manager https://im-tools.org/mcp \
+claude mcp add --transport http account-manager https://your-domain.com/mcp \
   --header "X-API-Key: am_…" --scope user
 claude              # /mcp shows the server as connected, or names the HTTP status if not
 ```
 
-The URL is the public one even from the VM: the container publishes no port, so `im-tools.org`
+The URL is the public one even from the VM: the container publishes no port, so your domain
 through the tunnel is the only way in. The key lands in `~/.claude.json` in the clear — revoke it
 in the same settings page if the account is ever compromised, and give the VM its own key so
 revoking it costs nothing elsewhere.
@@ -396,8 +397,8 @@ crontab -e
 ## 7. Optional: put Cloudflare Access in front
 
 This app holds your invoicing data behind one password. Zero Trust → Access →
-Applications, self-hosted, `im-tools.org`, policy `emails: itamar92@gmail.com` +
-the band addresses. Free up to 50 users.
+Applications, self-hosted, your domain, policy `emails:` your own address plus
+the band members' addresses. Free up to 50 users.
 
 One catch: **exclude `/api/v1` and `/mcp`**, or the `X-API-Key` calls behind them —
 the Morning integration and the MCP server that Claude Desktop connects to — will
@@ -407,7 +408,7 @@ service-token policy if you want them authenticated at the edge too.
 **Clients' quote links need the same.** A client opening a quote from WhatsApp or an email has
 no Access login, so add a Bypass policy for `/q/*`, `/api/public/*` and `/assets/*` (the page's
 script and styles). The alternative is a second public hostname on the same tunnel, such as
-`quotes.im-tools.org`, left outside Access, with `PUBLIC_BASE_URL=https://quotes.im-tools.org` in
+`quotes.your-domain.com`, left outside Access, with `PUBLIC_BASE_URL=https://quotes.your-domain.com` in
 `.env` so the links the app writes point there.
 
 The symptom is specific and worth recognising: Access answers an unauthenticated
@@ -427,9 +428,8 @@ The database is in a named volume, untouched by rebuilds.
 ## Automatic deploys
 
 `.github/workflows/deploy.yml` runs exactly that update over SSH when `master`
-changes something the image is built from — `app/`, `deploy/`, `invoices_2026.csv`
-or the workflows themselves. A commit touching only the Python scripts, the JSON
-ledgers or the docs does not redeploy. **Run workflow** on the Actions tab
+changes something the image is built from — `app/`, `deploy/` or the workflows
+themselves. A commit touching only the Python scripts or the docs does not redeploy. **Run workflow** on the Actions tab
 redeploys the current `master` on demand.
 
 It typechecks and builds the commit first (the same job every pull request runs),

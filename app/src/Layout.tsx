@@ -8,7 +8,7 @@ import {
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
 import { get } from './api';
-import { MoneyCalculator } from './pages/moonlight/MoneyCalculator';
+import { MoneyCalculator } from './pages/band/MoneyCalculator';
 
 type NavItem = { to: string; label: string; icon: React.ElementType; badge?: number };
 type NavGroup = { head?: string; items: NavItem[] };
@@ -46,31 +46,31 @@ const bizNav = (inboxBadge?: number): NavGroup[] => [
 const moonNav: NavGroup[] = [
   {
     items: [
-      { to: '/moonlight/summary', label: 'סקירה כספית', icon: Wallet },
+      { to: '/band/summary', label: 'סקירה כספית', icon: Wallet },
       // A show's income, costs and staffing live on the show itself, so this one entry is
       // the way into all three.
-      { to: '/moonlight/shows', label: 'הופעות', icon: Music },
+      { to: '/band/shows', label: 'הופעות', icon: Music },
       // Where a show is sold before it is one — and the one screen here the band edits too.
-      { to: '/moonlight/quotes', label: 'הצעות מחיר', icon: FileSignature },
+      { to: '/band/quotes', label: 'הצעות מחיר', icon: FileSignature },
     ],
   },
   {
     head: 'כסף',
     items: [
-      { to: '/moonlight/suppliers', label: 'ספקים וחברים', icon: Users },
+      { to: '/band/suppliers', label: 'ספקים וחברים', icon: Users },
       // What went out to the suppliers, and which of it still owes the books a document.
-      { to: '/moonlight/supplierPayments', label: 'תשלומים לספקים', icon: HandCoins },
+      { to: '/band/supplierPayments', label: 'תשלומים לספקים', icon: HandCoins },
       // What each supplier is called on the invoices they send, which is what lets the two
       // entries above it recognise a document without being asked every time.
-      { to: '/moonlight/supplierNames', label: 'שמות בחשבוניות', icon: Tags },
-      { to: '/moonlight/generalExpenses', label: 'הוצאות כלליות', icon: Receipt },
+      { to: '/band/supplierNames', label: 'שמות בחשבוניות', icon: Tags },
+      { to: '/band/generalExpenses', label: 'הוצאות כלליות', icon: Receipt },
     ],
   },
   {
     head: 'פרסום',
     items: [
-      { to: '/moonlight/ads', label: 'קמפיינים', icon: Megaphone },
-      { to: '/moonlight/campaignAi', label: 'יועץ קמפיינים', icon: Sparkles },
+      { to: '/band/ads', label: 'קמפיינים', icon: Megaphone },
+      { to: '/band/campaignAi', label: 'יועץ קמפיינים', icon: Sparkles },
     ],
   },
 ];
@@ -80,8 +80,8 @@ const quickActions = [
   { to: '/works?new=1', label: 'עבודה חדשה' },
   { to: '/invoices', label: 'חשבונית מעבודות' },
   { to: '/clients?new=1', label: 'לקוח חדש' },
-  { to: '/moonlight/shows?new=1', label: 'הופעה חדשה' },
-  { to: '/moonlight/quotes?new=1', label: 'הצעת מחיר חדשה' },
+  { to: '/band/shows?new=1', label: 'הופעה חדשה' },
+  { to: '/band/quotes?new=1', label: 'הצעת מחיר חדשה' },
 ];
 
 /**
@@ -97,10 +97,10 @@ const bizMobile: NavItem[] = [
 ];
 
 const moonMobile: NavItem[] = [
-  { to: '/moonlight/summary', label: 'סקירה', icon: Wallet },
-  { to: '/moonlight/shows', label: 'הופעות', icon: Music },
-  { to: '/moonlight/suppliers', label: 'ספקים', icon: Users },
-  { to: '/moonlight/ads', label: 'פרסום', icon: Megaphone },
+  { to: '/band/summary', label: 'סקירה', icon: Wallet },
+  { to: '/band/shows', label: 'הופעות', icon: Music },
+  { to: '/band/suppliers', label: 'ספקים', icon: Users },
+  { to: '/band/ads', label: 'פרסום', icon: Megaphone },
 ];
 
 /** Two Hebrew letters is what fits an avatar and still says who is signed in. */
@@ -108,7 +108,8 @@ const initials = (name: string) =>
   name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('') || '?';
 
 export function Layout() {
-  const { user, loading, logout } = useAuth();
+  const { user, branding, loading, logout } = useAuth();
+  const bandName = branding.band_name;
   const location = useLocation();
   const navigate = useNavigate();
   const [inboxCount, setInboxCount] = React.useState<number | undefined>();
@@ -116,7 +117,7 @@ export function Layout() {
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [calcOpen, setCalcOpen] = React.useState(false);
 
-  const moon = location.pathname.startsWith('/moonlight');
+  const moon = location.pathname.startsWith('/band');
 
   // The sheet is a way through to somewhere, so arriving there closes it.
   React.useEffect(() => setMoreOpen(false), [location.pathname]);
@@ -138,8 +139,8 @@ export function Layout() {
   if (!user) return <Navigate to="/login" replace />;
 
   const isOwner = user.role === 'owner';
-  // Band members are locked to the Moonlight area — personal accounting routes are owner-only.
-  if (!isOwner && !moon) return <Navigate to="/moonlight/summary" replace />;
+  // Band members are locked to the band area — personal accounting routes are owner-only.
+  if (!isOwner && !moon) return <Navigate to="/band/summary" replace />;
 
   const groups = moon ? moonNav : bizNav(inboxCount);
   const mobileItems = moon ? moonMobile : bizMobile;
@@ -170,7 +171,7 @@ export function Layout() {
           {isOwner && (
             <div className="hidden sm:flex gap-0.5 p-0.5 bg-soft border border-line rounded-full">
               <button className={wsChip(!moon)} onClick={() => navigate('/')}>עסק</button>
-              <button className={wsChip(moon)} onClick={() => navigate('/moonlight/summary')}>Moonlight</button>
+              <button className={wsChip(moon)} onClick={() => navigate('/band/summary')}>{bandName}</button>
             </div>
           )}
         </div>
@@ -200,7 +201,7 @@ export function Layout() {
               )}
             </div>
           )}
-          {/* Moonlight's pocket calculator. It floats over the page rather than replacing it,
+          {/* The band's pocket calculator. It floats over the page rather than replacing it,
               because both sums it does are read against numbers already on screen. */}
           {moon && isOwner && (
             <button
@@ -234,7 +235,7 @@ export function Layout() {
       {isOwner && (
         <div className="sm:hidden flex gap-0.5 p-0.5 mx-4 mt-3 bg-soft border border-line rounded-full">
           <button className={clsx(wsChip(!moon), 'flex-1')} onClick={() => navigate('/')}>עסק</button>
-          <button className={clsx(wsChip(moon), 'flex-1')} onClick={() => navigate('/moonlight/summary')}>Moonlight</button>
+          <button className={clsx(wsChip(moon), 'flex-1')} onClick={() => navigate('/band/summary')}>{bandName}</button>
         </div>
       )}
 
@@ -295,7 +296,7 @@ export function Layout() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-3">
-              <h2 className="ser text-lg">{moon ? 'Moonlight' : 'העסק'} · כל המסכים</h2>
+              <h2 className="ser text-lg">{moon ? bandName : 'העסק'} · כל המסכים</h2>
               <button
                 onClick={() => setMoreOpen(false)}
                 className="bg-soft rounded-lg w-8 h-8 text-ink-2 leading-none shrink-0"

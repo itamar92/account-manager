@@ -8,11 +8,11 @@ The other `adadvisor-*` skills were written for the adadvisor.ai MCP server (~33
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `moonlight_campaigns` | none · `campaign_id` · `unmapped_only` | All campaigns with status, objective, spend (ILS), `spend_original` + `currency`, impressions, clicks, reach, first/last spend date, mapped shows (`events[]` with `share` and `attributed` spend), `suggestions[]` for unmapped ones. With `campaign_id`: `daily[]` of `{date, spend, impressions, clicks}`. |
-| `moonlight_ad_analysis` | `from`, `to` (`YYYY-MM-DD`) | `rows[]` per show: `tickets`, `revenue` (the fee), `ad_spend`, `campaign_on_row`, `cost_per_ticket`, `spend_share_of_revenue`, `clicks`, `impressions`, `spend_months`, `spending_after_show`, `settled`, `profit`. `totals` incl. `unmapped_spend`. `monthly_invoices`. |
-| `moonlight_shows` | `from`, `to` | Shows: venue, date, tickets, fee, expenses, profit. |
-| `moonlight_summary` | `from`, `to` | Band totals and follow-up lists (incl. upcoming shows). |
-| `moonlight_campaign_advice` | `from`, `to` | The last stored in-app advisor report — findings and ranked suggestions. Never triggers a new analysis. |
+| `band_campaigns` | none · `campaign_id` · `unmapped_only` | All campaigns with status, objective, spend (ILS), `spend_original` + `currency`, impressions, clicks, reach, first/last spend date, mapped shows (`events[]` with `share` and `attributed` spend), `suggestions[]` for unmapped ones. With `campaign_id`: `daily[]` of `{date, spend, impressions, clicks}`. |
+| `band_ad_analysis` | `from`, `to` (`YYYY-MM-DD`) | `rows[]` per show: `tickets`, `revenue` (the fee), `ad_spend`, `campaign_on_row`, `cost_per_ticket`, `spend_share_of_revenue`, `clicks`, `impressions`, `spend_months`, `spending_after_show`, `settled`, `profit`. `totals` incl. `unmapped_spend`. `monthly_invoices`. |
+| `band_shows` | `from`, `to` | Shows: venue, date, tickets, fee, expenses, profit. |
+| `band_summary` | `from`, `to` | Band totals and follow-up lists (incl. upcoming shows). |
+| `band_campaign_advice` | `from`, `to` | The last stored in-app advisor report — findings and ranked suggestions. Never triggers a new analysis. |
 | `get_overview` | `year` | Orientation, P&L by month, band totals. |
 
 ## Reads: upstream tool → what to do
@@ -20,11 +20,11 @@ The other `adadvisor-*` skills were written for the adadvisor.ai MCP server (~33
 | Upstream | Here |
 |---|---|
 | `list_ad_accounts` | Not needed — there is one account, fixed in the app. Currency is ILS in all outputs. |
-| `adadvisor://account/{id}/context` (break-even ROAS, AOV, target CPL, budget cap, brand details) | **No equivalent.** Replace with the show economics in `economics.md`: the band's own cost-per-ticket history from `moonlight_ad_analysis`. Brand voice and audience: ask the user, or use the stored advisor report. |
-| `list_campaigns` | `moonlight_campaigns` |
-| `get_performance(level=campaign)` | `moonlight_campaigns` (lifetime) or `moonlight_ad_analysis` (per show). Spend, impressions, clicks, reach only. |
+| `adadvisor://account/{id}/context` (break-even ROAS, AOV, target CPL, budget cap, brand details) | **No equivalent.** Replace with the show economics in `economics.md`: the band's own cost-per-ticket history from `band_ad_analysis`. Brand voice and audience: ask the user, or use the stored advisor report. |
+| `list_campaigns` | `band_campaigns` |
+| `get_performance(level=campaign)` | `band_campaigns` (lifetime) or `band_ad_analysis` (per show). Spend, impressions, clicks, reach only. |
 | `get_performance(level=adset\|ad)` | **Not available.** Say "campaign level only"; ask the user to paste the Ads Manager breakdown. |
-| `get_timeseries` (campaign) | `moonlight_campaigns` with `campaign_id` — daily spend, impressions, clicks. No daily reach or frequency. |
+| `get_timeseries` (campaign) | `band_campaigns` with `campaign_id` — daily spend, impressions, clicks. No daily reach or frequency. |
 | `get_timeseries` (adset / ad) | **Not available.** |
 | `list_adsets`, `list_ads`, `list_creatives` | **Not available.** |
 | `get_pixel_health` | **Not available.** The pixel/EMQ checks in the audit cannot be run from data; ask the user to check Events Manager, and say the audit is therefore partial. |
@@ -61,4 +61,4 @@ Every row below becomes a **written instruction** with the entity name, setting,
 
 ## Naming
 
-Upstream auto-generates names like `ADADVISOR || CBO || TOF || …`. Do not. When proposing names in a build sheet, **match what the account already uses** — read the names from `moonlight_campaigns` and follow the pattern, and where a show is involved, include the show's label (`label` from `moonlight_shows`) so the app's mapping suggestions can match it later (`suggestions[]` are based on the campaign name).
+Upstream auto-generates names like `ADADVISOR || CBO || TOF || …`. Do not. When proposing names in a build sheet, **match what the account already uses** — read the names from `band_campaigns` and follow the pattern, and where a show is involved, include the show's label (`label` from `band_shows`) so the app's mapping suggestions can match it later (`suggestions[]` are based on the campaign name).

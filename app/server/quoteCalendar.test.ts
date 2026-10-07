@@ -60,13 +60,13 @@ const shows = await import('./quoteShow.js');
 
 const USER = 'cal-user';
 const PNG = 'data:image/png;base64,' + Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(120, 1)]).toString('base64');
-const MEMBERS = ['amir@moonlight.band', 'itamar@moonlight.band'];
+const MEMBERS = ['noa@example.com', 'dana@example.com'];
 
 before(() => {
   db.prepare("INSERT INTO users (id, email, name, password_hash, role) VALUES (?, 'cal@test', 'בדיקה', 'x', 'band')").run(USER);
   const member = db.prepare('INSERT INTO band_members (id, member_key, name, email, active) VALUES (?, ?, ?, ?, 1)');
-  member.run('m1', 'amir', 'אמיר', MEMBERS[0]);
-  member.run('m2', 'itamar', 'איתמר', MEMBERS[1]);
+  member.run('m1', 'm_noa', 'נועה', MEMBERS[0]);
+  member.run('m2', 'm_dana', 'דנה', MEMBERS[1]);
   db.prepare("INSERT INTO band_suppliers (id, name, email, role) VALUES ('s1', 'דני סאונד', 'dani@sound.test', 'soundman')").run();
 });
 // fetch keeps its connections open for reuse; the fake drops them so the test process can end.
@@ -88,7 +88,7 @@ const showOf = (quoteId: string) => {
 test('a new event starts as the band writes them, with every member invited', async () => {
   const draft = await cal.calendarDraft(quoteFor('2032-01-10'));
   assert.equal(draft.configured, true);
-  assert.equal(draft.form.title, 'אופציה - הופעה קולדפליי אירוע חברה קיסריה');
+  assert.equal(draft.form.title, 'אופציה - הופעה הלהקה אירוע חברה קיסריה');
   assert.equal(draft.form.location, 'קיסריה');
   assert.deepEqual([...draft.form.attendees].sort(), [...MEMBERS].sort());
   assert.ok(draft.suppliers.some((s) => s.email === 'dani@sound.test' && s.role_name));
@@ -97,7 +97,7 @@ test('a new event starts as the band writes them, with every member invited', as
 test('the option goes on the calendar, invites go out, and the show comes from the calendar', async () => {
   const id = quoteFor('2032-02-10');
   const made = await cal.createQuoteEvent(id, {
-    title: 'אופציה - הופעה קולדפליי אירוע חברה קיסריה', location: 'אמפי קיסריה',
+    title: 'אופציה - הופעה הלהקה אירוע חברה קיסריה', location: 'אמפי קיסריה',
     start_time: '20:30', attendees: [...MEMBERS, 'dani@sound.test'],
   });
   const insert = requests.filter((r) => r.method === 'POST' && r.path.endsWith('/events')).at(-1)!;
@@ -110,7 +110,7 @@ test('the option goes on the calendar, invites go out, and the show comes from t
 
   // The sync's own path: «הופעה» comes out of the name, the option stays in it.
   const show = showOf(id);
-  assert.equal(show.venue, 'אופציה - קולדפליי אירוע חברה קיסריה');
+  assert.equal(show.venue, 'אופציה - הלהקה אירוע חברה קיסריה');
   assert.equal(show.location, 'אמפי קיסריה');
   assert.equal(show.amount_pre_vat, 0);
   await assert.rejects(cal.createQuoteEvent(id, { title: 'x', attendees: [] }), (e: any) => e.status === 409);
@@ -118,12 +118,12 @@ test('the option goes on the calendar, invites go out, and the show comes from t
 
 test('once signed, the event drops «אופציה» and the show follows it', async () => {
   const id = quoteFor('2032-03-10');
-  await cal.createQuoteEvent(id, { title: 'אופציה - הופעה קולדפליי אירוע חברה', attendees: MEMBERS });
+  await cal.createQuoteEvent(id, { title: 'אופציה - הופעה הלהקה אירוע חברה', attendees: MEMBERS });
   const eventId = q.getQuote(id).quote.calendar_event_id;
   // Amir has answered the invitation; changing the title must not lose that.
   events.get(eventId).attendees[0].responseStatus = 'accepted';
 
-  link.sendQuote(id, USER, 'https://im-tools.org');
+  link.sendQuote(id, USER, 'https://example.com');
   const token = (db.prepare('SELECT public_token FROM band_quotes WHERE id = ?').get(id) as any).public_token;
   link.signQuote(token, { signer_name: 'אינטל', signature_png: PNG, consent: true, version: link.publicQuote(token).version }, { ip: '1', userAgent: 't' });
   assert.equal(showOf(id).amount_pre_vat, 20000);
@@ -131,14 +131,14 @@ test('once signed, the event drops «אופציה» and the show follows it', as
 
   const draft = await cal.calendarDraft(id);
   assert.equal(draft.event!.is_option, true);
-  assert.equal(draft.form.title, 'הופעה קולדפליי אירוע חברה');
+  assert.equal(draft.form.title, 'הופעה הלהקה אירוע חברה');
 
   await cal.updateQuoteEvent(id, draft.form);
   const patch = requests.filter((r) => r.method === 'PATCH').at(-1)!;
   assert.equal(patch.query.sendUpdates, 'all');
-  assert.equal(patch.body.summary, 'הופעה קולדפליי אירוע חברה');
+  assert.equal(patch.body.summary, 'הופעה הלהקה אירוע חברה');
   assert.equal(patch.body.attendees.find((a: any) => a.email === MEMBERS[0]).responseStatus, 'accepted');
-  assert.equal(showOf(id).venue, 'קולדפליי אירוע חברה');
+  assert.equal(showOf(id).venue, 'הלהקה אירוע חברה');
   assert.ok(!shows.quoteFollowUps().stillOption.some((m) => m.id === id));
 });
 

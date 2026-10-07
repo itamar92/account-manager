@@ -1,8 +1,8 @@
-# Moonlight Quotes (הצעות מחיר) — design
+# Band quotes (הצעות מחיר) — design
 
 Status: **draft for review** · 2026-09-30
 
-A quotes section inside Moonlight: build a price quote for a show, send the client a link on
+A quotes section inside the band workspace: build a price quote for a show, send the client a link on
 WhatsApp, let them sign it on their phone, and have the signed quote become a show in the books.
 
 The functional starting point is [itamar92/Quotes_Creator_System](https://github.com/itamar92/Quotes_Creator_System)
@@ -17,7 +17,7 @@ fixes the original's gaps as it goes (see [What we deliberately do not port](#wh
 | Client experience | **Full port**: a public branded page on a secret link, with a drawn signature |
 | Delivery | **A link, sent on WhatsApp or by email.** Both open from the sender's own WhatsApp or mail (a `wa.me`, `mailto:` or Gmail compose link), so the app itself sends nothing and the client's reply reaches a person. The email is designed HTML, pasted in from the clipboard, since a compose link carries plain text only |
 | Band members | Can **create, edit, send and delete any quote**, and manage packages and quote settings |
-| Identity on the quote | **Moonlight only**: band name, logo, contact person. No legal business details |
+| Identity on the quote | **band only**: band name, logo, contact person. No legal business details |
 | Extra contents | **Saved packages** (price list) and **file attachments** |
 | Signed copy | Frozen in the DB. The page has a **print layout**, and "save as PDF" comes from the browser |
 | Everyday quote | A **template** holds the usual content. A new quote asks only for client, date and price (see [Templates](#templates)) |
@@ -26,7 +26,7 @@ These were chosen by default and are open to change:
 
 - **Event types:** חתונה, בר/בת מצווה, אירוע פרטי, אירוע חברה, מועדון/הופעה, פסטיבל, אחר.
 - **VAT:** each quote says whether its prices include VAT or have VAT added. A setting supplies the default, and the rate comes from `getVatPercent()`.
-- **Numbering and validity:** quotes are numbered `ML-2026-001`, one sequence per year. They are valid for 14 days by default and expire at the end of the day, Israel time.
+- **Numbering and validity:** quotes are numbered `Q-2026-001`, one sequence per year. They are valid for 14 days by default and expire at the end of the day, Israel time.
 - **Declining:** the client cannot decline in v1. A quote nobody signs simply expires or gets cancelled.
 - **Out of scope:** Morning type-10 "הצעת מחיר" documents and MCP tools. Both are possible follow-ups.
 
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   id TEXT PRIMARY KEY,
   is_template INTEGER NOT NULL DEFAULT 0,     -- see Templates
   template_name TEXT,
-  quote_number TEXT UNIQUE,                   -- ML-2026-001; NULL on a template
+  quote_number TEXT UNIQUE,                   -- Q-2026-001; NULL on a template
   public_token TEXT UNIQUE,                   -- set on first send; regenerable
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft','sent','viewed','signed','cancelled')),
@@ -152,7 +152,7 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
 - `quote_validity_days` (14)
 - `quote_prices_include_vat`
 - `quote_message_template`, `quote_email_subject` (empty = the defaults in `server/quoteShare.ts`)
-- `quote_builtin_template_seeded` (Moonlight's own), `quote_builtin_template_seeded_<key>` (the others)
+- `quote_builtin_template_seeded` (the band's own), `quote_builtin_template_seeded_<key>` (the others)
 - `quote_seq_<year>`
 
 **Why items get their own table:** items are rows, not a JSON column. They are the thing that gets reordered and edited, and the rest of the schema is relational. The signed snapshot is the one place JSON is right, because it is a frozen record.
@@ -168,12 +168,12 @@ date and the price change. A **template** is where that usual content lives.
 - Because it is an ordinary quote row, it uses the same editor, the same preview and the same items. Later it will also carry the same attachments.
 
 **The built-in template**
-- The app comes with one: Moonlight's own quote, the Google Doc «Template הצעת מחיר — להקת המחווה לקולדפליי» that the band sent for years. Its content lives in `server/quoteTemplates.ts`.
+- The app comes with one: a standard show quote for a live band, with the band's name filled in from the settings. Its content lives in `server/quoteTemplates.ts`.
 - It is added once, at startup (`seedBuiltinTemplates`, guarded by the setting `quote_builtin_template_seeded`). After that it is an ordinary template the band edits. Deleting it is final, and «תבניות» → «תבנית מוכנה» adds a fresh copy.
 - Like any first template, it becomes the default only when there is no template yet.
-- **Two Eilat versions come with it**, from the quote sent for a show at Isla 42 Play: «אילת, ברכב» and «אילת, בטיסה». Each is seeded once under its own setting, after Moonlight's own, so an install that already had that one gets just these.
+- **Two Eilat versions come with it**, as the example of a show too far away to drive home from: «אילת, ברכב» and «אילת, בטיסה». Each is seeded once under its own setting, after the standard one, so an install that already had that one gets just these.
   - Eilat is too far to play and drive home the same night. Both carry a hotel night for the 7 of the band, booked by the production, plus dinner on the day and breakfast with the room. Both also cover a cancellation once the band is on the road, and הנחיות פיקוד העורף as force majeure.
-  - Both price the show at that quote's 30,000 ₪, so quick create needs no price typed.
+  - Both carry an example price of 30,000 ₪, so quick create needs no price typed.
   - **By car**, the road is a line of its own, «החזר הוצאות נסיעה», 2,500 ₪ before VAT, kept by quick create like any line after the first.
   - **By plane**, the production books the flights, the instruments' baggage and the transfers from Ramon, so there is no line for them. A line at no charge reads «כלול», as if the band paid.
 - Where the Doc's parts went:
@@ -263,7 +263,7 @@ draft ──send──▶ sent ──first public view──▶ viewed ──sig
 
 **Holding the date** («שריון ביומן כאופציה»):
 - Offered when a quote is created («הצעה חדשה» has the option ticked when the calendar is connected), and from the quote's «יומן והופעה» card at any time.
-- The dialog starts with the title as the band writes them, «אופציה - הופעה קולדפליי אירוע חברה קיסריה»: the event type (or the client), then the place. Everything is editable: the title, a start and end time (none = all-day), and the location.
+- The dialog starts with the title as the band writes them, «אופציה - הופעה הלהקה אירוע חברה קיסריה»: the event type (or the client), then the place. Everything is editable: the title, a start and end time (none = all-day), and the location.
 - **Who is invited:** every member with an email, ticked by default; any supplier, by role, unticked; and any other addresses. Google sends the invitations itself (`sendUpdates=all`). A supplier invited this way is staffed on the show automatically, since staffing already matches guests' emails.
 - The event goes on the calendar of the enabled band rule. The dialog warns when the title would not be read as a show: a missing keyword (`הופעה` by default), or an ignore word.
 - Once Google answers, that one event is run through the sync (`syncOneBandEvent`: the rule, `cleanTitle`, `applyBandEvent`), so the show appears at once rather than at the next sync. Only the band rule's half runs; a quote never touches the owner's personal works.
@@ -300,7 +300,7 @@ Built in `server/quoteShow.ts`. The steps below run right after the signature co
 - **All logged-in users** can read and write everything in the section: quotes, packages, quote settings and uploads. That means the owner and the band.
 - **The one exception is the signature.** It is the owner's own hand, signing for the band, so only the owner can upload, replace or remove it (`requireOwner` on those two routes). A band member's settings save has `signature_name` dropped, not refused, because their form still carries it unchanged.
   - These routes use `requireAuth`, not `requireOwner`.
-  - This is the first Moonlight area where band members write, which is deliberate. A comment at the router should say so, so nobody "fixes" it later.
+  - This is the first band area where band members write, which is deliberate. A comment at the router should say so, so nobody "fixes" it later.
 - **`created_by`/`updated_by`** are recorded and shown in the list ("נוצרה ע״י").
 - **Public API:** the token is the only credential. Anyone holding the link can view and sign that one quote, and nothing else.
 
@@ -312,7 +312,7 @@ Built in `server/quoteShow.ts`. The steps below run right after the signature co
 | `server/quoteLink.ts` | The client's side: sending and the link's token, the client-safe view, view counting, signing and the signed snapshot |
 | `server/quoteShare.ts` | The message and the WhatsApp, `mailto:` and Gmail links. No imports, so the share dialog uses the same file |
 | `src/quotes/quoteEmail.ts` | The HTML email: header, message, the offer's card and the button to the link. Built in the browser, from the message as edited |
-| `server/quoteRoutes.ts` | Authenticated router mounted at `/api/moonlight/quotes`. It lives in its own file because `routes.ts` is already 2,600 lines |
+| `server/quoteRoutes.ts` | Authenticated router mounted at `/api/band/quotes`. It lives in its own file because `routes.ts` is already 2,600 lines |
 | `server/publicQuotes.ts` | Unauthenticated router mounted at `/api/public/quotes`, ahead of `/api` |
 | `server/quoteFiles.ts` | Images and files: checking what an upload really is, storing it, serving it |
 
@@ -377,7 +377,7 @@ It then records `CF-Connecting-IP`, the user agent and the time, and freezes the
 - **Branding images:**
   - The logo and the signature are each one row with no quote, pointed at by a setting.
   - Replacing one inserts the new row and deletes the old one in a single transaction.
-  - They are served at `/api/moonlight/quotes/branding/:kind?v=<file id>`. Because the id is in the address, the image is cached forever and still never shown stale after a replacement.
+  - They are served at `/api/band/quotes/branding/:kind?v=<file id>`. Because the id is in the address, the image is cached forever and still never shown stale after a replacement.
 - **Limits:**
   - Images may be PNG, JPG or WebP, up to 5 MB.
   - Attachments (later) may also be PDF, up to 10 MB.
@@ -414,13 +414,13 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 
 **Routes** (`src/main.tsx`):
 
-- `/moonlight/quotes/new` and `/moonlight/quotes/:id` go inside `Layout`, before `/moonlight/:tab`.
-- `/moonlight/quotes` is a new `Tab` in `Moonlight.tsx`.
+- `/band/quotes/new` and `/band/quotes/:id` go inside `Layout`, before `/band/:tab`.
+- `/band/quotes` is a new `Tab` in `BandWorkspace.tsx`.
 - `/q/:token` sits outside `Layout`, like `/login`, and needs no login.
 
-**Nav:** add `{ to: '/moonlight/quotes', label: 'הצעות מחיר', icon: FileSignature }` to `moonNav`, plus a `moonMobile` slot or the «עוד» menu.
+**Nav:** add `{ to: '/band/quotes', label: 'הצעות מחיר', icon: FileSignature }` to `moonNav`, plus a `moonMobile` slot or the «עוד» menu.
 
-**QuotesTab** (`src/pages/moonlight/QuotesTab.tsx`, based on `SuppliersTab.tsx`):
+**QuotesTab** (`src/pages/band/QuotesTab.tsx`, based on `SuppliersTab.tsx`):
 
 - Stat cards:
   - Open quotes and their value.
@@ -432,7 +432,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 - Filters: search, status, period.
 - Buttons beside "+ הצעה חדשה": "תבניות" (list, open, set default, delete), "חבילות" (package CRUD in a `Modal`) and "הגדרות" (brand name, contact, validity, VAT mode; the WhatsApp template arrives with the client link).
 
-**QuoteEditor** (`src/pages/moonlight/QuoteEditor.tsx`):
+**QuoteEditor** (`src/pages/band/QuoteEditor.tsx`):
 
 - Two panes: the form on one side, and a live `<QuoteDocument>` preview on the other. On mobile these become toggled tabs.
 - Form sections:
@@ -444,7 +444,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
   - Validity.
   - Internal note.
 - Actions: שמירה, שליחה (opens the share dialog), and **תצוגה מקדימה**.
-  - The preview saves unsaved changes first, then opens `/moonlight/quotes/:id/preview`: the quote alone, outside the app's shell, as the client's link will show it.
+  - The preview saves unsaved changes first, then opens `/band/quotes/:id/preview`: the quote alone, outside the app's shell, as the client's link will show it.
   - On a computer it starts in a phone-width frame, since most clients read it from WhatsApp, with a switch to the wide version.
   - `QuoteDocument` sizes itself with a container query, so the frame, the editor's side panel and a real phone all get the same layout.
   - On a phone this is the editor's only preview; on a wide screen the live side preview stays.
@@ -469,7 +469,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 - Canvas: uses Pointer Events and scales by `devicePixelRatio`, fixing the original's touch and hi-DPI bugs.
 - After signing: a thank-you state and "שמירה כ-PDF", which calls `window.print()`. The `@media print` layout includes the signature, signer name and time.
 - Other states: expired, cancelled and already signed, the last one showing the signed copy.
-- The page sets `data-ws="moon"` for the Moonlight palette.
+- The page sets `data-ws="moon"` for the band palette.
 
 **Share dialog** (`QuoteShareModal.tsx`), opened by «שליחה ללקוח» in the editor:
 
@@ -481,7 +481,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 - The message comes from `quote_message_template`, with `{client_name}`, `{title}`, `{event_date}`, `{valid_until}`, `{link}`, `{contact_name}` and `{quote_number}` filled in. It can be edited in the dialog for one send, and the links follow the edit.
 - «קישור חדש במקום הזה» replaces the token, and the old link stops working. A signed quote keeps its link, since it is the client's copy.
 
-**Follow-ups** (`quoteFollowUps`, part of `bandFollowUps`), on the Moonlight summary and in the owner's inbox:
+**Follow-ups** (`quoteFollowUps`, part of `bandFollowUps`), on the band summary and in the owner's inbox:
 
 - Newly signed quotes, until someone in the band opens the quote (`signed_seen_at`, set by `GET /:id`).
 - Signed quotes with no show: several on the date, none yet from the calendar, a failure, or the show deleted since.
@@ -490,7 +490,7 @@ All of this lives in the quote settings, under "מיתוג" and "חתימה".
 
 ## Deployment note: Cloudflare Access
 
-`deploy/README.md` §7 marks Access as optional, and it could not be checked from here. If it is enabled on `im-tools.org`, add a **Bypass** policy for `/q/*`, `/api/public/*` and `/assets/*` (the SPA bundle the public page needs). Otherwise clients hit the Access login screen. An alternative is a separate hostname on the same tunnel, such as `quotes.im-tools.org`, left outside Access.
+`deploy/README.md` §7 marks Access as optional, and it could not be checked from here. If it is enabled on your domain, add a **Bypass** policy for `/q/*`, `/api/public/*` and `/assets/*` (the SPA bundle the public page needs). Otherwise clients hit the Access login screen. An alternative is a separate hostname on the same tunnel, such as `quotes.im-tools.org`, left outside Access.
 
 ## Testing
 

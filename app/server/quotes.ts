@@ -1,4 +1,4 @@
-import { db, uuid, getSetting, setSetting, getVatPercent } from './db.js';
+import { db, uuid, getSetting, setSetting, getVatPercent, getBandName } from './db.js';
 import { computeTotals, type QuoteLineInput } from './quoteMath.js';
 import { brandingUrl } from './quoteFiles.js';
 import { BUILTIN_TEMPLATES } from './quoteTemplates.js';
@@ -71,6 +71,8 @@ export function displayStatus(
 
 export interface QuoteSettings {
   brand_name: string;
+  /** The letters a quote number starts with: `Q-2026-001`. */
+  number_prefix: string;
   contact_name: string;
   contact_phone: string;
   validity_days: number;
@@ -99,7 +101,7 @@ export const LOGO_POSITIONS: LogoPosition[] = ['right', 'center', 'left'];
 const logoPosition = (value: unknown): LogoPosition =>
   LOGO_POSITIONS.includes(value as LogoPosition) ? (value as LogoPosition) : 'center';
 
-/** Moonlight's own ink and violet — what a quote wears until somebody chooses otherwise. */
+/** the band's own ink and violet — what a quote wears until somebody chooses otherwise. */
 export const DEFAULT_COLORS = { primary: '#241d3d', accent: '#6b45d6' };
 
 function color(field: string, value: unknown): string {
@@ -130,7 +132,8 @@ export function defaultTemplateId(): string | null {
 
 export function quoteSettings(): QuoteSettings {
   return {
-    brand_name: getSetting('quote_brand_name', 'Moonlight'),
+    brand_name: getSetting('quote_brand_name', '') || getBandName(),
+    number_prefix: quoteNumberPrefix(),
     contact_name: getSetting('quote_contact_name', ''),
     contact_phone: getSetting('quote_contact_phone', ''),
     validity_days: clampDays(getSetting('quote_validity_days', '14')),
@@ -155,8 +158,9 @@ export function quoteSettings(): QuoteSettings {
 export function saveQuoteSettings(patch: Partial<Record<keyof QuoteSettings, unknown>>): QuoteSettings {
   db.transaction(() => {
     if (patch.brand_name !== undefined) {
-      setSetting('quote_brand_name', String(patch.brand_name ?? '').trim() || 'Moonlight');
+      setSetting('quote_brand_name', String(patch.brand_name ?? '').trim());
     }
+    if (patch.number_prefix !== undefined) setSetting('quote_number_prefix', cleanPrefix(patch.number_prefix));
     if (patch.contact_name !== undefined) setSetting('quote_contact_name', String(patch.contact_name ?? '').trim());
     if (patch.contact_phone !== undefined) setSetting('quote_contact_phone', String(patch.contact_phone ?? '').trim());
     if (patch.validity_days !== undefined) setSetting('quote_validity_days', String(clampDays(patch.validity_days)));
@@ -243,7 +247,7 @@ export function getQuote(id: string) {
     `SELECT (SELECT name FROM users WHERE id = ?) AS created_by_name,
             (SELECT name FROM users WHERE id = ?) AS updated_by_name`
   ).get(row.created_by, row.updated_by) as any;
-  // The show it is for, as the editor shows it. Read here rather than through moonlight.ts, which
+  // The show it is for, as the editor shows it. Read here rather than through band.ts, which
   // would make the quote modules depend on the shows' whole bookkeeping just to print a name.
   const show = row.show_id
     ? db.prepare('SELECT id, venue, date, location, amount_pre_vat, amount_with_vat FROM band_events WHERE id = ?').get(row.show_id) ?? null
@@ -360,13 +364,24 @@ function cleanLines(raw: unknown): Line[] {
 const isEditable = (row: any) =>
   !!row.is_template || row.status === 'draft' || row.status === 'sent' || row.status === 'viewed';
 
-/** Fills in the quote's number from the year's own sequence: ML-2026-001, ML-2026-002, … */
+/** The letters a quote number starts with — `Q` unless the quote settings say otherwise. */
+export function quoteNumberPrefix(): string {
+  return getSetting('quote_number_prefix', '').trim() || 'Q';
+}
+
+const cleanPrefix = (value: unknown): string => {
+  const prefix = String(value ?? '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{1,6}$/.test(prefix)) throw new QuoteError(400, 'קידומת המספור: עד 6 אותיות לטיניות או ספרות');
+  return prefix;
+};
+
+/** Fills in the quote's number from the year's own sequence: Q-2026-001, Q-2026-002, … */
 function nextQuoteNumber(today = todayInIsrael()): string {
   const year = today.slice(0, 4);
   const key = `quote_seq_${year}`;
   const next = (parseInt(getSetting(key, '0'), 10) || 0) + 1;
   setSetting(key, String(next));
-  return `ML-${year}-${String(next).padStart(3, '0')}`;
+  return `${quoteNumberPrefix()}-${year}-${String(next).padStart(3, '0')}`;
 }
 
 const COLUMNS = [
@@ -457,24 +472,24 @@ export type BuiltinKey = keyof typeof BUILTIN_TEMPLATES;
 /** The templates the system comes with, for the buttons that add a copy of one. */
 export function builtinTemplates() {
   return (Object.keys(BUILTIN_TEMPLATES) as BuiltinKey[])
-    .map((key) => ({ key, template_name: BUILTIN_TEMPLATES[key].template_name }));
+    .map((key) => ({ key, template_name: BUILTIN_TEMPLATES[key]().template_name }));
 }
 
 /** A fresh copy of a template the system comes with (see quoteTemplates.ts). */
 export function createBuiltinTemplate(key: string, userId: string | null): string {
   if (!Object.hasOwn(BUILTIN_TEMPLATES, key)) throw new QuoteError(400, 'אין תבנית מוכנה כזו');
-  return createTemplate({ ...BUILTIN_TEMPLATES[key as BuiltinKey] }, userId);
+  return createTemplate({ ...BUILTIN_TEMPLATES[key as BuiltinKey]() }, userId);
 }
 
-/** Moonlight's own was the only one when this setting was named, so it keeps the bare name. */
+/** The standard template was the only one when this setting was named, so it keeps the bare name. */
 const seededSetting = (key: BuiltinKey) =>
-  key === 'moonlight' ? 'quote_builtin_template_seeded' : `quote_builtin_template_seeded_${key}`;
+  key === 'standard' ? 'quote_builtin_template_seeded' : `quote_builtin_template_seeded_${key}`;
 
 /**
  * Puts each built-in template in place the first time the app runs with it, and never again:
  * a band that deletes one has decided it does not want it, and «תבניות» can always add another.
  * A template added to the system later reaches a band that already has the others. Only a first
- * template becomes the default, so Moonlight's own goes first.
+ * template becomes the default, so the standard one goes first.
  */
 export function seedBuiltinTemplates(): string[] {
   const ids: string[] = [];

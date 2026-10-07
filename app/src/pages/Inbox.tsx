@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { get, nis } from '../api';
 import { Empty, InkPanel, PageHeader, Pill } from '../ui';
 import { MiniBarChart } from '../charts';
+import { useAuth } from '../AuthContext';
 
 /** Which pile an item belongs to, for the filter row. */
 type Kind = 'money' | 'tax' | 'data';
@@ -43,6 +44,7 @@ export function Inbox() {
   const [tab, setTab] = useState<Kind | 'all'>('all');
   const [error, setError] = useState('');
   const year = new Date().getFullYear();
+  const bandName = useAuth().branding.band_name;
 
   useEffect(() => {
     get('/inbox').then((d) => setInbox(d.inbox)).catch((e) => setError(e.message));
@@ -51,6 +53,8 @@ export function Inbox() {
 
   const items = useMemo<Item[]>(() => {
     if (!inbox) return [];
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    void bandName;
     const out: Item[] = [];
     const { overdueInvoices: od, unbilledWorks: uw, uncategorizedExpenses: ue, band } = inbox;
 
@@ -86,11 +90,11 @@ export function Inbox() {
     if (band.awaitingPaymentCount) {
       out.push({
         key: 'band-money', kind: 'money', tone: 'moon', icon: Music,
-        title: `Moonlight · ${band.awaitingPaymentCount} הופעות שהכסף בגינן טרם התקבל`,
+        title: `${bandName} · ${band.awaitingPaymentCount} הופעות שהכסף בגינן טרם התקבל`,
         sub: band.owedToSuppliersTotal
           ? `במקביל, ${nis(band.owedToSuppliersTotal)} חוב פתוח לספקים`
           : 'הופעות שכבר היו וטרם שולמו',
-        amount: band.awaitingPaymentTotal, cta: 'לרשימה', to: '/moonlight/income',
+        amount: band.awaitingPaymentTotal, cta: 'לרשימה', to: '/band/income',
       });
     }
     // A client signed: news first, since it is a show sold; then whatever the signature could
@@ -101,14 +105,14 @@ export function Inbox() {
       out.push({
         key: 'band-signed', kind: 'money', tone: 'moon', icon: FileSignature, primary: true,
         title: one
-          ? `Moonlight · ${one.client_name} חתמו על הצעת המחיר`
-          : `Moonlight · ${quotes.newlySigned.length} הצעות מחיר נחתמו`,
+          ? `${bandName} · ${one.client_name} חתמו על הצעת המחיר`
+          : `${bandName} · ${quotes.newlySigned.length} הצעות מחיר נחתמו`,
         sub: quotes.newlySigned
           .slice(0, 3)
           .map((q: any) => `${q.client_name} ${q.event_date.slice(8, 10)}.${q.event_date.slice(5, 7)}`)
           .join(' · '),
         amount: quotes.newlySigned.reduce((s: number, q: any) => s + (Number(q.net_amount) || 0), 0),
-        cta: 'לפתוח', to: one ? `/moonlight/quotes/${one.id}` : '/moonlight/summary',
+        cta: 'לפתוח', to: one ? `/band/quotes/${one.id}` : '/band/summary',
       });
     }
     const unsettled = new Set([
@@ -117,13 +121,13 @@ export function Inbox() {
     if (unsettled) {
       out.push({
         key: 'band-quote-show', kind: 'data', tone: 'warn', icon: FileSignature,
-        title: `Moonlight · ${unsettled} הצעות חתומות שצריכות טיפול`,
+        title: `${bandName} · ${unsettled} הצעות חתומות שצריכות טיפול`,
         sub: [
           quotes.stillOption?.length ? `${quotes.stillOption.length} עדיין «אופציה» ביומן` : '',
           quotes.needsShow.length ? `${quotes.needsShow.length} בלי הופעה` : '',
           quotes.amountMismatch.length ? `${quotes.amountMismatch.length} בסכום שונה מההופעה` : '',
         ].filter(Boolean).join(' · '),
-        cta: 'לטפל', to: '/moonlight/summary',
+        cta: 'לטפל', to: '/band/summary',
       });
     }
 
@@ -162,12 +166,12 @@ export function Inbox() {
     if (band.missingAssignments.length) {
       out.push({
         key: 'band-staff', kind: 'data', tone: 'moon', icon: Moon,
-        title: `Moonlight · ${band.missingAssignments.length} הופעות ללא שיבוץ מלא`,
+        title: `${bandName} · ${band.missingAssignments.length} הופעות ללא שיבוץ מלא`,
         sub: band.missingAssignments
           .slice(0, 2)
           .map((m: any) => `${m.venue} ${m.date.slice(8, 10)}.${m.date.slice(5, 7)}`)
           .join(' · '),
-        cta: 'לשבץ', to: '/moonlight/assignments',
+        cta: 'לשבץ', to: '/band/assignments',
       });
     }
     return out;

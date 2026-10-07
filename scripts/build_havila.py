@@ -21,7 +21,8 @@ except ImportError:
 
 ROOT = Path(__file__).parent.parent
 load_dotenv(ROOT / ".env")
-BILLS_ROOT = Path("/Volumes/Data/Dropbox/Docs Itamar/Docs Itamar - Buisness/חשבוניות - קבלות")
+# The folder holding one sub-folder per year of receipt PDFs — set BILLS_ROOT in .env.
+BILLS_ROOT = Path(os.getenv("BILLS_ROOT", str(ROOT / "bills")))
 VAT_RATE = 0.18
 
 def get_token():
@@ -145,7 +146,7 @@ def main():
     cover = {
         "period": f"{from_date} → {to_date}",
         "business_type": "osek_murshe",
-        "accountant": "Itamar Miron",
+        "accountant": os.getenv("ACCOUNTANT_NAME", ""),
         "issued_docs_count": len(docs),
         "issued_docs_closed": len([d for d in docs if d['status']==1]),
         "issued_docs_open": len([d for d in docs if d['status']==0]),

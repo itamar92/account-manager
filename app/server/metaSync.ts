@@ -15,7 +15,7 @@ import {
   fetchAccount, fetchAds, fetchCampaigns, fetchDailyCampaignInsights, isMetaConfigured,
   type MetaAdCopy,
 } from './metaClient.js';
-import { eventLabel, recomputeEvent } from './moonlight.js';
+import { eventLabel, recomputeEvent } from './band.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 

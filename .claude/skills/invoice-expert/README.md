@@ -38,7 +38,6 @@ The skill now uses **vendor-specific JavaScript parsers** for consistent, accura
 | Vendor | Email Pattern | Category |
 |--------|---------------|----------|
 | Morning | notify@morning.co | כללי |
-| עיריית הוד השרון | no_replay@orda.co.il | ארנונה |
 | פרטנר | Thankyou@partner.net.il | אינטרנט |
 | הוט מובייל | HOTmobile@printernet.co.il | סלולרי |
 | חברת החשמל | noreplys@iec.co.il | חשמל |
