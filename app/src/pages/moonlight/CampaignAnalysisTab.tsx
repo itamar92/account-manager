@@ -1,78 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { clsx } from 'clsx';
-import { del, get, post, nis } from '../../api';
-import { Button, Card, Combobox, Empty, PeriodSelect, StatCard, Textarea } from '../../ui';
-import { eventLabel, useBandMembers, type PeriodTabProps } from './shared';
-import { CampaignTasksPanel } from './CampaignTasksPanel';
-import { TaskPicker } from './TaskPicker';
+import { useSearchParams } from 'react-router-dom';
+import { del, get, post, put } from '../../api';
+import { Button, Card, PeriodSelect, Section, Tag } from '../../ui';
+import { useBandMembers, type PeriodTabProps } from './shared';
+import { CampaignTasksPanel, israelToday } from './CampaignTasksPanel';
+import { AdvisorSummary, FindingCounts, FindingsList, SuggestionsList } from './AdvisorReport';
+import { CampaignPlan, type SavedDraft } from './CampaignPlan';
+import { AdvisorChat } from './AdvisorChat';
+import { ddmm, useOpenSections, Working, type AdvisorJob } from './advisorShared';
 
 interface Props extends PeriodTabProps {
   events: any[];
 }
 
-const VERDICTS: Record<string, { label: string; className: string }> = {
-  good: { label: 'הפרסום עובד', className: 'bg-pos-soft border-pos/25 text-pos' },
-  ok: { label: 'סביר, יש מה לשפר', className: 'bg-warn-soft border-warn/25 text-warn' },
-  poor: { label: 'הפרסום לא משתלם', className: 'bg-neg-soft border-neg/25 text-neg' },
-};
+type JobKind = AdvisorJob['kind'];
 
-const SEVERITIES: Record<string, { label: string; className: string }> = {
-  high: { label: 'קריטי', className: 'text-neg border-neg/25' },
-  medium: { label: 'בינוני', className: 'text-warn border-warn/25' },
-  low: { label: 'קל', className: 'text-muted border-line' },
-};
-
-const EFFORTS: Record<string, string> = { low: 'מאמץ קטן', medium: 'מאמץ בינוני', high: 'מאמץ גדול' };
-
-/** 'YYYY-MM-DDTHH:MM:SSZ' as something readable, in local time. */
-const when = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' }) : '';
-
-/** A chat answer's tasks, one group per show, in the order the shows first appear. */
-function groupByShow(tasks: any[]): Array<[string, any[]]> {
-  const groups = new Map<string, any[]>();
-  for (const task of tasks) groups.set(task.event_id, [...(groups.get(task.event_id) ?? []), task]);
-  return [...groups];
-}
-
-/** Other wordings the advisor offered for a headline or description; a click swaps one in. */
-function Alternatives({ options, current, onChoose }: {
-  options?: string[];
-  current?: string;
-  onChoose: (value: string) => void;
-}) {
-  const others = (options ?? []).filter((o) => o !== current);
-  if (!others.length) return null;
-  return (
-    <div className="flex flex-wrap gap-1.5 text-xs">
-      <span className="text-faint">חלופות:</span>
-      {others.map((option) => (
-        <button key={option} onClick={() => onChoose(option)}
-          className="rounded-lg border border-line px-2 py-0.5 text-ink-2 hover:border-accent hover:text-accent">
-          {option}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * A run goes over SSH to another machine and can take a couple of minutes — long enough that a
- * spinner alone reads as a hang. The elapsed count is what says it is still working.
- */
-function Working({ text }: { text: string }) {
-  const [seconds, setSeconds] = useState(0);
-  useEffect(() => {
-    const timer = setInterval(() => setSeconds((s) => s + 1), 1000);
-    return () => clearInterval(timer);
-  }, []);
-  return (
-    <div className="flex items-center gap-2 text-sm text-muted">
-      <span className="inline-block w-3 h-3 rounded-full border-2 border-accent border-t-transparent animate-spin" />
-      {text} · {seconds} שניות
-    </div>
-  );
-}
+/** How often a page that found a run already going asks whether it is done. */
+const JOB_POLL_MS = 4000;
 
 /**
  * יועץ קמפיינים — the judgement the פרסום tab deliberately does not make.
@@ -82,20 +26,24 @@ function Working({ text }: { text: string }) {
  * to change, and what a campaign for the next show should look like. Nothing here writes to Meta
  * or to the books: every answer is text to read, argue with, and act on by hand.
  *
- * The report is stored, so opening the tab paints the last one immediately rather than spending a
- * minute of somebody's time on a page load. A new run happens only when the button is pressed,
- * and only the owner can press it — band members read along.
+ * The page is the verdict on top and folding sections under it, each heading saying what is
+ * inside, so the answer is read first and the detail opened when wanted. Everything the agent
+ * answered is stored — the last analysis, every show's plan, the conversation — so a reload paints
+ * it again instead of asking again, and a run still in progress when the page loaded is waited
+ * for rather than started twice. Only the owner can start a run; band members read along.
  */
 export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props) {
   const [report, setReport] = useState<any>(null);
   const [agent, setAgent] = useState<any>(null);
-  const [running, setRunning] = useState('');
 
-  const [draftEvent, setDraftEvent] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [savedDrafts, setSavedDrafts] = useState<SavedDraft[]>([]);
+  const [draftReport, setDraftReport] = useState<any>(null);
+  const [draftKey, setDraftKey] = useState(0);
   const [brief, setBrief] = useState('');
-  const [draft, setDraft] = useState<any>(null);
-  const [draftReportId, setDraftReportId] = useState('');
-  const [copied, setCopied] = useState(false);
+
+  const [messages, setMessages] = useState<any[]>([]);
+  const [question, setQuestion] = useState('');
 
   // Every show's tasks and owner, read by the pickers that offer a draft's or an answer's tasks:
   // who owns the show already, and whether those tasks were taken. Re-read after each add.
@@ -108,75 +56,175 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
   const taskShow = (eventId: string) => taskShows.find((s) => s.event_id === eventId) ?? null;
   const tasksAdded = () => setTasksKey((k) => k + 1);
 
-  const [messages, setMessages] = useState<any[]>([]);
-  const [question, setQuestion] = useState('');
-  const threadEnd = useRef<HTMLDivElement>(null);
+  const query = () => {
+    const qs = period.params().toString();
+    return qs ? `?${qs}` : '';
+  };
 
-  const load = () => {
-    const query = period.params().toString();
-    get(`/moonlight/campaign-analysis${query ? `?${query}` : ''}`)
+  const loadReport = () => {
+    get(`/moonlight/campaign-analysis${query()}`)
       .then((d) => { setReport(d.report); setAgent(d.agent); })
       .catch((e) => onError(e.message));
-    get('/moonlight/campaign-chat')
-      .then((d) => setMessages(d.messages))
-      .catch(() => {});
   };
-  useEffect(load, [period.year, period.month]);
+  const loadChat = () => {
+    get('/moonlight/campaign-chat').then((d) => setMessages(d.messages)).catch(() => {});
+  };
+  const loadDrafts = () => {
+    get('/moonlight/campaign-drafts').then((d) => setSavedDrafts(d.drafts)).catch(() => {});
+  };
+  useEffect(loadReport, [period.year, period.month]);
+  useEffect(() => { loadChat(); loadDrafts(); }, []);
 
-  useEffect(() => { threadEnd.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages.length]);
+  // ---- runs: the ones this page started, and the ones it found already going
 
-  const showDraft = (report: any) => {
-    setDraft(report?.response ?? null);
-    setDraftReportId(report?.id ?? '');
+  const [localJobs, setLocalJobs] = useState<Partial<Record<JobKind, AdvisorJob>>>({});
+  const [remoteJobs, setRemoteJobs] = useState<Partial<Record<JobKind, AdvisorJob>>>({});
+  const jobs = { ...remoteJobs, ...localJobs };
+  // The agent answers one request at a time, whatever its kind, so any run holds every button.
+  const agentBusy = Object.keys(jobs).length > 0;
+  const jobsRef = useRef(jobs);
+  jobsRef.current = jobs;
+  const awaiting = useRef(new Set<JobKind>());
+  const watched = useRef(new Set<JobKind>());
+
+  const refresh = (kind: JobKind) => {
+    if (kind === 'analysis') loadReport();
+    if (kind === 'chat') loadChat();
+    if (kind === 'draft') { loadDrafts(); setDraftKey((k) => k + 1); }
   };
 
-  // Choosing a show paints its last plan, if it has one — a plan took a minute to make and should
-  // not need making again to add its tasks a day later.
+  // Read through a ref so the poll's timer always calls the newest closure — the period may have
+  // moved since it was set.
+  const pollRef = useRef<() => void>(() => {});
+  pollRef.current = () => {
+    get('/moonlight/campaign-jobs').then((d) => {
+      const list: AdvisorJob[] = d.jobs ?? [];
+      const others = list.filter((job) => !awaiting.current.has(job.kind));
+      const running = others.filter((job) => job.status === 'running');
+      for (const kind of watched.current) {
+        if (running.some((job) => job.kind === kind)) continue;
+        const failed = others.find((job) => job.kind === kind && job.status === 'failed');
+        // A failed run changed nothing, and what it was asked is handed back to try again with.
+        if (!failed) refresh(kind);
+        else if (kind === 'chat' && failed.message) setQuestion(failed.message);
+      }
+      // A run that failed while nobody was looking tells the owner once, here, and is then
+      // forgotten. Band members could not have retried it, so it is not theirs to read.
+      if (isOwner) {
+        for (const job of others.filter((j) => j.status === 'failed')) {
+          onError(`הריצה האחרונה של הסוכן נכשלה: ${job.error ?? ''}`);
+          del(`/moonlight/campaign-jobs/${job.kind}`).catch(() => {});
+        }
+      }
+      watched.current = new Set(running.map((job) => job.kind));
+      setRemoteJobs(Object.fromEntries(running.map((job) => [job.kind, job])));
+    }).catch(() => {});
+  };
+  useEffect(() => { pollRef.current(); }, []);
+  const remoteKinds = Object.keys(remoteJobs).sort().join();
   useEffect(() => {
-    setCopied(false);
-    if (!draftEvent) { showDraft(null); return; }
-    get(`/moonlight/campaign-draft/${draftEvent}`).then((d) => showDraft(d.report)).catch(() => {});
-  }, [draftEvent]);
+    if (!remoteKinds) return;
+    const timer = setInterval(() => pollRef.current(), JOB_POLL_MS);
+    return () => clearInterval(timer);
+  }, [remoteKinds]);
+
+  /** Starts a run and holds it until it answers; its error is shown here, so the server forgets it. */
+  const run = async <T,>(kind: JobKind, details: Partial<AdvisorJob>, request: () => Promise<T>): Promise<T | null> => {
+    onError('');
+    awaiting.current.add(kind);
+    setLocalJobs((j) => ({ ...j, [kind]: { kind, status: 'running', started_at: new Date().toISOString(), ...details } }));
+    try {
+      return await request();
+    } catch (err: any) {
+      onError(err.message);
+      if (isOwner) del(`/moonlight/campaign-jobs/${kind}`).catch(() => {});
+      return null;
+    } finally {
+      awaiting.current.delete(kind);
+      setLocalJobs((j) => {
+        const next = { ...j };
+        delete next[kind];
+        return next;
+      });
+    }
+  };
+
+  // ---- the plan on screen: the one in the address, else the one most recently worked on
+
+  const today = israelToday();
+  const autoPlan = [...savedDrafts]
+    .sort((a, b) => Number(b.date >= today) - Number(a.date >= today) || b.created_at.localeCompare(a.created_at))[0]?.event_id ?? '';
+  const draftEvent = searchParams.get('plan') ?? autoPlan;
+  const setDraftEvent = (eventId: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (eventId) next.set('plan', eventId);
+    else next.delete('plan');
+    setSearchParams(next, { replace: true });
+  };
+
+  // Choosing a show paints its last plan and the brief it was asked with — a plan took a minute to
+  // make and should not need making again to be read, or to add its tasks a day later.
+  useEffect(() => {
+    if (!draftEvent) { setDraftReport(null); return; }
+    let current = true;
+    get(`/moonlight/campaign-draft/${draftEvent}`).then((d) => {
+      if (!current) return;
+      setDraftReport(d.report);
+      // Read when the plan arrives, not when it was asked for: the run in progress may have been
+      // found in between, and its brief is the one being worked on.
+      const job = jobsRef.current.draft;
+      setBrief(job?.event_id === draftEvent ? job.brief ?? '' : d.report?.request?.brief ?? '');
+    }).catch(() => {});
+    return () => { current = false; };
+  }, [draftEvent, draftKey]);
+
+  // A plan still being drafted when the page loaded is shown for the show it is for.
+  useEffect(() => {
+    const job = remoteJobs.draft;
+    if (!job?.event_id) return;
+    if (job.event_id !== draftEvent) setDraftEvent(job.event_id);
+    setBrief(job.brief ?? '');
+    sections.set('plan', true);
+  }, [remoteJobs.draft?.started_at]);
+
+  useEffect(() => {
+    if (remoteJobs.chat) sections.set('chat', true);
+  }, [remoteJobs.chat?.started_at]);
+
+  // ---- actions
 
   const analyze = async () => {
-    setRunning('analysis');
-    onError('');
-    try {
-      const query = period.params().toString();
-      const d = await post(`/moonlight/campaign-analysis${query ? `?${query}` : ''}`);
-      setReport(d.report);
-    } catch (err: any) { onError(err.message); }
-    finally { setRunning(''); }
+    const d = await run('analysis', {}, () => post(`/moonlight/campaign-analysis${query()}`));
+    if (d) setReport(d.report);
   };
 
   const makeDraft = async () => {
     if (!draftEvent) return;
-    setRunning('draft');
-    onError('');
-    setCopied(false);
-    try {
-      const d = await post('/moonlight/campaign-draft', { event_id: draftEvent, brief });
-      showDraft(d.report);
-    } catch (err: any) { onError(err.message); }
-    finally { setRunning(''); }
+    const eventId = draftEvent;
+    if (!searchParams.get('plan')) setDraftEvent(eventId);
+    const d = await run('draft', { event_id: eventId, brief }, () => post('/moonlight/campaign-draft', { event_id: eventId, brief }));
+    if (d) {
+      setDraftReport(d.report);
+      loadDrafts();
+    }
+  };
+
+  const chooseCreative = (field: 'headline' | 'description', value: string) => {
+    if (!draftReport) return;
+    const id = draftReport.id;
+    setDraftReport((r: any) => ({ ...r, response: { ...r.response, creative: { ...r.response.creative, [field]: value } } }));
+    put(`/moonlight/campaign-draft/${id}/creative`, { field, value })
+      .catch((err) => { onError(err.message); setDraftKey((k) => k + 1); });
   };
 
   const send = async () => {
     const text = question.trim();
     if (!text) return;
-    setRunning('chat');
     setQuestion('');
-    onError('');
-    try {
-      const query = period.params().toString();
-      const d = await post(`/moonlight/campaign-chat${query ? `?${query}` : ''}`, { message: text });
-      setMessages(d.messages);
-    } catch (err: any) {
-      onError(err.message);
-      // Hands the question back rather than losing what was typed to a failed round trip.
-      setQuestion(text);
-    }
-    finally { setRunning(''); }
+    const d = await run('chat', { message: text }, () => post(`/moonlight/campaign-chat${query()}`, { message: text }));
+    if (d) setMessages(d.messages);
+    // Hands the question back rather than losing what was typed to a failed round trip.
+    else setQuestion(text);
   };
 
   const clearThread = async () => {
@@ -187,310 +235,159 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
     } catch (err: any) { onError(err.message); }
   };
 
-  /** Swaps an alternative headline or description into the plan, which is what «העתקה» copies. */
-  const chooseCreative = (field: 'headline' | 'description', value: string) =>
-    setDraft((d: any) => ({ ...d, creative: { ...d.creative, [field]: value } }));
-
-  /** The draft as one block of text, which is how it gets into Ads Manager. */
-  const copyDraft = () => {
-    if (!draft) return;
-    const text = [
-      `מטרה: ${draft.objective}`,
-      `קהל: ${draft.audience}`,
-      `תקציב: ${draft.budget_total} ₪ סה"כ · ${draft.daily_budget} ₪ ליום`,
-      `תאריכים: ${draft.schedule?.start} – ${draft.schedule?.end}`,
-      `מיקומים: ${(draft.placements || []).join(', ')}`,
-      '',
-      draft.creative?.primary_text || '',
-      `כותרת: ${draft.creative?.headline || ''}`,
-      `תיאור: ${draft.creative?.description || ''}`,
-    ].join('\n');
-    navigator.clipboard.writeText(text).then(() => setCopied(true)).catch(() => {});
-  };
+  // ---- what each folding section says about itself
 
   const answer = report?.response;
-  const verdict = VERDICTS[answer?.verdict] ?? null;
-  const eventById = (id: string) => events.find((e) => e.id === id);
-  const upcoming = events.filter((e) => e.date >= new Date().toISOString().slice(0, 10));
+  const findings: any[] = answer?.findings ?? [];
+  const suggestions: any[] = answer?.suggestions ?? [];
+  const openTasks = taskShows.flatMap((s) => s.tasks ?? []).filter((t: any) => !t.done_at);
+  const lateTasks = openTasks.filter((t: any) => t.due_date < today).length;
+  const todayTasks = openTasks.filter((t: any) => t.due_date === today).length;
+  const planLabel = savedDrafts.find((d) => d.event_id === draftEvent)?.label;
 
-  const tasksPanel = <CampaignTasksPanel events={events} isOwner={isOwner} onError={onError} reloadKey={tasksKey} />;
+  const sections = useOpenSections({
+    findings: findings.some((f) => f?.severity === 'high'),
+    suggestions: false,
+    plan: !!searchParams.get('plan') || !!jobs.draft,
+    tasks: lateTasks + todayTasks > 0,
+    chat: !!jobs.chat,
+  });
+
+  const showSuggestion = (index: number) => {
+    sections.set('suggestions', true);
+    // After the section has opened and rendered its list.
+    setTimeout(() => document.getElementById(`advisor-suggestion-${index}`)
+      ?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+  };
+
+  const tasksPanel = (bare: boolean) => (
+    <CampaignTasksPanel events={events} isOwner={isOwner} onError={onError} reloadKey={tasksKey} bare={bare} />
+  );
 
   // The advisor is useless without the connection, and saying which half is missing beats a
   // button that fails when pressed. The tasks do not need it, so they stay.
   if (agent && !agent.configured) {
     return (
       <div className="space-y-3">
-      {tasksPanel}
-      <Card>
-        <h2 className="ser text-lg mb-2">יועץ קמפיינים</h2>
-        <p className="text-sm text-muted leading-relaxed">
-          הסוכן לא מוגדר. הניתוח רץ על מכונה אחרת דרך חיבור SSH — יש למלא את השרת, המשתמש,
-          המפתח הפרטי ומפתח המארח ב<span className="text-ink-2">הגדרות → סוכן AI</span>,
-          ולבדוק את החיבור שם.
-        </p>
-      </Card>
+        {tasksPanel(false)}
+        <Card>
+          <h2 className="ser text-lg mb-2">יועץ קמפיינים</h2>
+          <p className="text-sm text-muted leading-relaxed">
+            הסוכן לא מוגדר. הניתוח רץ על מכונה אחרת דרך חיבור SSH — יש למלא את השרת, המשתמש,
+            המפתח הפרטי ומפתח המארח ב<span className="text-ink-2">הגדרות → סוכן AI</span>,
+            ולבדוק את החיבור שם.
+          </p>
+        </Card>
       </div>
     );
   }
 
+  const header = (
+    <>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="ser text-xl">יועץ קמפיינים</h2>
+          <PeriodSelect year={period.year} month={period.month}
+            onYearChange={period.setYear} onMonthChange={period.setMonth} />
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" onClick={() => sections.setAll(!sections.allOpen)}
+            className="text-xs text-accent hover:underline">
+            {sections.allOpen ? 'סגירת הכל' : 'פתיחת הכל'}
+          </button>
+          {jobs.analysis
+            ? <Working text="הסוכן מנתח" since={jobs.analysis.started_at} />
+            : isOwner && <Button onClick={analyze} disabled={agentBusy}>{report ? 'רענון ניתוח' : 'ניתוח קמפיינים'}</Button>}
+        </div>
+      </div>
+      {!report && !jobs.analysis && (
+        <p className="text-sm text-faint">
+          {isOwner
+            ? 'עוד לא נעשה ניתוח לתקופה הזו — «ניתוח קמפיינים» יבקש מהסוכן לעבור על הנתונים'
+            : 'עוד לא נעשה ניתוח לתקופה הזו'}
+        </p>
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-3">
-      <Card>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="ser text-lg">יועץ קמפיינים</h2>
-              <PeriodSelect year={period.year} month={period.month}
-                onYearChange={period.setYear} onMonthChange={period.setMonth} />
-              {verdict && (
-                <span className={clsx('text-xs rounded-lg border px-2 py-1', verdict.className)}>
-                  {verdict.label}
-                </span>
-              )}
-            </div>
-            {answer?.headline && <p className="text-sm text-ink-2 mt-2">{answer.headline}</p>}
-            {report && (
-              <p className="text-xs text-faint mt-1">
-                נותח ב-{when(report.created_at)}
-                {report.duration_ms ? ` · ${Math.round(report.duration_ms / 1000)} שניות` : ''}
-                {' · '}הנתונים עצמם נמצאים בלשונית «פרסום»
-              </p>
-            )}
-          </div>
-          {isOwner && (
-            running === 'analysis'
-              ? <Working text="הסוכן מנתח" />
-              : <Button onClick={analyze} disabled={!!running}>
-                  {report ? 'רענון ניתוח' : 'ניתוח קמפיינים'}
-                </Button>
+      <AdvisorSummary report={report} events={events} header={header} onFirstStep={() => showSuggestion(0)} />
+
+      {findings.length > 0 && (
+        <Section title="ממצאים" open={sections.isOpen('findings')} onToggle={() => sections.toggle('findings')}
+          summary={<FindingCounts findings={findings} />}>
+          <FindingsList findings={findings} suggestions={suggestions} events={events} onShowSuggestion={showSuggestion} />
+        </Section>
+      )}
+
+      {suggestions.length > 0 && (
+        <Section title="המלצות" open={sections.isOpen('suggestions')} onToggle={() => sections.toggle('suggestions')}
+          summary={<Tag tone="accent">{suggestions.length} המלצות</Tag>}>
+          <SuggestionsList suggestions={suggestions} findings={findings} />
+        </Section>
+      )}
+
+      <Section title="תוכנית קמפיין" open={sections.isOpen('plan')} onToggle={() => sections.toggle('plan')}
+        summary={jobs.draft
+          ? <Tag tone="accent">הסוכן בונה תוכנית…</Tag>
+          : planLabel
+            ? <Tag>{planLabel}</Tag>
+            : savedDrafts.length === 0 && <Tag>עוד אין תוכניות</Tag>}>
+        <CampaignPlan
+          events={events}
+          isOwner={isOwner}
+          savedDrafts={savedDrafts}
+          eventId={draftEvent}
+          onEventChange={setDraftEvent}
+          report={draftReport?.event_id === draftEvent ? draftReport : null}
+          brief={brief}
+          onBriefChange={setBrief}
+          job={jobs.draft}
+          agentBusy={agentBusy}
+          onBuild={makeDraft}
+          onChoose={chooseCreative}
+          members={members}
+          taskShow={taskShow}
+          onTasksAdded={tasksAdded}
+          onError={onError}
+        />
+      </Section>
+
+      <Section title="משימות קמפיין" open={sections.isOpen('tasks')} onToggle={() => sections.toggle('tasks')}
+        summary={<>
+          <Tag>{openTasks.length ? `${openTasks.length} פתוחות` : 'אין משימות פתוחות'}</Tag>
+          {lateTasks > 0 && <Tag tone="neg">{lateTasks} באיחור</Tag>}
+          {todayTasks > 0 && <Tag tone="accent">{todayTasks} להיום</Tag>}
+          {!lateTasks && !todayTasks && openTasks.length > 0 && (
+            <Tag>הבאה ב-{ddmm([...openTasks].sort((a, b) => a.due_date.localeCompare(b.due_date))[0].due_date)}</Tag>
           )}
-        </div>
-      </Card>
+        </>}>
+        {tasksPanel(true)}
+      </Section>
 
-      {tasksPanel}
-
-      {!report && running !== 'analysis' && (
-        <Empty text={isOwner
-          ? 'עוד לא נעשה ניתוח לתקופה הזו — «ניתוח קמפיינים» יבקש מהסוכן לעבור על הנתונים'
-          : 'עוד לא נעשה ניתוח לתקופה הזו'} />
-      )}
-
-      {answer?.benchmarks && (
-        <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
-          <StatCard label="עלות לכרטיס" sub="לפי הסוכן"
-            value={answer.benchmarks.cost_per_ticket == null ? '—' : nis(answer.benchmarks.cost_per_ticket)} />
-          <StatCard label="פרסום מתוך ההכנסה" sub="ממוצע בתקופה"
-            value={answer.benchmarks.spend_share_of_revenue == null ? '—' : `${answer.benchmarks.spend_share_of_revenue}%`} />
-          <StatCard label="ההופעה המשתלמת" accent="text-pos"
-            value={eventById(answer.benchmarks.best_event_id)?.venue ?? '—'}
-            sub={eventById(answer.benchmarks.best_event_id)?.date ?? ''} />
-          <StatCard label="ההופעה היקרה" accent="text-neg"
-            value={eventById(answer.benchmarks.worst_event_id)?.venue ?? '—'}
-            sub={eventById(answer.benchmarks.worst_event_id)?.date ?? ''} />
-        </div>
-      )}
-
-      {answer?.findings?.length > 0 && (
-        <Card>
-          <h2 className="ser text-lg mb-3">ממצאים</h2>
-          <div className="space-y-2">
-            {answer.findings.map((finding: any, i: number) => {
-              const severity = SEVERITIES[finding.severity] ?? SEVERITIES.low;
-              const event = finding.event_id ? eventById(finding.event_id) : null;
-              return (
-                <div key={i} className="bg-soft border border-line rounded-xl p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={clsx('text-xs rounded-lg border px-2 py-0.5', severity.className)}>
-                      {severity.label}
-                    </span>
-                    <span className="font-medium">{finding.title}</span>
-                    {event && (
-                      <span className="text-xs text-faint">
-                        {eventLabel(event)}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-sm text-muted mt-1.5 leading-relaxed">{finding.detail}</p>
-                </div>
-              );
-            })}
-          </div>
-        </Card>
-      )}
-
-      {answer?.suggestions?.length > 0 && (
-        <Card>
-          <h2 className="ser text-lg mb-1">המלצות</h2>
-          <p className="text-xs text-faint mb-3">
-            מדורגות מהחשובה לפחות חשובה. הסוכן לא משנה דבר ב-Meta — כל שינוי נעשה ידנית.
-          </p>
-          <div className="space-y-2">
-            {answer.suggestions.map((suggestion: any, i: number) => (
-              <div key={i} className="bg-soft border border-line rounded-xl p-3">
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">{i + 1}. {suggestion.title}</span>
-                  {suggestion.effort && (
-                    <span className="text-xs text-faint">{EFFORTS[suggestion.effort] ?? suggestion.effort}</span>
-                  )}
-                </div>
-                <p className="text-sm text-muted mt-1.5 leading-relaxed">{suggestion.detail}</p>
-                {suggestion.expected_impact && (
-                  <p className="text-xs text-accent mt-1.5">צפוי: {suggestion.expected_impact}</p>
-                )}
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
-      {isOwner && (
-        <Card>
-          <h2 className="ser text-lg mb-1">קמפיין חדש</h2>
-          <p className="text-xs text-faint mb-3">
-            תוכנית לקמפיין להופעה שעוד לא הייתה, בנויה על מה שעבד בקמפיינים הקודמים. התוצאה היא
-            טקסט להעתקה ל-Ads Manager — שום דבר לא נוצר ב-Meta.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Combobox
-              value={draftEvent}
-              onChange={setDraftEvent}
-              placeholder="בחרו הופעה…"
-              options={[
-                { value: '', label: 'בחרו הופעה…' },
-                ...upcoming.map((e) => ({ value: e.id, label: eventLabel(e) })),
-              ]}
-            />
-            <div className="sm:col-span-2">
-              <Textarea
-                label="משהו שחשוב שהסוכן ידע? (לא חובה)"
-                value={brief}
-                rows={2}
-                placeholder="למשל: תקציב עד 800 ₪, הדגש על קהל צעיר מהמרכז"
-                onChange={(e) => setBrief(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="mt-3">
-            {running === 'draft'
-              ? <Working text="הסוכן בונה תוכנית" />
-              : <Button onClick={makeDraft} disabled={!draftEvent || !!running}>בניית תוכנית</Button>}
-          </div>
-
-          {upcoming.length === 0 && (
-            <p className="text-xs text-warn mt-2">אין הופעות עתידיות בטבלת ההכנסות</p>
-          )}
-
-          {draft && (
-            <div className="mt-4 bg-soft border border-line rounded-xl p-3 space-y-2 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="font-bold">התוכנית</span>
-                <button onClick={copyDraft} className="text-xs text-accent hover:underline">
-                  {copied ? 'הועתק ✓' : 'העתקה'}
-                </button>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div><span className="text-faint">מטרה: </span>{draft.objective}</div>
-                <div>
-                  <span className="text-faint">תאריכים: </span>
-                  {draft.schedule?.start} – {draft.schedule?.end}
-                </div>
-                <div>
-                  <span className="text-faint">תקציב: </span>
-                  {nis(draft.budget_total)} · {nis(draft.daily_budget)} ליום
-                </div>
-                <div><span className="text-faint">מיקומים: </span>{(draft.placements || []).join(', ')}</div>
-              </div>
-              <div><span className="text-faint">קהל: </span>{draft.audience}</div>
-              {draft.creative && (
-                <div className="border-t border-line pt-2 space-y-1">
-                  <div className="text-faint text-xs">נוסח המודעה</div>
-                  <p className="whitespace-pre-wrap leading-relaxed">{draft.creative.primary_text}</p>
-                  <div><span className="text-faint">כותרת: </span>{draft.creative.headline}</div>
-                  <Alternatives options={draft.creative.headline_options} current={draft.creative.headline}
-                    onChoose={(v) => chooseCreative('headline', v)} />
-                  <div><span className="text-faint">תיאור: </span>{draft.creative.description}</div>
-                  <Alternatives options={draft.creative.description_options} current={draft.creative.description}
-                    onChoose={(v) => chooseCreative('description', v)} />
-                  {draft.creative.based_on && (
-                    <p className="text-xs text-faint leading-relaxed">מבוסס על: {draft.creative.based_on}</p>
-                  )}
-                </div>
-              )}
-              {draft.tasks?.length > 0 && (
-                <div className="border-t border-line pt-2 space-y-2">
-                  <div className="text-faint text-xs">משימות מעקב — כל משימה מסומנת תישלח כתזכורת במייל ביום היעד</div>
-                  <TaskPicker eventId={draftEvent} tasks={draft.tasks} sourceId={draftReportId}
-                    show={taskShow(draftEvent)} members={members} isOwner={isOwner}
-                    onAdded={tasksAdded} onError={onError} />
-                </div>
-              )}
-              {draft.notes?.length > 0 && (
-                <ul className="border-t border-line pt-2 space-y-1 text-xs text-muted">
-                  {draft.notes.map((note: string, i: number) => <li key={i}>• {note}</li>)}
-                </ul>
-              )}
-            </div>
-          )}
-        </Card>
-      )}
-
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-          <h2 className="ser text-lg">שאלות המשך</h2>
-          {isOwner && messages.length > 0 && (
-            <button onClick={clearThread} className="text-xs text-neg hover:underline">ניקוי השיחה</button>
-          )}
-        </div>
-        <p className="text-xs text-faint mb-3">
-          לסוכן יש את אותם נתונים שבלשונית «פרסום» לתקופה שנבחרה למעלה.
-        </p>
-
-        {messages.length === 0 ? (
-          <Empty text="אין עדיין שאלות" />
-        ) : (
-          <div className="space-y-2 max-h-[32rem] overflow-y-auto">
-            {messages.map((message: any) => (
-              <div key={message.id}
-                className={clsx('rounded-xl p-3 text-sm leading-relaxed',
-                  message.role === 'user'
-                    ? 'bg-accent/15 border border-accent/25'
-                    : 'bg-soft border border-line')}>
-                <div className="text-xs text-faint mb-1">
-                  {message.role === 'user' ? 'אתם' : 'הסוכן'} · {when(message.created_at)}
-                </div>
-                <p className="whitespace-pre-wrap">{message.content}</p>
-                {message.tasks?.length > 0 && (
-                  <div className="border-t border-line mt-2 pt-2 space-y-3">
-                    <div className="text-faint text-xs">משימות שהסוכן מציע — כל משימה מסומנת תישלח כתזכורת במייל ביום היעד</div>
-                    {groupByShow(message.tasks).map(([eventId, tasks]) => (
-                      <TaskPicker key={eventId} eventId={eventId} tasks={tasks} sourceId={message.id}
-                        label={eventById(eventId) ? eventLabel(eventById(eventId)) : undefined}
-                        show={taskShow(eventId)} members={members} isOwner={isOwner}
-                        onAdded={tasksAdded} onError={onError} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-            <div ref={threadEnd} />
-          </div>
-        )}
-
-        {isOwner && (
-          <div className="mt-3 space-y-2">
-            <Textarea
-              value={question}
-              rows={2}
-              disabled={!!running}
-              placeholder="למשל: למה הקמפיין של ההופעה בבארבי היה יקר פי שניים?"
-              onChange={(e) => setQuestion(e.target.value)}
-            />
-            {running === 'chat'
-              ? <Working text="הסוכן חושב" />
-              : <Button onClick={send} disabled={!question.trim() || !!running}>שליחה</Button>}
-          </div>
-        )}
-      </Card>
+      <Section title="שאלות המשך" open={sections.isOpen('chat')} onToggle={() => sections.toggle('chat')}
+        summary={jobs.chat
+          ? <Tag tone="accent">הסוכן חושב…</Tag>
+          : messages.length > 0 && <Tag>{messages.length} הודעות</Tag>}
+        actions={isOwner && messages.length > 0 && sections.isOpen('chat') && (
+          <button onClick={clearThread} className="text-xs text-neg hover:underline">ניקוי השיחה</button>
+        )}>
+        <AdvisorChat
+          messages={messages}
+          events={events}
+          isOwner={isOwner}
+          question={question}
+          onQuestionChange={setQuestion}
+          onSend={send}
+          job={jobs.chat}
+          agentBusy={agentBusy}
+          members={members}
+          taskShow={taskShow}
+          onTasksAdded={tasksAdded}
+          onError={onError}
+        />
+      </Section>
     </div>
   );
 }

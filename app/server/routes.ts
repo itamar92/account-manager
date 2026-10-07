@@ -74,7 +74,8 @@ import { listClients, listInvoices, listWorks, outstandingSql } from './queries.
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
 import {
-  analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
+  analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearChat, dismissJob, draftCampaign,
+  lastReport, listJobs, savedDrafts, trackJob,
 } from './campaignAdvisor.js';
 import {
   createTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
@@ -2274,7 +2275,27 @@ router.get('/moonlight/campaign-analysis', requireAuth, handle((req, res) => {
 
 /** Spends a run: rebuilds the context from the current data and asks the agent for a verdict. */
 router.post('/moonlight/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
-  res.json({ report: await analyzeCampaigns(dateRange(req.query)) });
+  const range = dateRange(req.query);
+  res.json({ report: await trackJob('analysis', { range }, () => analyzeCampaigns(range)) });
+}));
+
+/**
+ * What the agent is working on right now, and the last run that failed. A page reloaded during a
+ * run reads this to keep waiting for the answer instead of offering to start it again.
+ */
+router.get('/moonlight/campaign-jobs', requireAuth, handle((_req, res) => {
+  res.json({ jobs: listJobs() });
+}));
+
+/** Forgets a failed run once the page has shown its error. */
+router.delete('/moonlight/campaign-jobs/:kind', requireOwner, handle((req, res) => {
+  dismissJob(req.params.kind);
+  res.json({ ok: true });
+}));
+
+/** Every show's newest plan, for the tab to open on the one you were working on. */
+router.get('/moonlight/campaign-drafts', requireAuth, handle((_req, res) => {
+  res.json({ drafts: savedDrafts() });
 }));
 
 /** The last campaign plan drafted for a show, if there is one. */
@@ -2292,7 +2313,14 @@ router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) 
 router.post('/moonlight/campaign-draft', requireOwner, handleAsync(async (req, res) => {
   const eventId = req.body?.event_id ? String(req.body.event_id) : '';
   if (!eventId) return res.status(400).json({ error: 'event_id is required' });
-  res.json({ report: await draftCampaign(eventId, String(req.body?.brief || '').slice(0, 2000)) });
+  const brief = String(req.body?.brief || '').slice(0, 2000);
+  res.json({ report: await trackJob('draft', { event_id: eventId, brief }, () => draftCampaign(eventId, brief)) });
+}));
+
+/** Keeps the headline or description chosen from a plan's alternatives. */
+router.put('/moonlight/campaign-draft/:reportId/creative', requireOwner, handle((req, res) => {
+  const { field, value } = req.body ?? {};
+  res.json({ report: chooseDraftCreative(req.params.reportId, String(field ?? ''), String(value ?? '')) });
 }));
 
 /** The follow-up conversation. One thread per owner, which is all this app ever has. */
@@ -2303,7 +2331,9 @@ router.get('/moonlight/campaign-chat', requireAuth, handle((req, res) => {
 router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return res.status(400).json({ error: 'message is required' });
-  res.json({ messages: await chat(CAMPAIGN_CHAT_THREAD, message.slice(0, 2000), dateRange(req.query)) });
+  const text = message.slice(0, 2000);
+  const range = dateRange(req.query);
+  res.json({ messages: await trackJob('chat', { range, message: text }, () => chat(CAMPAIGN_CHAT_THREAD, text, range)) });
 }));
 
 router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {

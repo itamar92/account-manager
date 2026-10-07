@@ -12,6 +12,66 @@ export function Card({ children, className }: { children: React.ReactNode; class
 }
 
 /**
+ * A card whose body folds away under its heading.
+ *
+ * The heading carries a `summary` — a few tags saying what is inside — so a closed section still
+ * tells you whether it is worth opening, which is the whole difference between folding a page and
+ * hiding it. `actions` sit beside the heading rather than inside its button, so a link there never
+ * also opens or closes the section.
+ */
+export function Section({ title, summary, open, onToggle, actions, children, className }: {
+  title: React.ReactNode;
+  summary?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const bodyId = React.useId();
+  return (
+    <section className={clsx('bg-surface border border-line rounded-2xl', className)}>
+      <div className="flex items-center gap-2 px-4 md:px-5">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          aria-controls={bodyId}
+          className="flex-1 min-w-0 min-h-14 flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 text-start"
+        >
+          {/* Pointing down when open, and towards the reading direction's end when closed. */}
+          <ChevronDown className={clsx('w-4 h-4 shrink-0 text-muted transition-transform', !open && 'rotate-90')} />
+          <h2 className="ser text-lg">{title}</h2>
+          {summary && <span className="flex flex-wrap items-center gap-1.5">{summary}</span>}
+        </button>
+        {actions && <div className="shrink-0 flex items-center gap-2">{actions}</div>}
+      </div>
+      {open && <div id={bodyId} className="px-4 pb-4 md:px-5 md:pb-5">{children}</div>}
+    </section>
+  );
+}
+
+/** A small rounded label — a count, a status, a show — tinted by what it means. */
+export function Tag({ tone = 'neutral', children, className }: {
+  tone?: 'neutral' | 'pos' | 'warn' | 'neg' | 'accent';
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const tones = {
+    neutral: 'bg-soft border-line text-muted',
+    pos: 'bg-pos-soft border-pos/20 text-pos',
+    warn: 'bg-warn-soft border-warn/25 text-warn-ink',
+    neg: 'bg-neg-soft border-neg/20 text-neg',
+    accent: 'bg-accent-soft border-accent/20 text-accent-ink',
+  };
+  return (
+    <span className={clsx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', tones[tone], className)}>
+      {children}
+    </span>
+  );
+}
+
+/**
  * The dark slab. One per screen at most: it is what the eye lands on first, so it is reserved
  * for the single figure a page exists to report — the VAT owed, the money still in the air.
  */

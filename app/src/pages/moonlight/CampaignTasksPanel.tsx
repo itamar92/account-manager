@@ -10,6 +10,8 @@ interface Props {
   onError: (message: string) => void;
   /** Bumped by the tab when a draft's tasks were just added, so the list re-reads. */
   reloadKey: number;
+  /** Inside a folding section, which already supplies the card and the heading. */
+  bare?: boolean;
 }
 
 /** Today in Israel as YYYY-MM-DD — what a due date means, wherever the browser is. */
@@ -32,7 +34,7 @@ const ddmm = (date: string) => {
  * on the due date and every two days after until somebody ticks it. Everybody can tick a task
  * done; only the owner adds, re-dates, re-assigns or deletes.
  */
-export function CampaignTasksPanel({ events, isOwner, onError, reloadKey }: Props) {
+export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }: Props) {
   const { members } = useBandMembers();
   const [shows, setShows] = useState<any[]>([]);
   const [mail, setMail] = useState<{ configured: boolean; from: string | null } | null>(null);
@@ -96,10 +98,11 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey }: Prop
     ...active.map((m) => ({ value: m.member_key, label: m.email ? m.name : `${m.name} (אין מייל)` })),
   ];
 
+  const Wrapper = bare ? React.Fragment : Card;
   return (
-    <Card>
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-1">
-        <h2 className="ser text-lg">משימות קמפיין</h2>
+    <Wrapper>
+      <div className={clsx('flex flex-wrap items-center gap-2 mb-1', bare ? 'justify-end' : 'justify-between')}>
+        {!bare && <h2 className="ser text-lg">משימות קמפיין</h2>}
         <label className="flex items-center gap-1.5 text-xs text-muted">
           <input type="checkbox" className="accent-accent" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
           להציג משימות שבוצעו
@@ -224,6 +227,6 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey }: Prop
           </div>
         </div>
       )}
-    </Card>
+    </Wrapper>
   );
 }
