@@ -1,6 +1,6 @@
 import { nis, nisExact } from '../api';
 import { readableOnWhite, textOn } from './colors';
-import type { EmailCard } from '../pages/moonlight/quotes';
+import type { EmailCard } from '../pages/band/quotes';
 
 /**
  * The email a quote's link goes out in, as HTML a mailbox will show: the band's header, the

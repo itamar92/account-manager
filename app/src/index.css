@@ -3,7 +3,7 @@
 /*
  * The palette is written as two layers on purpose.
  *
- * `--ws-*` are the workspace variables: the business side and the Moonlight side are the same
+ * `--ws-*` are the workspace variables: the business side and the band side are the same
  * app wearing two colours, and the shell swaps them by setting `data-ws` on <html>. Everything
  * below reads through them, so a page never has to know which workspace it is being shown in.
  *
@@ -53,7 +53,7 @@
   --color-accent-soft: var(--ws-accent-soft);
   --color-accent-ink: var(--ws-accent-ink);
 
-  /* Moonlight's violet, for the places the business side points at the band */
+  /* The band workspace's violet, for the places the business side points at the band */
   --color-moon: #6b45d6;
   --color-moon-soft: #ede9fd;
 

@@ -6,7 +6,7 @@ license: Apache-2.0
 version: 0.1.0-account-manager
 ---
 
-> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `moonlight_campaigns`, `moonlight_ad_analysis`, `moonlight_shows`, `moonlight_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
+> **Connection override — read this first.** This skill was written for the adadvisor.ai MCP server, which can read *and change* a Meta ad account. This project does **not** use that server. It uses the app's own **read-only** Meta connection (`account-manager` MCP: `band_campaigns`, `band_ad_analysis`, `band_shows`, `band_campaign_advice`), which is **campaign-level only** and measures a band's **shows** (cost per ticket), not an online shop (ROAS).
 >
 > - Load the `adadvisor` foundation skill first; it defines the data limits and the show economics.
 > - Wherever this skill says `adadvisor:<tool>`, translate it with `../adadvisor/references/mcp-tool-cheatsheet.md`. A **read** maps to a campaign-level tool or is *not available*; a **write** becomes **an instruction for the user to carry out in Ads Manager** (`../adadvisor/references/mutation-safety.md`) — never claim it was done.
@@ -14,7 +14,7 @@ version: 0.1.0-account-manager
 > - Where a step needs something this connection cannot see (ad set / ad data, pixel, frequency by day, copy), say what is missing and ask the user to paste it from Ads Manager. Do not guess.
 > - Everything below describes the method; the method is sound, the tool calls are not available as written.
 >
-> **For this skill:** there is no creative-level performance data and the ad copy is not exposed through MCP, so you cannot rank ads or detect fatigue from data. The frameworks, hook library, format rules and refresh cadence are strategy and still apply — use them to advise and to write new copy in the band's voice. Ask the user to paste existing copy, the creative's Ads Manager results, and the audience. The in-app advisor's stored report (`moonlight_campaign_advice`) may already hold copy suggestions: read it first.
+> **For this skill:** there is no creative-level performance data and the ad copy is not exposed through MCP, so you cannot rank ads or detect fatigue from data. The frameworks, hook library, format rules and refresh cadence are strategy and still apply — use them to advise and to write new copy in the band's voice. Ask the user to paste existing copy, the creative's Ads Manager results, and the audience. The in-app advisor's stored report (`band_campaign_advice`) may already hold copy suggestions: read it first.
 
 # AdAdvisor — Creative Strategy
 

@@ -22,7 +22,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 // ---------------------------------------------------------------------------
 
 /**
- * The defaults are the ratios `expense-inventory-2026.md` already books this business by:
+ * The defaults are the ratios an Israeli home-office freelancer commonly books by:
  * 45% on the car, 15% on the household bills behind the home office, 80% on communications.
  * Anything not listed is deductible in full.
  *

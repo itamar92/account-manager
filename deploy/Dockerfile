@@ -33,11 +33,6 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/server.ts /app/package.json ./
 
-# First-run seed reads ../../invoices_2026.csv relative to server/, which resolves
-# to /invoices_2026.csv from /app/server. Without it the app still starts, just
-# with no imported invoice history.
-COPY invoices_2026.csv /invoices_2026.csv
-
 USER node
 EXPOSE 3000
 VOLUME ["/data"]

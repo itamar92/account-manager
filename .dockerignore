@@ -1,5 +1,4 @@
-# The build context is the repo root (the Dockerfile needs invoices_2026.csv for
-# the first-run seed), so keep everything else out of it.
+# The build context is the repo root, so keep everything the image does not need out of it.
 .git
 .github
 .claude

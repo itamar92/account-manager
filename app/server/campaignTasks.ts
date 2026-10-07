@@ -16,7 +16,7 @@
 import { randomBytes } from 'crypto';
 import { Router } from 'express';
 import { db, uuid } from './db.js';
-import { eventLabel } from './moonlight.js';
+import { eventLabel } from './band.js';
 import { isMailConfigured, sendMail } from './mailer.js';
 
 export class TaskError extends Error {
@@ -266,7 +266,7 @@ export function reminderEmail(name: string, rows: ReminderRow[], today: string, 
     '',
     ...lines,
     '',
-    base ? `כל המשימות: ${base}/moonlight/campaignAi` : '',
+    base ? `כל המשימות: ${base}/band/campaignAi` : '',
     `התזכורת תחזור כל ${REMINDER_REPEAT_DAYS} ימים עד שהמשימה תסומן כבוצעה.`,
   ].filter((l, i, all) => l !== '' || all[i - 1] !== '').join('\n');
 
@@ -291,7 +291,7 @@ export function reminderEmail(name: string, rows: ReminderRow[], today: string, 
     <p>היי ${escapeHtml(name)},</p>
     <p>אלה משימות הקמפיין שמחכות לך:</p>
     ${items}
-    ${base ? `<p><a href="${escapeHtml(`${base}/moonlight/campaignAi`)}" style="color:#6b45d6">לכל המשימות באפליקציה</a></p>` : ''}
+    ${base ? `<p><a href="${escapeHtml(`${base}/band/campaignAi`)}" style="color:#6b45d6">לכל המשימות באפליקציה</a></p>` : ''}
     <p style="color:#888;font-size:12px">התזכורת תחזור כל ${REMINDER_REPEAT_DAYS} ימים עד שהמשימה תסומן כבוצעה.</p>
   </div>`;
 

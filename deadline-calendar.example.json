@@ -1,0 +1,21 @@
+{
+  "as_of": "2026-01-01",
+  "profile": "osek_murshe bi-monthly",
+  "mkdamot_mas_hachnasa_required": null,
+  "mkdamot_note": "Set to true/false once you know whether the Tax Authority issued advance-payment vouchers (שוברים) for the year.",
+  "deadlines": [
+    {
+      "date": "2026-02-15",
+      "type": "vat_bimonthly",
+      "period": "Dec 2025 – Jan 2026",
+      "status": "open"
+    },
+    {
+      "date": "2026-02-15",
+      "type": "bituach_leumi_monthly",
+      "period": "January 2026",
+      "status": "open"
+    }
+  ],
+  "notes": "Copy to deadline-calendar.json (git-ignored). The tax-compliance agent keeps statuses here or in the Deadlines sheet."
+}

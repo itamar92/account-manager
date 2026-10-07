@@ -12,10 +12,10 @@ import { Works } from './pages/Works';
 import { Invoices } from './pages/Invoices';
 import { Expenses } from './pages/Expenses';
 import { Reports } from './pages/Reports';
-import { Moonlight } from './pages/Moonlight';
-import { ShowDetail } from './pages/moonlight/ShowDetail';
-import { QuoteEditor } from './pages/moonlight/QuoteEditor';
-import { QuotePreview } from './pages/moonlight/QuotePreview';
+import { BandWorkspace } from './pages/BandWorkspace';
+import { ShowDetail } from './pages/band/ShowDetail';
+import { QuoteEditor } from './pages/band/QuoteEditor';
+import { QuotePreview } from './pages/band/QuotePreview';
 import { QuotePublic } from './pages/QuotePublic';
 import { Settings } from './pages/Settings';
 
@@ -28,7 +28,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           {/* A client's quote link: no login and no shell — see server/publicQuotes.ts. */}
           <Route path="/q/:token" element={<QuotePublic />} />
           {/* Outside the shell: the quote on its own, the way the client will get it. */}
-          <Route path="/moonlight/quotes/:id/preview" element={<QuotePreview />} />
+          <Route path="/band/quotes/:id/preview" element={<QuotePreview />} />
           <Route element={<Layout />}>
             {/* What is unfinished is the landing page; the year's figures are one click over. */}
             <Route path="/" element={<Inbox />} />
@@ -38,12 +38,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             <Route path="/invoices" element={<Invoices />} />
             <Route path="/expenses" element={<Expenses />} />
             <Route path="/reports" element={<Reports />} />
-            {/* The Moonlight tabs are routes so the sidebar can point straight at one. */}
-            <Route path="/moonlight" element={<Moonlight />} />
+            {/* The band tabs are routes so the sidebar can point straight at one. */}
+            <Route path="/band" element={<BandWorkspace />} />
             {/* Before /:tab, so "shows/<id>" is a show and not a tab named "shows". */}
-            <Route path="/moonlight/shows/:id" element={<ShowDetail />} />
-            <Route path="/moonlight/quotes/:id" element={<QuoteEditor />} />
-            <Route path="/moonlight/:tab" element={<Moonlight />} />
+            <Route path="/band/shows/:id" element={<ShowDetail />} />
+            <Route path="/band/quotes/:id" element={<QuoteEditor />} />
+            <Route path="/band/:tab" element={<BandWorkspace />} />
             <Route path="/settings" element={<Settings />} />
           </Route>
         </Routes>

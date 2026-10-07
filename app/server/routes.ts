@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import { randomBytes } from 'crypto';
 import {
   db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
-  getMetaCurrencyRate, getMetaSyncDays,
+  getMetaCurrencyRate, getMetaSyncDays, getBandName, getDefaultCommissionPercent,
 } from './db.js';
 import {
   createSession, currentSessionToken, destroySession, login, requireAuth, requireOwner,
@@ -37,9 +37,12 @@ import {
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
   memberByName, moneyReceived, normalizeCommissionPercent, normalizePaymentStatus,
   reassignExpenseRow, settleFundTransfer,
-  PAID_EXPENSE_FIELDS,
+  EXPENSE_FIELDS, PAID_EXPENSE_FIELDS,
   recomputeEvent, syncExpenseLabel, type MemberKey,
-} from './moonlight.js';
+} from './band.js';
+import {
+  allCategories, categoryUsage, createCategory, deleteCategory, updateCategory,
+} from './expenseCategories.js';
 import {
   ASSIGNMENT_ROLES, assignmentsForEvent, attendeeEmails, autoAssignAll, deleteSupplier,
   isAssignmentRole, listSuppliers, missingRoles, setAssignment, supplierDebts,
@@ -143,7 +146,7 @@ function handle(fn: (req: any, res: any) => void) {
 
 /**
  * The date window a list is asking for. Every end is optional: the tables ask for one year,
- * optionally narrowed to one month within it, the moonlight summary can ask for any span, and
+ * optionally narrowed to one month within it, the band summary can ask for any span, and
  * callers that ask for nothing — the dashboard — keep getting everything.
  *
  * A month is only meaningful inside a year, so one sent without a year is ignored rather than
@@ -206,8 +209,18 @@ router.post('/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Who is logged in, and what the app calls itself and the band. The names ride along here so
+ * that every screen — the login page included, before anybody is logged in — can show them
+ * without a second request or an owner-only settings read.
+ */
 router.get('/auth/me', (req, res) => {
-  res.json({ user: req.user ?? null });
+  res.json({ user: req.user ?? null, branding: branding() });
+});
+
+const branding = () => ({
+  app_name: getSetting('app_name', 'Account Manager'),
+  band_name: getBandName(),
 });
 
 // ============ dashboard (owner) ============
@@ -254,7 +267,7 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
      ORDER BY i.date DESC, i.created_at DESC LIMIT 8`
   ).all();
   // The band's follow-ups (money not yet in, suppliers not yet paid) live on the
-  // moonlight summary, not here — this dashboard keeps only the one headline figure.
+  // band summary, not here — this dashboard keeps only the one headline figure.
   const band = bandSummary();
   res.json({
     year,
@@ -838,7 +851,7 @@ router.get('/expenses/status-audit', requireOwner, handle((_req, res) => {
   res.json(expenseStatusAudit());
 }));
 
-// ============ moonlight (owner + band members) ============
+// ============ band (owner + band members) ============
 /**
  * The two follow-up lists for the band: shows whose money has not arrived, and shows whose
  * suppliers have not been paid. Both are about shows that already happened — a gig next month
@@ -933,7 +946,7 @@ export function bandSummary(range: { from?: string; to?: string } = {}) {
     generalExpenses: sum(general, 'amount'),
     eventCount: events.length,
     upcomingEvents: events.filter((e) => e.date >= new Date().toISOString().slice(0, 10)).length,
-    // One bar per show, oldest first, for the moonlight dashboard's income/expenses/profit chart.
+    // One bar per show, oldest first, for the band dashboard's income/expenses/profit chart.
     perShow: events
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date))
@@ -958,7 +971,7 @@ export function bandSummary(range: { from?: string; to?: string } = {}) {
  * 3. A general expense the band's float (קופה) covered was borne by everybody, so it comes off
  *    each member's payout in equal parts.
  *
- * `paid` is what settled means for a general expense: the moonlight migration set it from the
+ * `paid` is what settled means for a general expense: the band migration set it from the
  * sheet's «הוחזר» columns, so a row already squared takes no further part in the division.
  * Both halves follow the selected range, as the rest of the summary does.
  */
@@ -1057,10 +1070,10 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
   };
 }
 
-// Price quotes — the one Moonlight area band members write to as well; see quoteRoutes.ts.
-router.use('/moonlight/quotes', quoteRouter);
+// Price quotes — the one band area band members write to as well; see quoteRoutes.ts.
+router.use('/band/quotes', quoteRouter);
 
-router.get('/moonlight/summary', requireAuth, handle((req, res) => {
+router.get('/band/summary', requireAuth, handle((req, res) => {
   res.json({ summary: bandSummary(dateRange(req.query)), fund: bandFund() });
 }));
 
@@ -1200,23 +1213,23 @@ export function bandFundExplain() {
   };
 }
 
-router.get('/moonlight/fund/explain', requireAuth, handle((_req, res) => {
+router.get('/band/fund/explain', requireAuth, handle((_req, res) => {
   res.json({ explain: bandFundExplain() });
 }));
 
 /** Records what the account actually holds. Empty clears it back to "nobody has said". */
-router.post('/moonlight/fund', requireOwner, handle((req, res) => {
+router.post('/band/fund', requireOwner, handle((req, res) => {
   const value = req.body?.actual;
   setSetting('band_fund_actual', value === null || value === '' ? '' : String(Number(value) || 0));
   res.json({ fund: bandFund() });
 }));
 
 /** The worked-out version of the summary's division figures — every step and its rows. */
-router.get('/moonlight/division', requireAuth, handle((req, res) => {
+router.get('/band/division', requireAuth, handle((req, res) => {
   res.json({ division: bandDivision(dateRange(req.query)) });
 }));
 
-router.get('/moonlight/events', requireAuth, handle((req, res) => {
+router.get('/band/events', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   const events = db
     .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
@@ -1230,7 +1243,7 @@ router.get('/moonlight/events', requireAuth, handle((req, res) => {
  * Expense rows follow their show's date. Rows that never found a show stay in the list
  * whatever the filter says — they are the ones most in need of attention.
  */
-router.get('/moonlight/event-expenses', requireAuth, handle((req, res) => {
+router.get('/band/event-expenses', requireAuth, handle((req, res) => {
   const range = dateRange(req.query);
   const filters: string[] = [];
   const params: string[] = [];
@@ -1246,7 +1259,7 @@ router.get('/moonlight/event-expenses', requireAuth, handle((req, res) => {
   });
 }));
 
-router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
+router.get('/band/general-expenses', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   res.json({
     expenses: db.prepare(`SELECT * FROM band_general_expenses${where.sql} ORDER BY date DESC`).all(...where.params),
@@ -1261,7 +1274,7 @@ router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
  * four lists separately and matching them up in the browser is how the old tabs worked, and
  * it is exactly what made a show's numbers something you had to assemble in your head.
  */
-router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
+router.get('/band/events/:id', requireAuth, handle((req, res) => {
   const event = getEvent(req.params.id);
   if (!event) return res.status(404).json({ error: 'event not found' });
   const expense = ensureExpenseRow(event);
@@ -1303,14 +1316,14 @@ router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
  * Only lines carrying an amount are touched — marking an empty line paid would say a supplier
  * who was never engaged has been settled with.
  */
-router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, res) => {
+router.post('/band/events/:id/pay-suppliers', requireOwner, handle((req, res) => {
   const event = getEvent(req.params.id);
   if (!event) return res.status(404).json({ error: 'event not found' });
   const row = ensureExpenseRow(event);
   const paid = PAID_EXPENSE_FIELDS().filter((f) => Number(row[f]) > 0);
   if (paid.length) {
     db.prepare(
-      `UPDATE band_event_expenses SET ${paid.map((f) => `${f}_paid = 1`).join(', ')} WHERE id = ?`
+      `UPDATE band_event_expenses SET ${paid.map((f) => `"${f}_paid" = 1`).join(', ')} WHERE id = ?`
     ).run(row.id);
     // The flags are the fast way to settle a show; the payment rows are what the invoice
     // queue reads. Syncing here is what stops money paid the quick way from going untracked.
@@ -1342,10 +1355,10 @@ function showIncome(body: any, existing?: any): { pre: number; gross: number } {
   return { pre, gross };
 }
 
-// Writes to moonlight data are owner-only; band members are view-only.
+// Writes to band data are owner-only; band members are view-only.
 // `expenses`, `expenses_paid` and `profit` are never taken from the client: they are derived
 // from the show's expense row by recomputeEvent.
-router.post('/moonlight/events', requireOwner, handle((req, res) => {
+router.post('/band/events', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.venue || !b.date) return res.status(400).json({ error: 'venue and date are required' });
   const id = uuid();
@@ -1357,7 +1370,7 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   ).run(
     id, b.venue, b.date, b.tickets || 0, b.capacity || 0, income.pre, income.gross,
     b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0,
-    b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT,
+    b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT(),
     b.paid_to_musicians ? 1 : 0,
     normalizePaymentStatus(b.payment_status) || 'waiting_report'
   );
@@ -1366,7 +1379,7 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
 }));
 
 
-router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
+router.put('/band/events/:id', requireOwner, handle((req, res) => {
   const existing = getEvent(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'event not found' });
   const body = req.body || {};
@@ -1422,7 +1435,7 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
   res.json({ event: recomputeEvent(req.params.id) });
 }));
 
-router.delete('/moonlight/events/:id', requireOwner, handle((req, res) => {
+router.delete('/band/events/:id', requireOwner, handle((req, res) => {
   // Excluding is the default: deleting a synced show without it just invites the next sync
   // to put it straight back.
   const flag = req.query.exclude_from_calendar;
@@ -1434,7 +1447,7 @@ router.delete('/moonlight/events/:id', requireOwner, handle((req, res) => {
   res.json(result);
 }));
 
-router.post('/moonlight/events/bulk-delete', requireOwner, handle((req, res) => {
+router.post('/band/events/bulk-delete', requireOwner, handle((req, res) => {
   const ids = bulkIds(req.body);
   const exclude = !!req.body?.exclude_from_calendar;
   const run = db.transaction(() => {
@@ -1451,17 +1464,20 @@ router.post('/moonlight/events/bulk-delete', requireOwner, handle((req, res) => 
   res.json(run());
 }));
 
-/** The label and its link are owned by the show, so neither is editable here. */
-const EVENT_EXPENSE_MONEY = ['tickets', 'campaign', 'refreshments', 'design', 'other', 'expense_amount',
-  'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer', 'vat_summary'] as const;
-const EVENT_EXPENSE_FLAGS = ['akom_paid', 'hall_fee_paid', 'sound_company_paid', 'bracelets_paid',
-  'lightman_paid', 'soundman_paid', 'singer_paid'] as const;
+/**
+ * The columns a client may write on an expense row: the ticket count, every cost line the band
+ * has defined, the VAT note, and each line's paid flag. The label and its link are owned by the
+ * show, so neither is editable here. Read per request, because the band can add a line at any
+ * time.
+ */
+const EVENT_EXPENSE_MONEY = (): string[] => ['tickets', ...EXPENSE_FIELDS(), 'vat_summary'];
+const EVENT_EXPENSE_FLAGS = (): string[] => EXPENSE_FIELDS().map((f) => `${f}_paid`);
 
 /**
  * Attaches an existing expense row to a show — the manual counterpart to the migration, for
  * the rows whose written-out name could not be matched to one automatically.
  */
-router.post('/moonlight/event-expenses/:id/assign', requireOwner, handle((req, res) => {
+router.post('/band/event-expenses/:id/assign', requireOwner, handle((req, res) => {
   const eventId = req.body?.event_id ? String(req.body.event_id) : null;
   res.json({ expense: reassignExpenseRow(req.params.id, eventId) });
 }));
@@ -1470,25 +1486,26 @@ router.post('/moonlight/event-expenses/:id/assign', requireOwner, handle((req, r
  * Empties a show's expense row, or deletes an unassigned one outright — see deleteExpenseRow
  * for why the two cases differ.
  */
-router.delete('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
+router.delete('/band/event-expenses/:id', requireOwner, handle((req, res) => {
   res.json(deleteExpenseRow(req.params.id));
 }));
 
-router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
+router.put('/band/event-expenses/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'expense row not found' });
   const body = req.body || {};
 
   const sets: string[] = [];
   const params: any[] = [];
-  for (const field of EVENT_EXPENSE_MONEY) {
+  for (const field of EVENT_EXPENSE_MONEY()) {
     if (body[field] === undefined) continue;
-    sets.push(`${field} = ?`);
+    sets.push(`"${field}" = ?`);
     params.push(Number(body[field]) || 0);
   }
-  for (const field of EVENT_EXPENSE_FLAGS) {
+  const flags = EVENT_EXPENSE_FLAGS();
+  for (const field of flags) {
     if (body[field] === undefined) continue;
-    sets.push(`${field} = ?`);
+    sets.push(`"${field}" = ?`);
     params.push(body[field] ? 1 : 0);
   }
   for (const field of ['status', 'paid_by'] as const) {
@@ -1517,7 +1534,7 @@ router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
   if (body.campaign_locked !== undefined && !body.campaign_locked) applyCampaignSpend();
   // Ticking one supplier's line paid on the show page is a payment like any other, so it gets
   // a payment row and joins the queue waiting for its invoice; un-ticking gives it back.
-  if (existing.event_id && EVENT_EXPENSE_FLAGS.some((f) => body[f] !== undefined)) {
+  if (existing.event_id && flags.some((f) => body[f] !== undefined)) {
     syncLinePayments(existing.event_id);
   }
   if (existing.event_id) recomputeEvent(existing.event_id);
@@ -1535,24 +1552,21 @@ function generalExpenseEvent(eventId: unknown): { event_id: string | null; event
   return { event_id: event.id, event: eventLabel(event.venue, event.date) };
 }
 
-router.post('/moonlight/general-expenses', requireOwner, handle((req, res) => {
+router.post('/band/general-expenses', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.date || !b.description) return res.status(400).json({ error: 'date and description are required' });
   const id = uuid();
   const link = generalExpenseEvent(b.event_id);
   db.prepare(
-    `INSERT INTO band_general_expenses (id, date, description, event, event_id, paid_by, amount, paid,
-      amir, amir_returned, itamar, itamar_returned, yuval, yuval_returned, fund, fund_returned)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO band_general_expenses (id, date, description, event, event_id, paid_by, amount, paid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, b.date, b.description, link.event, link.event_id, b.paid_by || null, b.amount || 0, b.paid ? 1 : 0,
-    b.amir || 0, b.amir_returned || null, b.itamar || 0, b.itamar_returned || null,
-    b.yuval || 0, b.yuval_returned || null, b.fund || 0, b.fund_returned || null
+    id, b.date, b.description, link.event, link.event_id, b.paid_by || null, b.amount || 0, b.paid ? 1 : 0
   );
   res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(id) });
 }));
 
-router.put('/moonlight/general-expenses/:id', requireOwner, handle((req, res) => {
+router.put('/band/general-expenses/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'expense not found' });
   const body = req.body || {};
@@ -1562,29 +1576,27 @@ router.put('/moonlight/general-expenses/:id', requireOwner, handle((req, res) =>
     ? generalExpenseEvent(body.event_id)
     : { event_id: existing.event_id, event: existing.event };
   db.prepare(
-    `UPDATE band_general_expenses SET date=?, description=?, event=?, event_id=?, paid_by=?, amount=?, paid=?,
-      amir=?, amir_returned=?, itamar=?, itamar_returned=?, yuval=?, yuval_returned=?, fund=?, fund_returned=?
+    `UPDATE band_general_expenses SET date=?, description=?, event=?, event_id=?, paid_by=?, amount=?, paid=?
      WHERE id=?`
   ).run(
     b.date, b.description, link.event, link.event_id, b.paid_by || null, Number(b.amount) || 0, b.paid ? 1 : 0,
-    b.amir || 0, b.amir_returned || null, b.itamar || 0, b.itamar_returned || null,
-    b.yuval || 0, b.yuval_returned || null, b.fund || 0, b.fund_returned || null, req.params.id
+    req.params.id
   );
   res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(req.params.id) });
 }));
 
-router.delete('/moonlight/general-expenses/:id', requireOwner, handle((req, res) => {
+router.delete('/band/general-expenses/:id', requireOwner, handle((req, res) => {
   const result = db.prepare('DELETE FROM band_general_expenses WHERE id = ?').run(req.params.id);
   if (!result.changes) return res.status(404).json({ error: 'expense not found' });
   res.json({ deleted: 1 });
 }));
 
-// ---- moonlight follow-ups: the summary tab's dashboard cards ----
-router.get('/moonlight/follow-ups', requireAuth, handle((_req, res) => {
+// ---- band follow-ups: the summary tab's dashboard cards ----
+router.get('/band/follow-ups', requireAuth, handle((_req, res) => {
   res.json({ followUps: bandFollowUps() });
 }));
 
-// ---- moonlight staffing (שיבוצים): suppliers and who works each show ----
+// ---- band staffing (שיבוצים): suppliers and who works each show ----
 /**
  * Suppliers with what each is still owed, show by show — plus what they are booked for on
  * shows that have not happened yet, which is reported beside the debt rather than inside it.
@@ -1624,11 +1636,15 @@ function membersWithGaps() {
 }
 
 // ---- the band itself ----
-router.get('/moonlight/members', requireAuth, handle((_req, res) => {
-  res.json({ members: membersWithGaps(), business_types: BUSINESS_TYPES });
+router.get('/band/members', requireAuth, handle((_req, res) => {
+  res.json({
+    members: membersWithGaps(),
+    business_types: BUSINESS_TYPES,
+    default_commission_percent: getDefaultCommissionPercent(),
+  });
 }));
 
-router.post('/moonlight/members', requireOwner, handle((req, res) => {
+router.post('/band/members', requireOwner, handle((req, res) => {
   const { name, email, role, is_manager, business_type } = req.body || {};
   const trimmed = String(name ?? '').trim();
   if (!trimmed) return res.status(400).json({ error: 'שם חבר חובה' });
@@ -1661,7 +1677,7 @@ router.post('/moonlight/members', requireOwner, handle((req, res) => {
  * played is part of the band's history — their shares are money that was divided — so once
  * anything is recorded against them the answer is «לא פעיל», not deletion.
  */
-router.delete('/moonlight/members/:key', requireOwner, handle((req, res) => {
+router.delete('/band/members/:key', requireOwner, handle((req, res) => {
   const member = bandMemberByKey(req.params.key);
   if (!member) return res.status(404).json({ error: 'member not found' });
   if (listBandMembers().length <= 1) {
@@ -1692,7 +1708,7 @@ router.delete('/moonlight/members/:key', requireOwner, handle((req, res) => {
   res.json({ ok: true });
 }));
 
-router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
+router.put('/band/members/:key', requireOwner, handle((req, res) => {
   const existing = bandMemberByKey(req.params.key);
   if (!existing) return res.status(404).json({ error: 'member not found' });
   const b = { ...existing, ...(req.body || {}) };
@@ -1733,7 +1749,7 @@ router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
   res.json({ member: bandMemberByKey(req.params.key) });
 }));
 
-router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
+router.get('/band/suppliers', requireAuth, handle((_req, res) => {
   res.json({ suppliers: suppliersWithDebts() });
 }));
 
@@ -1752,7 +1768,7 @@ function activateRoleFor(role: string) {
   if (existing && !existing.active) updateRole(role, { active: 1 });
 }
 
-router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
+router.post('/band/suppliers', requireOwner, handle((req, res) => {
   const { name, email, role, phone, notes, default_amount } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
@@ -1793,7 +1809,7 @@ router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   res.json({ supplier: listSuppliers().find((s) => s.id === id) });
 }));
 
-router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
+router.put('/band/suppliers/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'supplier not found' });
   const b = { ...existing, ...(req.body || {}) };
@@ -1837,7 +1853,7 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   res.json({ supplier: listSuppliers().find((s) => s.id === req.params.id) });
 }));
 
-router.delete('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
+router.delete('/band/suppliers/:id', requireOwner, handle((req, res) => {
   deleteSupplier(req.params.id);
   res.json({ ok: true });
 }));
@@ -1846,7 +1862,7 @@ router.delete('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
  * The staffing board: every show in the range with who holds each role, what that role
  * costs on the show's expense row, and which required roles still have nobody.
  */
-router.get('/moonlight/assignments', requireAuth, handle((req, res) => {
+router.get('/band/assignments', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   const events = db
     .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
@@ -1879,14 +1895,14 @@ router.get('/moonlight/assignments', requireAuth, handle((req, res) => {
 }));
 
 /** One staffing decision: who fills `role` on this show, or that it is not needed. */
-router.put('/moonlight/events/:id/assignments', requireOwner, handle((req, res) => {
+router.put('/band/events/:id/assignments', requireOwner, handle((req, res) => {
   const { role, supplier_id, not_needed } = req.body || {};
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
   res.json({ assignment: setAssignment(req.params.id, role, supplier_id || null, !!not_needed) });
 }));
 
 /** Re-matches every stored guest list — for after the supplier table is edited. */
-router.post('/moonlight/assignments/auto-match', requireOwner, handle((_req, res) => {
+router.post('/band/assignments/auto-match', requireOwner, handle((_req, res) => {
   res.json({ assigned: autoAssignAll() });
 }));
 
@@ -1903,7 +1919,7 @@ function payeeFromRequest(body: any): { kind: PayeeKind; id: string } | null {
 }
 
 /** Everybody the band can pay: the suppliers it hires and its own members. */
-router.get('/moonlight/payees', requireAuth, handle((_req, res) => {
+router.get('/band/payees', requireAuth, handle((_req, res) => {
   res.json({ payees: listPayees().map((p) => ({ ...p, key: keyOf(p) })) });
 }));
 
@@ -1914,7 +1930,7 @@ router.get('/moonlight/payees', requireAuth, handle((_req, res) => {
  * pays: one transfer to אבי covering the four gigs he did since the last one, and one to
  * אמיר covering his share of the same four.
  */
-router.get('/moonlight/payees/:kind/:id/open-lines', requireAuth, handle((req, res) => {
+router.get('/band/payees/:kind/:id/open-lines', requireAuth, handle((req, res) => {
   const payee = payeeFromRequest({
     payee_kind: req.params.kind, payee_id: req.params.id,
   });
@@ -1923,7 +1939,7 @@ router.get('/moonlight/payees/:kind/:id/open-lines', requireAuth, handle((req, r
 }));
 
 /** The address the pay dialog used before members could be paid; kept for old links. */
-router.get('/moonlight/suppliers/:id/open-lines', requireAuth, handle((req, res) => {
+router.get('/band/suppliers/:id/open-lines', requireAuth, handle((req, res) => {
   if (!db.prepare('SELECT id FROM band_suppliers WHERE id = ?').get(req.params.id)) {
     return res.status(404).json({ error: 'supplier not found' });
   }
@@ -1931,7 +1947,7 @@ router.get('/moonlight/suppliers/:id/open-lines', requireAuth, handle((req, res)
 }));
 
 /** Every recorded payment with what answers for it, plus the aged total still undocumented. */
-router.get('/moonlight/supplier-payments', requireAuth, handle((_req, res) => {
+router.get('/band/supplier-payments', requireAuth, handle((_req, res) => {
   res.json({ payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
 }));
 
@@ -1939,7 +1955,7 @@ router.get('/moonlight/supplier-payments', requireAuth, handle((_req, res) => {
  * Records one transfer against the lines it settles. The amount is the sum of those lines and
  * is never read off the request — see recordPayment.
  */
-router.post('/moonlight/supplier-payments', requireOwner, handle((req, res) => {
+router.post('/band/supplier-payments', requireOwner, handle((req, res) => {
   const { date, method, notes, lines } = req.body || {};
   const payee = payeeFromRequest(req.body);
   if (!payee) return res.status(400).json({ error: 'מקבל התשלום חובה' });
@@ -1949,7 +1965,7 @@ router.post('/moonlight/supplier-payments', requireOwner, handle((req, res) => {
   res.json({ payment: recordPayment({ payee, date, method, notes, lines }) });
 }));
 
-router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res) => {
+router.delete('/band/supplier-payments/:id', requireOwner, handle((req, res) => {
   deletePayment(req.params.id);
   res.json({ ok: true });
 }));
@@ -1963,7 +1979,7 @@ router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res
  * document dated four months out, the invoice that covers two transfers at once. No rule
  * reaches those, and the person holding the invoice does.
  */
-router.get('/moonlight/supplier-payments/:id/documents', requireAuth, handle((req, res) => {
+router.get('/band/supplier-payments/:id/documents', requireAuth, handle((req, res) => {
   res.json({ documents: searchDocuments(req.params.id, String(req.query.q || '')) });
 }));
 
@@ -1976,7 +1992,7 @@ router.get('/moonlight/supplier-payments/:id/documents', requireAuth, handle((re
  * already spoken for by another supplier is not overwritten by a link, and the person is told
  * the mapping did not take while the link itself stands.
  */
-router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, res) => {
+router.post('/band/supplier-payments/:id/docs', requireOwner, handle((req, res) => {
   const expenseId = String(req.body?.expense_id || '');
   if (!expenseId) return res.status(400).json({ error: 'מסמך חובה' });
   linkDocument(req.params.id, expenseId, 'user');
@@ -2006,7 +2022,7 @@ router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, 
   });
 }));
 
-router.delete('/moonlight/supplier-payments/:id/docs/:expenseId', requireOwner, handle((req, res) => {
+router.delete('/band/supplier-payments/:id/docs/:expenseId', requireOwner, handle((req, res) => {
   unlinkDocument(req.params.id, req.params.expenseId);
   res.json({ payment: listPayments().find((p) => p.id === req.params.id) ?? null });
 }));
@@ -2017,7 +2033,7 @@ router.delete('/moonlight/supplier-payments/:id/docs/:expenseId', requireOwner, 
  * Sending no resolution is the reopen: a payment closed as «לא נדרשת חשבונית» that turns out
  * to have one after all goes back to waiting rather than needing to be re-recorded.
  */
-router.post('/moonlight/supplier-payments/:id/resolve', requireOwner, handle((req, res) => {
+router.post('/band/supplier-payments/:id/resolve', requireOwner, handle((req, res) => {
   const raw = req.body?.resolution;
   const resolution = raw == null || raw === ''
     ? null
@@ -2027,7 +2043,7 @@ router.post('/moonlight/supplier-payments/:id/resolve', requireOwner, handle((re
 }));
 
 /** Runs the matcher over everything Morning has sent since the last time. */
-router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, res) => {
+router.post('/band/supplier-payments/match', requireOwner, handle((_req, res) => {
   res.json({ ...runMatch(), payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
 }));
 
@@ -2044,7 +2060,7 @@ router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, re
  * a member is a document like any other, and until this screen knows their business name it
  * cannot place theirs either.
  */
-router.get('/moonlight/supplier-names', requireAuth, handle((_req, res) => {
+router.get('/band/supplier-names', requireAuth, handle((_req, res) => {
   const payees = listPayees();
   res.json({
     payees: payees.map((p) => ({
@@ -2065,7 +2081,7 @@ router.get('/moonlight/supplier-names', requireAuth, handle((_req, res) => {
  * sitting in the table unmatched, and a mapping that only affected the future would leave the
  * person to go and link them one at a time anyway.
  */
-router.post('/moonlight/supplier-names', requireOwner, handle((req, res) => {
+router.post('/band/supplier-names', requireOwner, handle((req, res) => {
   const payee = payeeFromRequest(req.body);
   const alias = String(req.body?.alias || '');
   if (!payee) return res.status(400).json({ error: 'מקבל התשלום חובה' });
@@ -2074,7 +2090,7 @@ router.post('/moonlight/supplier-names', requireOwner, handle((req, res) => {
   res.json({ alias: created, ...runMatch() });
 }));
 
-router.delete('/moonlight/supplier-names/:id', requireOwner, handle((req, res) => {
+router.delete('/band/supplier-names/:id', requireOwner, handle((req, res) => {
   removeAlias(req.params.id);
   res.json({ ok: true });
 }));
@@ -2087,7 +2103,7 @@ router.delete('/moonlight/supplier-names/:id', requireOwner, handle((req, res) =
  * The counts are what a person needs before switching one off: a role with suppliers hired
  * under it and shows staffed on it is not a checkbox, it is part of the band's history.
  */
-router.get('/moonlight/supplier-roles', requireAuth, handle((_req, res) => {
+router.get('/band/supplier-roles', requireAuth, handle((_req, res) => {
   res.json({
     roles: allRoles().map((role) => ({ ...role, ...roleUsage(role.key) })),
   });
@@ -2100,9 +2116,36 @@ router.get('/moonlight/supplier-roles', requireAuth, handle((_req, res) => {
  * the set is fixed by what a show can cost — and switching one off is what "deleting" means
  * here, with every show that used it left exactly as it was.
  */
-router.put('/moonlight/supplier-roles/:key', requireOwner, handle((req, res) => {
+router.put('/band/supplier-roles/:key', requireOwner, handle((req, res) => {
   const { name, required, active } = req.body || {};
   res.json({ role: { ...updateRole(req.params.key, { name, required, active }), ...roleUsage(req.params.key) } });
+}));
+
+// ---- the cost lines of a show (שורות עלות) ----
+/**
+ * The cost lines a show carries, each with how many shows already hold money on it. Readable
+ * by the band, because every show page lists them; only the owner changes them.
+ */
+router.get('/band/expense-categories', requireAuth, handle((_req, res) => {
+  res.json({
+    categories: allCategories().map((category) => ({ ...category, ...categoryUsage(category.key) })),
+  });
+}));
+
+router.post('/band/expense-categories', requireOwner, handle((req, res) => {
+  const { name, settles } = req.body || {};
+  res.json({ category: createCategory({ name, settles }) });
+}));
+
+router.put('/band/expense-categories/:key', requireOwner, handle((req, res) => {
+  const { name, settles, active } = req.body || {};
+  const category = updateCategory(req.params.key, { name, settles, active });
+  res.json({ category: { ...category, ...categoryUsage(category.key) } });
+}));
+
+router.delete('/band/expense-categories/:key', requireOwner, handle((req, res) => {
+  deleteCategory(req.params.key);
+  res.json({ ok: true });
 }));
 
 // ====== integrations: Morning (Green Invoice) + Google Calendar + Meta ads (owner) ======
@@ -2246,7 +2289,7 @@ router.delete('/integrations/meta/campaigns/:id/mappings/:eventId', requireOwner
  * ticket and spend as a share of revenue. The band area's own read, so the period filter is
  * the same one every other list uses.
  */
-router.get('/moonlight/ad-analysis', requireAuth, handle((req, res) => {
+router.get('/band/ad-analysis', requireAuth, handle((req, res) => {
   res.json(adAnalysis(dateRange(req.query)));
 }));
 
@@ -2255,7 +2298,7 @@ router.get('/moonlight/ad-analysis', requireAuth, handle((req, res) => {
  * A campaign runs across months, so this is the view that reconciles an invoice against the
  * campaigns and shows behind it; `ad-analysis` partitions the same money by show instead.
  */
-router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
+router.get('/band/ad-monthly', requireAuth, handle((req, res) => {
   res.json(monthlyBreakdown(dateRange(req.query)));
 }));
 
@@ -2268,13 +2311,13 @@ router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
  * time, so a page load must never start one. Everybody in the band can read the report; only the
  * owner can spend a run on a new one.
  */
-router.get('/moonlight/campaign-analysis', requireAuth, handle((req, res) => {
+router.get('/band/campaign-analysis', requireAuth, handle((req, res) => {
   const range = dateRange(req.query);
   res.json({ report: lastReport('analysis', range), agent: agentStatus() });
 }));
 
 /** Spends a run: rebuilds the context from the current data and asks the agent for a verdict. */
-router.post('/moonlight/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
   const range = dateRange(req.query);
   res.json({ report: await trackJob('analysis', { range }, () => analyzeCampaigns(range)) });
 }));
@@ -2283,23 +2326,23 @@ router.post('/moonlight/campaign-analysis', requireOwner, handleAsync(async (req
  * What the agent is working on right now, and the last run that failed. A page reloaded during a
  * run reads this to keep waiting for the answer instead of offering to start it again.
  */
-router.get('/moonlight/campaign-jobs', requireAuth, handle((_req, res) => {
+router.get('/band/campaign-jobs', requireAuth, handle((_req, res) => {
   res.json({ jobs: listJobs() });
 }));
 
 /** Forgets a failed run once the page has shown its error. */
-router.delete('/moonlight/campaign-jobs/:kind', requireOwner, handle((req, res) => {
+router.delete('/band/campaign-jobs/:kind', requireOwner, handle((req, res) => {
   dismissJob(req.params.kind);
   res.json({ ok: true });
 }));
 
 /** Every show's newest plan, for the tab to open on the one you were working on. */
-router.get('/moonlight/campaign-drafts', requireAuth, handle((_req, res) => {
+router.get('/band/campaign-drafts', requireAuth, handle((_req, res) => {
   res.json({ drafts: savedDrafts() });
 }));
 
 /** The last campaign plan drafted for a show, if there is one. */
-router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) => {
+router.get('/band/campaign-draft/:eventId', requireAuth, handle((req, res) => {
   res.json({ report: lastReport('draft', {}, req.params.eventId) });
 }));
 
@@ -2310,7 +2353,7 @@ router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) 
  * typed into Ads Manager by a person, which is also why the whole history feeds it rather than
  * whatever period the tab happens to be showing.
  */
-router.post('/moonlight/campaign-draft', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/campaign-draft', requireOwner, handleAsync(async (req, res) => {
   const eventId = req.body?.event_id ? String(req.body.event_id) : '';
   if (!eventId) return res.status(400).json({ error: 'event_id is required' });
   const brief = String(req.body?.brief || '').slice(0, 2000);
@@ -2318,17 +2361,17 @@ router.post('/moonlight/campaign-draft', requireOwner, handleAsync(async (req, r
 }));
 
 /** Keeps the headline or description chosen from a plan's alternatives. */
-router.put('/moonlight/campaign-draft/:reportId/creative', requireOwner, handle((req, res) => {
+router.put('/band/campaign-draft/:reportId/creative', requireOwner, handle((req, res) => {
   const { field, value } = req.body ?? {};
   res.json({ report: chooseDraftCreative(req.params.reportId, String(field ?? ''), String(value ?? '')) });
 }));
 
 /** The follow-up conversation. One thread per owner, which is all this app ever has. */
-router.get('/moonlight/campaign-chat', requireAuth, handle((req, res) => {
+router.get('/band/campaign-chat', requireAuth, handle((req, res) => {
   res.json({ messages: chatHistory(CAMPAIGN_CHAT_THREAD) });
 }));
 
-router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/campaign-chat', requireOwner, handleAsync(async (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return res.status(400).json({ error: 'message is required' });
   const text = message.slice(0, 2000);
@@ -2336,14 +2379,14 @@ router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, re
   res.json({ messages: await trackJob('chat', { range, message: text }, () => chat(CAMPAIGN_CHAT_THREAD, text, range)) });
 }));
 
-router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {
+router.delete('/band/campaign-chat', requireOwner, handle((_req, res) => {
   res.json(clearChat(CAMPAIGN_CHAT_THREAD));
 }));
 
 // ---- campaign tasks: the advisor's follow-ups, with email reminders ----
 
 /** Every show with tasks or an owner, plus whether email is set up — the band reads along. */
-router.get('/moonlight/campaign-tasks', requireAuth, handle((req, res) => {
+router.get('/band/campaign-tasks', requireAuth, handle((req, res) => {
   res.json({
     shows: listTaskShows({ all: req.query?.all === '1' }),
     mail: mailStatus(),
@@ -2355,7 +2398,7 @@ router.get('/moonlight/campaign-tasks', requireAuth, handle((req, res) => {
  * Adds tasks to a show: `{ event_id, tasks: [{ title, detail, due_date }] }`, or one task's
  * fields at the top level. `report_id` marks them as accepted from that advisor draft.
  */
-router.post('/moonlight/campaign-tasks', requireOwner, handle((req, res) => {
+router.post('/band/campaign-tasks', requireOwner, handle((req, res) => {
   const body = req.body || {};
   const eventId = body.event_id ? String(body.event_id) : '';
   if (!eventId) return res.status(400).json({ error: 'event_id is required' });
@@ -2365,7 +2408,7 @@ router.post('/moonlight/campaign-tasks', requireOwner, handle((req, res) => {
 }));
 
 /** Who on the band gets this show's reminders. `member_key: null` clears it. */
-router.put('/moonlight/campaign-tasks/owner/:eventId', requireOwner, handle((req, res) => {
+router.put('/band/campaign-tasks/owner/:eventId', requireOwner, handle((req, res) => {
   const key = req.body?.member_key ? String(req.body.member_key) : null;
   res.json(setTaskOwner(req.params.eventId, key));
 }));
@@ -2374,19 +2417,19 @@ router.put('/moonlight/campaign-tasks/owner/:eventId', requireOwner, handle((req
  * Edits a task. The band can tick a task done — it is usually one of them who did it — but only
  * the owner rewrites, re-dates or deletes one.
  */
-router.put('/moonlight/campaign-tasks/:id', requireAuth, handle((req, res) => {
+router.put('/band/campaign-tasks/:id', requireAuth, handle((req, res) => {
   const body = req.body || {};
   const patch = req.user.role === 'owner' ? body : { done: body.done };
   res.json({ task: updateTask(req.params.id, patch) });
 }));
 
-router.delete('/moonlight/campaign-tasks/:id', requireOwner, handle((req, res) => {
+router.delete('/band/campaign-tasks/:id', requireOwner, handle((req, res) => {
   deleteTask(req.params.id);
   res.json({ ok: true });
 }));
 
 /** Sends this task's reminder now, whatever its date — also how the email setup is tested. */
-router.post('/moonlight/campaign-tasks/:id/remind', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/campaign-tasks/:id/remind', requireOwner, handleAsync(async (req, res) => {
   res.json(await remindNow(req.params.id));
 }));
 
@@ -2462,6 +2505,8 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     settings: {
       vat_percent: getVatPercent(),
       app_name: getSetting('app_name', 'Account Manager'),
+      band_name: getBandName(),
+      band_commission_percent: getDefaultCommissionPercent(),
       morning_sync_days: getMorningSyncDays(),
       vat_report_frequency: getVatFrequency(),
       tax_credit_points: getCreditPoints(),
@@ -2481,11 +2526,18 @@ router.get('/settings', requireOwner, handle((_req, res) => {
 
 router.post('/settings', requireOwner, handle((req, res) => {
   const {
-    vat_percent, app_name, morning_sync_days, vat_report_frequency, tax_credit_points,
-    meta_sync_days, meta_currency_rate,
+    vat_percent, app_name, band_name, band_commission_percent, morning_sync_days, vat_report_frequency,
+    tax_credit_points, meta_sync_days, meta_currency_rate,
   } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
-  if (app_name) setSetting('app_name', app_name);
+  if (app_name) setSetting('app_name', String(app_name).trim().slice(0, 60));
+  if (band_name != null) setSetting('band_name', String(band_name).trim().slice(0, 60));
+  if (band_commission_percent != null) {
+    const percent = parseFloat(band_commission_percent);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100)
+      return res.status(400).json({ error: 'אחוז דמי ההפקה חייב להיות בין 0 ל-100' });
+    setSetting('band_commission_percent', String(percent));
+  }
   if (morning_sync_days != null) {
     // Bounded at both ends: a zero or negative window would ask Morning for a range that ends
     // before it starts and quietly sync nothing, and five years is well past any real backfill.

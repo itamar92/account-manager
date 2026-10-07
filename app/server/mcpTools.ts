@@ -23,7 +23,7 @@ import { incomeTaxReport, monthlyPnl, pnlTotals, vatReport } from './reports.js'
 import { annualOutlook, annualReport } from './annualReport.js';
 import { depreciationSchedule } from './fixedAssets.js';
 import { getBusinessDetails } from './business.js';
-import { eventLabel } from './moonlight.js';
+import { eventLabel } from './band.js';
 import { lastReport } from './campaignAdvisor.js';
 
 /** JSON Schema, written by hand — the shapes are small and the agent reads them as documentation. */
@@ -116,7 +116,7 @@ export const MCP_TOOLS: McpTool[] = [
         currency: 'ILS',
         note:
           'All amounts are in shekels. The business side (clients, works, invoices, expenses, tax) ' +
-          'is a sole proprietorship; the band side (Moonlight) is a separate set of books for live shows.',
+          'is a sole proprietorship; the band side is a separate set of books for live shows.',
       };
     },
   },
@@ -230,10 +230,10 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
 
-  // ---------------------------------------------------------------- band (Moonlight)
+  // ---------------------------------------------------------------- band
 
   {
-    name: 'moonlight_shows',
+    name: 'band_shows',
     description:
       'The band\'s live shows: venue, date, tickets sold, fee, computed expenses and profit, ' +
       'payment status, and how the profit divides between the four members. The core table of ' +
@@ -254,7 +254,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: 'moonlight_summary',
+    name: 'band_summary',
     description:
       'The band\'s totals for a period and what each member is owed, plus the follow-up lists: ' +
       'shows whose money has not arrived, suppliers not yet paid, and upcoming shows with nobody ' +
@@ -267,14 +267,14 @@ export const MCP_TOOLS: McpTool[] = [
     }),
   },
   {
-    name: 'moonlight_assignments',
+    name: 'band_assignments',
     description:
-      'Who is staffed on which show (lightman, soundman, singer, sound company), the supplier ' +
+      'Who is staffed on which show (per supplier role: lighting, sound, singer, PA company…), the supplier ' +
       'list, what each supplier is still owed, and which upcoming shows are missing a required role.',
     inputSchema: {
       type: 'object',
       properties: {
-        event_id: { type: 'string', description: 'One show, by id from moonlight_shows. Omit for all suppliers and debts.' },
+        event_id: { type: 'string', description: 'One show, by id from band_shows. Omit for all suppliers and debts.' },
       },
       additionalProperties: false,
     },
@@ -296,7 +296,7 @@ export const MCP_TOOLS: McpTool[] = [
   // ---------------------------------------------------------------- advertising
 
   {
-    name: 'moonlight_ad_analysis',
+    name: 'band_ad_analysis',
     description:
       'What each show\'s Meta (Facebook/Instagram) promotion cost, against the tickets it sold and ' +
       'the fee it earned: ad spend, cost per ticket, spend as a share of revenue, clicks. Use for ' +
@@ -308,7 +308,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: 'moonlight_campaigns',
+    name: 'band_campaigns',
     description:
       'The Meta ad campaigns themselves — name, objective, status, spend, impressions, clicks, ' +
       'reach, and which shows each one is mapped to. Pass campaign_id for that campaign\'s ' +
@@ -329,7 +329,7 @@ export const MCP_TOOLS: McpTool[] = [
     },
   },
   {
-    name: 'moonlight_campaign_advice',
+    name: 'band_campaign_advice',
     description:
       'The most recent verdict from the app\'s own in-app campaign advisor for a period, if one has ' +
       'been produced: findings and ranked suggestions. Read-only — this returns a stored report and ' +
@@ -346,8 +346,8 @@ export const MCP_SERVER_INFO = {
   name: 'account-manager',
   version: '1.0.0',
   instructions:
-    'Read-only access to Itamar\'s accounting app: a sole proprietorship (clients, billable works, ' +
-    'invoices, expenses, Israeli VAT and income tax) and Moonlight, a live band with its own books ' +
+    'Read-only access to a small business\'s accounting app: a sole proprietorship (clients, billable works, ' +
+    'invoices, expenses, Israeli VAT and income tax) and the band workspace, a live band with its own books ' +
     '(shows, expenses, staffing, Meta ad campaigns). All amounts are in shekels (ILS) and all dates ' +
     'are YYYY-MM-DD. Call get_overview first for orientation. Nothing here can change data — when ' +
     'the answer is that something should be created or paid, say so and let the user do it in the app.',

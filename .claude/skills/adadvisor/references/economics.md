@@ -6,8 +6,8 @@ Upstream's economics assume an online shop: contribution margin, break-even ROAS
 
 | Number | Where it comes from | What it tells you |
 |---|---|---|
-| **Ad spend (per show)** | `moonlight_ad_analysis` → `ad_spend` (from the campaign↔show mapping) | What Meta charged for the show's promotion |
-| **Tickets** | `moonlight_ad_analysis` → `tickets` (from the books) | What the show sold |
+| **Ad spend (per show)** | `band_ad_analysis` → `ad_spend` (from the campaign↔show mapping) | What Meta charged for the show's promotion |
+| **Tickets** | `band_ad_analysis` → `tickets` (from the books) | What the show sold |
 | **Fee** | `revenue` (pre-VAT) | What the show earned |
 | **Cost per ticket** | `cost_per_ticket` | Ad spend ÷ tickets. `null` when no ticket count — never "free" |
 | **Spend share of the fee** | `spend_share_of_revenue` (%) | How much of the fee the ads consumed |
@@ -25,7 +25,7 @@ band_median_cpt        = median(cost_per_ticket over shows with ad_spend > 0 and
 
 No industry cost-per-ticket figure is worth quoting for a band of this size and genre. The benchmark is the band's own shows:
 
-1. Take every show in the period with `ad_spend > 0` and `tickets > 0` from `moonlight_ad_analysis`.
+1. Take every show in the period with `ad_spend > 0` and `tickets > 0` from `band_ad_analysis`.
 2. Compute the **median** cost per ticket and the **median** spend share. Report how many shows the median rests on.
 3. Judge a show against that: better or worse than the median, and by how much.
 4. **Fewer than ~5 comparable shows → say "small sample"** and give the comparison as indicative, not a rule.
@@ -60,7 +60,7 @@ Always state the runway before recommending anything.
 
 ## The curve says more than the total
 
-`moonlight_campaigns` with a `campaign_id` returns daily spend. Read it against the show date:
+`band_campaigns` with a `campaign_id` returns daily spend. Read it against the show date:
 
 - **Ramped early** (spend spread over weeks) → had time to reach people; a poor result is about the offer or audience.
 - **Spent late** (most of the money in the final days) → a timing problem; the cost per ticket is not a fair verdict on the creative.

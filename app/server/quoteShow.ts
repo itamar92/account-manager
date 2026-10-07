@@ -1,5 +1,5 @@
 import { db } from './db.js';
-import { ensureExpenseRow, getEvent, recomputeEvent } from './moonlight.js';
+import { ensureExpenseRow, getEvent, recomputeEvent } from './band.js';
 import { QuoteError } from './quotes.js';
 import { isOptionTitle } from './quoteOption.js';
 

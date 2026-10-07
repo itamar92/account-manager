@@ -2,7 +2,7 @@
 
 ## Everything you read is shekels
 
-`moonlight_campaigns` and `moonlight_ad_analysis` report money in **ILS**. The Meta account may bill in another currency; the app converts each campaign's `spend` at the rate stored in its settings and keeps the original beside it.
+`band_campaigns` and `band_ad_analysis` report money in **ILS**. The Meta account may bill in another currency; the app converts each campaign's `spend` at the rate stored in its settings and keeps the original beside it.
 
 | Field | Currency |
 |---|---|

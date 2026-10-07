@@ -14,10 +14,10 @@ import {
 } from './quotes.js';
 
 /**
- * The quotes section, mounted at /api/moonlight/quotes.
+ * The quotes section, mounted at /api/band/quotes.
  *
  * Every route here is `requireAuth`, not `requireOwner`, and that is deliberate: this is the one
- * part of Moonlight the band members write to as well as read. Selling a show is something every
+ * part of the band workspace the band members write to as well as read. Selling a show is something every
  * member does, so a quote is theirs to make, edit and send exactly as it is the owner's — see
  * docs/QUOTES-DESIGN.md. Tightening these to owner-only would not be a fix; it would take the
  * feature away from the people it was built for.
@@ -64,9 +64,9 @@ quoteRouter.post('/templates', handle((req, res) => {
   res.json(getQuote(id));
 }));
 
-/** Another copy of a template the system comes with: `{ key }`, or Moonlight's own quote. */
+/** Another copy of a template the system comes with: `{ key }`, or the built-in quote. */
 quoteRouter.post('/templates/builtin', handle((req, res) => {
-  res.json(getQuote(createBuiltinTemplate(String(req.body?.key ?? 'moonlight'), userId(req))));
+  res.json(getQuote(createBuiltinTemplate(String(req.body?.key ?? 'standard'), userId(req))));
 }));
 
 quoteRouter.get('/packages', handle((_req, res) => {

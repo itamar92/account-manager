@@ -5,7 +5,7 @@ import { nis, nisExact } from '../api';
 import { DEPOSIT_PLACEHOLDER, depositAmount, type QuoteTotals } from '../../server/quoteMath';
 import {
   israelDateTime, issuedOn, quoteDate, type ClientSignature, type LogoPosition, type Quote, type QuoteBranding,
-} from '../pages/moonlight/quotes';
+} from '../pages/band/quotes';
 import { readableOnWhite, textOn } from './colors';
 
 /** Whole shekels where the figure is whole, agorot where it is not — a quote never rounds a sum it states. */

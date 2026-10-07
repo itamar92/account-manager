@@ -1,7 +1,7 @@
 ---
 name: adadvisor
 description: |
-  Foundation for advice on the band's Meta (Facebook + Instagram) ad campaigns, grounded in this app's own data — the account-manager MCP server, which reads the Meta Marketing API with a read-only `ads_read` token and ties every campaign to the show it promotes. Loads the read-only rules, the show-economics model (cost per ticket, spend share of the fee) and the data limits every other adadvisor-* skill assumes. Use when: "campaign", "campaigns", "ad campaign", "AI campaign", "meta ads", "facebook ads", "instagram ads", "ads for the show", "promotion", "ad spend", "קמפיין", "קמפיינים", "פרסום", "יועץ קמפיינים", or whenever a moonlight_campaigns / moonlight_ad_analysis tool is about to be called. Chain with: adadvisor-audit for a full review, adadvisor-diagnose for a campaign that is not working, adadvisor-launch for planning a new one, adadvisor-scale for a campaign that is working, adadvisor-creative for copy and creative, adadvisor-targeting for audiences, adadvisor-playbooks for multi-week plans. NOT for: Google Ads / TikTok / other platforms (Meta only). NOT for: changing anything in the ad account — this connection cannot write.
+  Foundation for advice on the band's Meta (Facebook + Instagram) ad campaigns, grounded in this app's own data — the account-manager MCP server, which reads the Meta Marketing API with a read-only `ads_read` token and ties every campaign to the show it promotes. Loads the read-only rules, the show-economics model (cost per ticket, spend share of the fee) and the data limits every other adadvisor-* skill assumes. Use when: "campaign", "campaigns", "ad campaign", "AI campaign", "meta ads", "facebook ads", "instagram ads", "ads for the show", "promotion", "ad spend", "קמפיין", "קמפיינים", "פרסום", "יועץ קמפיינים", or whenever a band_campaigns / band_ad_analysis tool is about to be called. Chain with: adadvisor-audit for a full review, adadvisor-diagnose for a campaign that is not working, adadvisor-launch for planning a new one, adadvisor-scale for a campaign that is working, adadvisor-creative for copy and creative, adadvisor-targeting for audiences, adadvisor-playbooks for multi-week plans. NOT for: Google Ads / TikTok / other platforms (Meta only). NOT for: changing anything in the ad account — this connection cannot write.
 license: Apache-2.0
 version: 0.1.0-account-manager
 ---
@@ -18,10 +18,10 @@ The app syncs the Meta ad account with a **System User token, scope `ads_read`**
 
 | Tool | Gives you |
 |---|---|
-| `moonlight_campaigns` | Every campaign: name, status, objective, spend, impressions, clicks, reach, first/last spend date, the shows it is mapped to, and suggested shows when unmapped. With `campaign_id`: that campaign's **day-by-day** spend, impressions, clicks. |
-| `moonlight_ad_analysis` | Per show: tickets, fee, ad spend, `cost_per_ticket`, `spend_share_of_revenue`, clicks, which months it was billed in, whether a campaign kept spending after the show. Plus totals and unmapped spend. |
-| `moonlight_shows` | The shows themselves: venue, date, tickets, fee, expenses, profit. |
-| `moonlight_campaign_advice` | The last verdict the in-app advisor (יועץ קמפיינים) stored for a period. Returns a stored report; never starts a new analysis. |
+| `band_campaigns` | Every campaign: name, status, objective, spend, impressions, clicks, reach, first/last spend date, the shows it is mapped to, and suggested shows when unmapped. With `campaign_id`: that campaign's **day-by-day** spend, impressions, clicks. |
+| `band_ad_analysis` | Per show: tickets, fee, ad spend, `cost_per_ticket`, `spend_share_of_revenue`, clicks, which months it was billed in, whether a campaign kept spending after the show. Plus totals and unmapped spend. |
+| `band_shows` | The shows themselves: venue, date, tickets, fee, expenses, profit. |
+| `band_campaign_advice` | The last verdict the in-app advisor (יועץ קמפיינים) stored for a period. Returns a stored report; never starts a new analysis. |
 | `get_overview` | Orientation and business-level context. |
 
 All money is **shekels (ILS)**. Campaign figures were converted from the ad account's currency at the app's stored rate; `spend_original` and `currency` give the untouched numbers.
@@ -38,7 +38,7 @@ The connection is **campaign-level**. You can see how much was spent, when, and 
 
 | Not available | Consequence |
 |---|---|
-| Conversions / results / purchases / ROAS | Meta does not tell you tickets sold. **Tickets come from the books** (`moonlight_shows`), not from the pixel. There is no ROAS here; there is cost per ticket. |
+| Conversions / results / purchases / ROAS | Meta does not tell you tickets sold. **Tickets come from the books** (`band_shows`), not from the pixel. There is no ROAS here; there is cost per ticket. |
 | Ad set and ad level | You cannot say which audience or which creative did it. Say "campaign level" and stop there, or ask for an Ads Manager export. |
 | Daily frequency, CPM/CPC trends by placement, hook/hold rate | Frequency exists only as lifetime `impressions ÷ reach` per campaign. Hook rate, hold rate and creative fatigue curves are not computable. |
 | Pixel health, audiences, targeting, placements | The audit's pixel and structure checks cannot be run from data. Ask the user to check, or to paste a screenshot. |
@@ -52,11 +52,11 @@ When a skill step needs something on this list, **do not fill the gap with a pla
 Do these in order before any analysis:
 
 1. **`get_overview`** if you have not seen this business yet — it says what the app holds and gives the band totals.
-2. **`moonlight_ad_analysis`** for the period being asked about (`from`/`to`, `YYYY-MM-DD`; omit for all). This is the ground truth for "is advertising paying for itself", and it carries `unmapped_spend`.
-3. **Check what is unmapped.** `totals.unmapped_spend` is money spent on campaigns no show claims. If it is a meaningful share of total spend, every per-show number understates the true cost, so say that first. `moonlight_campaigns` with `unmapped_only: true` lists them, with suggested shows.
+2. **`band_ad_analysis`** for the period being asked about (`from`/`to`, `YYYY-MM-DD`; omit for all). This is the ground truth for "is advertising paying for itself", and it carries `unmapped_spend`.
+3. **Check what is unmapped.** `totals.unmapped_spend` is money spent on campaigns no show claims. If it is a meaningful share of total spend, every per-show number understates the true cost, so say that first. `band_campaigns` with `unmapped_only: true` lists them, with suggested shows.
 4. **Check freshness** via the latest date on the daily curve of the biggest campaign. If it is more than a few days old, tell the user to run the sync in the app before trusting recent days.
-5. **Check the shows' side.** `moonlight_shows` gives dates. A campaign for a show that already happened is history; a campaign for a show in three weeks is live and time-boxed.
-6. **Look for the stored verdict** — `moonlight_campaign_advice` for the period. If the in-app advisor already said something, build on it and say where you agree or disagree, rather than re-deriving a different answer without noticing.
+5. **Check the shows' side.** `band_shows` gives dates. A campaign for a show that already happened is history; a campaign for a show in three weeks is live and time-boxed.
+6. **Look for the stored verdict** — `band_campaign_advice` for the period. If the in-app advisor already said something, build on it and say where you agree or disagree, rather than re-deriving a different answer without noticing.
 
 Then route to the specific workflow skill.
 
@@ -67,7 +67,7 @@ A show is a one-off event with a **fixed date** and a **fee**. There is no repea
 - **Cost per ticket** = ad spend ÷ tickets sold (`cost_per_ticket`; `null` when no ticket count exists — never read `null` as free).
 - **Spend share of the fee** = ad spend ÷ fee (`spend_share_of_revenue`, a percentage).
 - **Show profit after ads** — `profit` on the show already nets expenses; check it includes the ad spend (`campaign_on_row` vs `ad_spend`; a gap means someone typed a different figure by hand).
-- **The band's own history is the benchmark.** There is no industry number worth quoting for a band of this size. Rank this show against the band's other shows (`moonlight_ad_analysis` rows), and say how many shows the comparison rests on. With few shows, say "small sample".
+- **The band's own history is the benchmark.** There is no industry number worth quoting for a band of this size. Rank this show against the band's other shows (`band_ad_analysis` rows), and say how many shows the comparison rests on. With few shows, say "small sample".
 
 Full formulas, what to do when the fee is not ticket-driven, and worked examples: [`references/economics.md`](references/economics.md).
 
@@ -78,7 +78,7 @@ When you report a number, **pair it with the comparison**. "Cost per ticket ₪3
 Upstream's rules assume an always-on account that can wait 3–5 days for signal and scale 20% at a time. A show has a deadline, so:
 
 - **The runway is the constraint.** Always compute days until the show first. A decision that is right for an evergreen campaign (wait a week, scale slowly) can be wrong with ten days left.
-- **Late spend sells fewer tickets.** The daily curve (`moonlight_campaigns` with `campaign_id`) says whether money went out early enough. A campaign that spent most of its budget in the last 3 days reads very differently from one that ramped over three weeks.
+- **Late spend sells fewer tickets.** The daily curve (`band_campaigns` with `campaign_id`) says whether money went out early enough. A campaign that spent most of its budget in the last 3 days reads very differently from one that ramped over three weeks.
 - **A campaign still spending after the show** (`spending_after_show`) is money with no event to sell. Flag it as an action: pause it in Ads Manager.
 
 Still true: do not kill or scale on one day of data, and small budgets are noisy. Defer to `adadvisor-diagnose` for the kill and scale rules and apply them with the runway in mind.

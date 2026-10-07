@@ -12,7 +12,7 @@ const link = await import('./quoteLink.js');
 const share = await import('./quoteShare.js');
 
 const USER = 'link-user';
-const BASE = 'https://im-tools.org';
+const BASE = 'https://example.com';
 const META = { ip: '203.0.113.7', userAgent: 'test' };
 // A real, tiny PNG: the server checks the bytes, not just the prefix.
 const PNG = 'data:image/png;base64,' + Buffer.concat([
@@ -56,7 +56,7 @@ test('a quote is sent only once it has a client, a date, a line and a validity s
 test('sending gives the quote its link and marks it sent; sending again changes nothing', () => {
   const id = readyQuote();
   const first = link.sendQuote(id, USER, BASE);
-  assert.match(first.url, /^https:\/\/im-tools\.org\/q\/[A-Za-z0-9_-]{40,}$/);
+  assert.match(first.url, /^https:\/\/example\.com\/q\/[A-Za-z0-9_-]{40,}$/);
   assert.equal(first.phone, '972501234567');
   assert.equal(first.email, 'dana@example.com');
   assert.match(first.message, /שלום דנה,/);

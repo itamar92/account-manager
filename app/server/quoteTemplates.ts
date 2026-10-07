@@ -1,112 +1,107 @@
 /**
- * The template the system comes with: Moonlight's own quote, as it was sent for years from a
- * Google Doc («Template הצעת מחיר — להקת המחווה לקולדפליי»), moved into the quote's sections.
+ * The templates the system comes with: a standard show quote, and two versions of it for a show
+ * far from home (one where the band drives, one where it flies). They are examples written for a
+ * live band in Israel — the line-up, the stage, the timings, the payment and cancellation terms —
+ * and every word of them is editable once a copy is in the database. The band's name is read
+ * from the settings when a copy is made, so renaming the band renames nothing already saved.
  *
- * Where each part of the Doc went:
- * - {{DATE}}, {{תאריך האירוע}}, {{שם המקום}}, {{זמן מופע}} — the quote's own fields: the date it
- *   was made, the event's date, its place and the show's length, shown as the header's chips.
- * - {{שם האירוע}} — the client and the event type («עבור …», «חתונה»).
- * - {{AMPLIFICATION_TEXT}}, which was the price paragraph — «X ₪ + מע״מ, כולל חברת ההגברה
- *   והתאורה» — is now the lines and the totals: the show, priced per quote, and sound and
- *   lighting as a line of its own that reads «כלול» until it is priced or removed.
- * - The rest of the Doc — the band's line-up, the timings, what the production provides, payment,
- *   deposit, cancellation and force majeure — is the line's description and the terms, grouped
- *   under headings so a client on a phone can find each one.
- *
- * The wording is the Doc's, tightened where it was loose rather than changed: «כ־30 אחוז» is 30%,
- * «כחודש מראש» is a month, and the deposit's «עד לשבוע מיום האירוע» is spelled out as no later
- * than a week before the event, with the balance due שוטף + 30 as the Doc had it.
- *
- * The Doc's deposit was 7,000 ₪ whatever the show cost. It is a share of the price now, 30%, and
- * the terms say it through {deposit}, which the quote shows as the percentage and the sum it
- * comes to, so the deposit follows the price with nobody retyping it.
- *
- * The overtime line (400 ₪ + מע״מ an hour after 23:00) is from the quotes actually sent, where it
- * went with the price paragraph. It belongs to sound being included, so it goes with that line.
+ * How the parts fit:
+ * - The quote's own fields hold the date it was made, the event's date, its place and the show's
+ *   length, shown as the header's chips.
+ * - The price goes into the first line (the show itself); sound and lighting is a line of its own
+ *   that reads «כלול» until it is priced or removed.
+ * - The terms are the rest — the line-up, the timings, what the production provides, payment,
+ *   deposit, cancellation and force majeure — grouped under headings so a client on a phone can
+ *   find each one. The deposit is a share of the price, {deposit}, so it follows the price.
  */
-export const BUILTIN_TEMPLATE = {
-  template_name: 'מונלייט — הופעה מלאה',
-  title: 'הופעת מונלייט — להקת המחווה לקולדפליי',
-  intro: [
-    'תודה שפניתם אלינו!',
-    'שמחים להציע לכם הופעה של מונלייט — להקת המחווה לקולדפליי — ב־{event_date}. כאן תמצאו את ההרכב, המחיר ואת מה שצריך להכין לקראת ההופעה.',
-  ].join('\n'),
-  terms: [
-    'לוח הזמנים ביום האירוע:',
-    '• חברת ההגברה מגיעה כ־4 שעות לפני תחילת האירוע, להקמת הציוד על הבמה.',
-    '• הלהקה מגיעה כשעתיים וחצי לפני תחילת האירוע, לבדיקות סאונד (באלאנס).',
-    '',
-    'מה נדרש מההפקה:',
-    '• במה בגודל 5 על 3 מטרים לפחות, עם גב במה שחור.',
-    '• באירוע בחוץ: הצללה מעל הבמה ומעל עמדת הסאונדמן, עד סיום הבאלאנס.',
-    '• בקבוקי מים אישיים לחברי הלהקה לזמן ההופעה.',
-    '• חדר מנוחה (״חדר אמנים״) מסיום הבאלאנס ועד תחילת האירוע, עם כיבוד קל ושתייה.',
-    '',
-    'תשלום:',
-    '• מקדמה של {deposit} תשולם לאחר אישור ההצעה, ולא יאוחר משבוע לפני האירוע.',
-    '• יתרת הסכום תשולם עד שוטף + 30 מיום האירוע, בהעברה בנקאית או בצ׳ק.',
-    '• מהשעה 23:00, כל שעה נוספת של הגברה — 400 ₪ + מע״מ.',
-    '',
-    'ביטול:',
-    '• על ביטול יש להודיע לפחות חודש לפני האירוע. ביטול בהתראה קצרה יותר מחייב תשלום של 30% ממחיר ההופעה.',
-    '• כוח עליון שאינו מאפשר את קיום האירוע אינו ביטול: ההופעה תידחה למועד חלופי שיתואם בין הצדדים, בלי דמי ביטול.',
-  ].join('\n'),
-  // The Doc quoted «X ₪ פלוס מע״מ».
-  prices_include_vat: 0,
-  deposit_percent: 30,
-  items: [
-    {
-      // The quick form's price goes into this line, so it is the show itself.
-      name: 'הופעה חיה — הרכב מלא',
-      description: 'חמישה נגנים: מתופף, בסיסט, גיטריסט, קלידן וזמר · סאונדמן ותאורן של הלהקה',
-      quantity: 1,
-      unit_price: 0,
-    },
-    {
-      name: 'הגברה ותאורה',
-      description: 'חברת הגברה ותאורה מקצועית, כולל הקמה ופירוק',
-      quantity: 1,
-      unit_price: 0,
-    },
-  ],
-};
+import { getBandName } from './db.js';
+
+export interface BuiltinTemplate {
+  template_name: string;
+  title: string;
+  intro: string;
+  terms: string;
+  prices_include_vat: number;
+  deposit_percent: number;
+  event_location?: string;
+  show_duration?: string;
+  items: Array<{ name: string; description: string; quantity: number; unit_price: number }>;
+}
+
+const SHOW_ITEMS = [
+  {
+    // The quick form's price goes into this line, so it is the show itself.
+    name: 'הופעה חיה — הרכב מלא',
+    description: 'חמישה נגנים: מתופף, בסיסט, גיטריסט, קלידן וזמר · סאונדמן ותאורן של הלהקה',
+    quantity: 1,
+    unit_price: 0,
+  },
+  {
+    name: 'הגברה ותאורה',
+    description: 'חברת הגברה ותאורה מקצועית, כולל הקמה ופירוק',
+    quantity: 1,
+    unit_price: 0,
+  },
+];
+
+export function standardTemplate(): BuiltinTemplate {
+  const band = getBandName();
+  return {
+    template_name: `${band} — הופעה מלאה`,
+    title: `הופעת ${band}`,
+    intro: [
+      'תודה שפניתם אלינו!',
+      `שמחים להציע לכם הופעה של ${band} ב־{event_date}. כאן תמצאו את ההרכב, המחיר ואת מה שצריך להכין לקראת ההופעה.`,
+    ].join('\n'),
+    terms: [
+      'לוח הזמנים ביום האירוע:',
+      '• חברת ההגברה מגיעה כ־4 שעות לפני תחילת האירוע, להקמת הציוד על הבמה.',
+      '• הלהקה מגיעה כשעתיים וחצי לפני תחילת האירוע, לבדיקות סאונד (באלאנס).',
+      '',
+      'מה נדרש מההפקה:',
+      '• במה בגודל 5 על 3 מטרים לפחות, עם גב במה שחור.',
+      '• באירוע בחוץ: הצללה מעל הבמה ומעל עמדת הסאונדמן, עד סיום הבאלאנס.',
+      '• בקבוקי מים אישיים לחברי הלהקה לזמן ההופעה.',
+      '• חדר מנוחה (״חדר אמנים״) מסיום הבאלאנס ועד תחילת האירוע, עם כיבוד קל ושתייה.',
+      '',
+      'תשלום:',
+      '• מקדמה של {deposit} תשולם לאחר אישור ההצעה, ולא יאוחר משבוע לפני האירוע.',
+      '• יתרת הסכום תשולם עד שוטף + 30 מיום האירוע, בהעברה בנקאית או בצ׳ק.',
+      '• מהשעה 23:00, כל שעה נוספת של הגברה — 400 ₪ + מע״מ.',
+      '',
+      'ביטול:',
+      '• על ביטול יש להודיע לפחות חודש לפני האירוע. ביטול בהתראה קצרה יותר מחייב תשלום של 30% ממחיר ההופעה.',
+      '• כוח עליון שאינו מאפשר את קיום האירוע אינו ביטול: ההופעה תידחה למועד חלופי שיתואם בין הצדדים, בלי דמי ביטול.',
+    ].join('\n'),
+    // Quoted as «X ₪ פלוס מע״מ».
+    prices_include_vat: 0,
+    deposit_percent: 30,
+    items: SHOW_ITEMS.map((item) => ({ ...item })),
+  };
+}
 
 /**
- * A show in Eilat, from the quote sent to מייד פיננסים for Isla 42 Play (November 2025), with
- * what that quote left open written in.
+ * A show far from home — Eilat, as the example — where the band cannot play and drive back the
+ * same night. Either the band drives and is paid back for the road, or it flies and the
+ * production books the flights. Those are two different offers to a client, so they are two
+ * templates rather than one with both written in.
  *
- * Eilat is too far to play and drive home the same night, so the band either drives down and is
- * paid back for the road, or flies and the production books the flights. Those are two different
- * offers to a client, so they are two templates rather than one with both written in.
- *
- * What the band costs is the same show as anywhere: the lines, the timings, the stage and the
- * payment are the standard template's, with that quote's 30,000 ₪ as the show's price. What
- * Eilat adds:
- * - The travel. By car, it is a line of its own (2,500 ₪ in that quote, for about 700 km there
- *   and back), so it is priced in the totals with VAT like everything else, where the quote's
- *   «בסה״כ 2,500 ש״ח» left that unsaid. By plane, the production books and pays, as it does the
- *   hotel, so there is no line: a line at no charge would read «כלול», as if the band paid.
- * - The hotel, which that quote asked for «עבור חברי הלהקה» without saying for how many, when,
- *   or by when the band would know it was booked.
- * - Dinner on the day and breakfast the next morning, which that quote had. Breakfast now comes
- *   with the room.
- * - What happens when the event is cancelled with the band already on the road, and a flight
- *   that is late or cancelled, which nothing in that quote covered.
- * - הנחיות פיקוד העורף as force majeure by name, in place of the quote's COVID-era «סגר».
- *
- * Cancellation is the standard template's 30% of the show's price, not the 25% that one quote
- * gave, and the travel line is outside it: a fee for cancelling is not a fee on petrol.
+ * What the band costs is the same show as anywhere; what distance adds is the travel (a line of
+ * its own by car, so it is priced with VAT like everything else; nothing by plane, since the
+ * production books and pays), the hotel, dinner and breakfast, what happens when the event is
+ * cancelled with the band already on the road, and a flight that is late or cancelled.
  */
-function eilatTemplate(by: 'car' | 'plane') {
+export function farAwayTemplate(by: 'car' | 'plane'): BuiltinTemplate {
+  const band = getBandName();
   const car = by === 'car';
   return {
-    template_name: car ? 'מונלייט — אילת, ברכב' : 'מונלייט — אילת, בטיסה',
-    title: 'הופעת מונלייט באילת — להקת המחווה לקולדפליי',
+    template_name: car ? `${band} — אילת, ברכב` : `${band} — אילת, בטיסה`,
+    title: `הופעת ${band} באילת`,
     event_location: 'אילת',
     show_duration: 'כשעה וחצי',
     intro: [
       'תודה שפניתם אלינו!',
-      'שמחים להציע לכם הופעה של מונלייט — להקת המחווה לקולדפליי — באילת, ב־{event_date}. כאן תמצאו את ההרכב, המחיר ומה שצריך להכין לקראת ההופעה. אילת רחוקה מהמרכז, ולכן ההצעה מפרטת גם את הנסיעה ואת הלינה של הלהקה.',
+      `שמחים להציע לכם הופעה של ${band} באילת, ב־{event_date}. כאן תמצאו את ההרכב, המחיר ומה שצריך להכין לקראת ההופעה. אילת רחוקה מהמרכז, ולכן ההצעה מפרטת גם את הנסיעה ואת הלינה של הלהקה.`,
     ].join('\n'),
     terms: [
       'לוח הזמנים ביום האירוע:',
@@ -157,9 +152,9 @@ function eilatTemplate(by: 'car' | 'plane') {
     prices_include_vat: 0,
     deposit_percent: 30,
     items: [
-      // That quote's price, so a quote from here needs no price typed unless the client's differs.
-      { ...BUILTIN_TEMPLATE.items[0], unit_price: 30000 },
-      BUILTIN_TEMPLATE.items[1],
+      // An example price, so a quote from here needs no price typed unless the client's differs.
+      { ...SHOW_ITEMS[0], unit_price: 30000 },
+      { ...SHOW_ITEMS[1] },
       ...(car ? [{
         name: 'החזר הוצאות נסיעה',
         description: 'נסיעת הלהקה והציוד מהמרכז לאילת וחזרה, כ־700 ק״מ',
@@ -172,11 +167,12 @@ function eilatTemplate(by: 'car' | 'plane') {
 
 /**
  * Every template the system comes with, by the key that adds a copy of one. Each is put in place
- * once (see seedBuiltinTemplates), in this order, so on a new install Moonlight's own comes first
- * and is the default.
+ * once (see seedBuiltinTemplates), in this order, so on a new install the standard one comes
+ * first and is the default. They are functions because the band's name is read when the copy
+ * is made.
  */
-export const BUILTIN_TEMPLATES = {
-  moonlight: BUILTIN_TEMPLATE,
-  eilat_car: eilatTemplate('car'),
-  eilat_plane: eilatTemplate('plane'),
+export const BUILTIN_TEMPLATES: Record<'standard' | 'eilat_car' | 'eilat_plane', () => BuiltinTemplate> = {
+  standard: standardTemplate,
+  eilat_car: () => farAwayTemplate('car'),
+  eilat_plane: () => farAwayTemplate('plane'),
 };

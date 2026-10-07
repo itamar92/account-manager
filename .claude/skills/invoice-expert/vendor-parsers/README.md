@@ -48,7 +48,6 @@ vendor-parsers/
 ├── README.md                  # This file
 ├── vendor-mapping.json        # Maps vendors to parser files
 ├── morning.js                 # Morning invoices
-├── arnona-hod-hasharon.js     # Hod HaSharon municipality
 ├── partner.js                 # Partner communications
 ├── hot-mobile.js              # Hot Mobile
 ├── iec-hashmal.js             # Israel Electric Corporation
@@ -289,7 +288,6 @@ The invoice-expert skill will automatically:
 | Vendor | File | Email Pattern | Category | Notes |
 |--------|------|---------------|----------|-------|
 | Morning | `morning.js` | notify@morning.co | כללי | Generic parser with regex |
-| עיריית הוד השרון | `arnona-hod-hasharon.js` | no_replay@orda.co.il | ארנונה | Class-based extractor |
 | פרטנר | `partner.js` | Thankyou@partner.net.il | אינטרנט | Simple date/total extraction |
 | הוט מובייל | `hot-mobile.js` | HOTmobile@printernet.co.il | סלולרי | Billing period extraction |
 | חברת החשמל | `iec-hashmal.js` | noreplys@iec.co.il | חשמל | Complex period handling |

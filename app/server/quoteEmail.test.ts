@@ -1,24 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { quoteEmailHtml, splitMessage } from '../src/quotes/quoteEmail.js';
-import type { EmailCard } from '../src/pages/moonlight/quotes.js';
+import type { EmailCard } from '../src/pages/band/quotes.js';
 
-const LINK = 'https://im-tools.org/q/abcdefghijklmnopqrstuvwxyz0123456789';
+const LINK = 'https://example.com/q/abcdefghijklmnopqrstuvwxyz0123456789';
 
 const CARD: EmailCard = {
-  brand_name: 'Moonlight',
-  logo_url: 'https://im-tools.org/api/public/quotes/abc/branding/logo?v=1',
+  brand_name: 'הלהקה',
+  logo_url: 'https://example.com/api/public/quotes/abc/branding/logo?v=1',
   logo_position: 'center',
   color_primary: '#241d3d',
   color_accent: '#6b45d6',
   title: 'הופעה בחתונה',
-  quote_number: 'ML-2026-003',
+  quote_number: 'Q-2026-003',
   event_date: '22/10/2026',
   event_location: 'קיסריה',
   total: 30680,
   vat_percent: 18,
   valid_until: '16/10/2026',
-  contact_name: 'איתמר',
+  contact_name: 'דנה',
   contact_phone: '050-1234567',
 };
 
@@ -39,7 +39,7 @@ test('the email carries the band, the offer and one way to the quote', () => {
   const html = quoteEmailHtml({ card: CARD, message: `שלום דנה,\nלצפייה: ${LINK}`, link: LINK });
   assert.ok(html.includes(`src="${CARD.logo_url!.replace('&', '&amp;')}"`));
   assert.ok(html.includes('align="center"'));
-  assert.ok(html.includes('ML-2026-003'));
+  assert.ok(html.includes('Q-2026-003'));
   assert.ok(html.includes('קיסריה'));
   assert.match(html, /30,680/);
   assert.ok(html.includes(`href="${LINK}"`));

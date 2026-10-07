@@ -6,7 +6,7 @@ import { loadUser, requireApiKey } from './server/auth.js';
 import { router, apiV1 } from './server/routes.js';
 import { mcpHttpHandler } from './server/mcpServer.js';
 import { runSeed } from './server/seed.js';
-import { backfillMoonlight } from './server/moonlight.js';
+import { backfillBand } from './server/band.js';
 import {
   backfillMemberPayments, backfillSupplierPayments, pruneOrphanPayments,
 } from './server/supplierPayments.js';
@@ -22,7 +22,7 @@ const port = parseInt(process.env.PORT || '3000');
 runSeed();
 // Links every show to its expense row and refreshes the derived columns. Idempotent, so it
 // also picks up shows a previous version's calendar sync created without one.
-backfillMoonlight();
+backfillBand();
 // Gives every cost line already marked שולם the payment row it never had. Runs after the
 // backfill above, which is what guarantees each show has an expense row to read the fees from.
 backfillSupplierPayments();
@@ -34,7 +34,7 @@ pruneOrphanPayments();
 // Moves the invoice names off the supplier's free-text column into the table that can be
 // edited from the screen that notices one is missing.
 backfillSupplierAliases();
-// Moonlight's own quote, as the template a new quote starts from, and its Eilat versions. Each
+// the built-in quote, as the template a new quote starts from, and its Eilat versions. Each
 // once: a band that deletes one has chosen to, and «תבניות» adds it back on request.
 seedBuiltinTemplates();
 

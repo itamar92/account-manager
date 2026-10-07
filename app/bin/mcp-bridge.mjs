@@ -20,7 +20,7 @@
  *         "command": "node",
  *         "args": ["/absolute/path/to/account-manager/app/bin/mcp-bridge.mjs"],
  *         "env": {
- *           "AM_URL": "https://im-tools.org/mcp",
+ *           "AM_URL": "https://<your-domain>/mcp",
  *           "AM_API_KEY": "am_…"
  *         }
  *       }

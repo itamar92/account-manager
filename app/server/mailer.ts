@@ -11,6 +11,7 @@
  * up for. `SMTP_HOST`/`SMTP_PORT` point it elsewhere if that ever changes.
  */
 import nodemailer, { type Transporter } from 'nodemailer';
+import { getBandName } from './db.js';
 
 export class MailError extends Error {
   status: number;
@@ -50,7 +51,7 @@ export function useTransport(replacement: Transporter | null): void {
 }
 
 export function mailFrom(): string {
-  return process.env.SMTP_FROM?.trim() || `Moonlight <${process.env.SMTP_USER?.trim() ?? ''}>`;
+  return process.env.SMTP_FROM?.trim() || `${getBandName()} <${process.env.SMTP_USER?.trim() ?? ''}>`;
 }
 
 export async function sendMail(message: { to: string; subject: string; html: string; text: string }): Promise<void> {
