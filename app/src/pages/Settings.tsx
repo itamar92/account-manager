@@ -6,6 +6,7 @@ import { Button, Card, Input, Modal, Empty, PageHeader } from '../ui';
 import { CalendarRules } from './CalendarRules';
 import { AgentSettings } from './AgentSettings';
 import { CreditPointsCalculator } from './CreditPointsCalculator';
+import { refreshIntegrations, syncSummary, type SyncService } from '../sync';
 
 /** The drawers of the filing cabinet, in the order they are needed when setting the app up. */
 const SECTIONS = [
@@ -86,35 +87,16 @@ export function Settings() {
       .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
-  const runSync = async (which: 'morning' | 'calendar' | 'meta') => {
+  const runSync = async (which: SyncService) => {
     setSyncing(which);
     setError('');
     setSyncResult('');
     try {
       const d = await post(`/integrations/${which}/sync`);
-      const r = d.result;
-      setSyncResult(
-        which === 'morning'
-          ? `Morning: ${r.fetched} מסמכים (${r.from} – ${r.to}) · ${r.created} חדשים · ${r.updated} עודכנו` +
-            (r.expenses?.error
-              ? `\n· הוצאות: ${r.expenses.error}`
-              : `\n· הוצאות: ${r.expenses.fetched} · ${r.expenses.created} חדשות · ${r.expenses.updated} עודכנו` +
-                ` · ${r.expenses.reported} מסומנות כדווחו`)
-          : which === 'meta'
-          ? `Meta: ${r.campaigns} קמפיינים (${r.from} – ${r.to}) · ${amount(r.spend)} ${r.currency}` +
-            `\n· ${r.applied.written} הופעות עודכנו · ${r.applied.unchanged} ללא שינוי` +
-            (r.applied.locked ? ` · ${r.applied.locked} עם סכום ידני (לא נדרסו)` : '') +
-            (r.applied.settled
-              ? ` · ${r.applied.settled} שולמו לנגנים (מוקפאות${r.applied.settled_stale ? `, מתוכן ${r.applied.settled_stale} עם הוצאה שגדלה מאז` : ''})`
-              : '') +
-            (r.applied.unmapped_campaigns
-              ? `\n· ${r.applied.unmapped_campaigns} קמפיינים ללא שיוך להופעה — ${amount(r.applied.unmapped_spend)} ₪ ממתינים לשיוך ב-הלהקה → פרסום`
-              : '') +
-            (r.warning ? `\n⚠ ${r.warning}` : '')
-          : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
-            (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
-      );
+      setSyncResult(syncSummary(which, d.result));
       load();
+      // The buttons on the data pages read the same status, so they learn of this run too.
+      refreshIntegrations();
     } catch (err: any) { setError(err.message); }
     finally { setSyncing(''); }
   };

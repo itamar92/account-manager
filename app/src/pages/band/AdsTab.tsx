@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { del, get, post, put, nis } from '../../api';
+import { SyncButton } from '../../SyncButton';
 import {
   Card, Combobox, DataTable, EditableCell, Empty, PageHeader, PeriodSelect, SearchInput, StatCard, textMatch,
 } from '../../ui';
@@ -25,7 +26,7 @@ const pct = (value: number | null) => (value == null ? '—' : `${value}%`);
  * it, and when the money went out, but nothing is written until someone accepts one: a campaign
  * name is written for people, and a tour promoted by one campaign cannot be split by any rule.
  */
-export function AdsTab({ events, period, isOwner, onError }: Props) {
+export function AdsTab({ events, period, isOwner, onError, onNotice }: Props) {
   const [analysis, setAnalysis] = useState<any>(null);
   const [monthly, setMonthly] = useState<any[]>([]);
   const [openMonth, setOpenMonth] = useState('');
@@ -115,6 +116,7 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
             <PeriodSelect year={period.year} month={period.month}
               onYearChange={period.setYear} onMonthChange={period.setMonth} />
             <SearchInput value={search} onChange={setSearch} placeholder="חיפוש לפי הופעה…" className="w-44" />
+            <SyncButton service="meta" onError={onError} onDone={onNotice} reload={load} />
           </>
         }
       />
@@ -319,12 +321,12 @@ export function AdsTab({ events, period, isOwner, onError }: Props) {
           </div>
           <p className="text-xs text-faint mb-4">
             שיוך קמפיין להופעה נעשה ידנית. קמפיין שמשויך לכמה הופעות מתחלק ביניהן לפי «משקל» —
-            1 לכולן היא חלוקה שווה. הסנכרון עצמו נמצא בהגדרות → חיבורים.
+            1 לכולן היא חלוקה שווה. «סנכרון מ-Meta Ads» למעלה מושך את הקמפיינים העדכניים.
           </p>
 
           {visibleCampaigns.length === 0 ? (
             <Empty text={campaigns.length === 0
-              ? 'לא נמשכו קמפיינים — הריצו סנכרון Meta בהגדרות → חיבורים'
+              ? 'לא נמשכו קמפיינים — לחצו «סנכרון מ-Meta Ads» למעלה'
               : 'כל הקמפיינים משויכים'} />
           ) : (
             <div className="space-y-2">
