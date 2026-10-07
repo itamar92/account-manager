@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { FileSignature } from 'lucide-react';
+import { FileSignature, SlidersHorizontal } from 'lucide-react';
 import { del, get, post, put, nis } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Empty, Input, Modal, MoneyInput, SelectCell, fieldClass } from '../../ui';
 import {
-  FUND_TRANSFERRED, PAYMENT_STATUSES, RETURN_PARAM, divisionSplitLabel, moneyReceived, roleName,
-  showReturn, useBandMembers, useExpenseCategories, useSupplierRoles,
+  COST_LINES_HREF, FUND_TRANSFERRED, PAYMENT_STATUSES, RETURN_PARAM, divisionSplitLabel, moneyReceived,
+  roleName, showReturn, useBandMembers, useExpenseCategories, useSupplierRoles,
 } from './shared';
 import { fetchTransferRates, splitTransfer } from './transfer';
 
@@ -287,9 +287,23 @@ export function ShowDetail() {
       <div className="grid gap-4 lg:grid-cols-2 items-start">
         {/* ---- team & costs ---- */}
         <div className="bg-surface border border-line rounded-2xl p-4 md:p-5">
-          <div className="flex items-center justify-between gap-3 mb-3">
+          <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
             <h2 className="ser text-lg">צוות ועלויות</h2>
-            <span className="text-[12.5px] text-faint">כל שינוי נשמר מיד</span>
+            <div className="flex items-center gap-3">
+              <span className="text-[12.5px] text-faint">כל שינוי נשמר מיד</span>
+              {/* The lines themselves — which costs every show carries — are defined once for
+                  the band, not per show; this is the way there from the place you notice one is
+                  missing or misnamed. */}
+              {isOwner && (
+                <Link
+                  to={COST_LINES_HREF}
+                  title="הוספה, שינוי שם או כיבוי של שורות העלות שכל הופעה נושאת"
+                  className="inline-flex items-center gap-1 text-[12.5px] font-semibold text-moon hover:underline"
+                >
+                  <SlidersHorizontal size={13} /> עריכת שורות העלות ←
+                </Link>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col divide-y divide-soft text-sm">

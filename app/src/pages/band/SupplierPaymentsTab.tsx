@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { del, get, post, nis, nisExact } from '../../api';
+import { SyncButton } from '../../SyncButton';
 import {
   Button, DataTable, Input, Modal, PageHeader, SearchInput, Segmented, StatCard, Textarea,
   fieldClass,
@@ -52,7 +53,7 @@ const SUGGESTION_REASON: Record<string, { label: string; className: string }> = 
 
 type Filter = 'waiting' | 'all' | 'closed';
 
-export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
+export function SupplierPaymentsTab({ isOwner, onError, onNotice }: TabProps) {
   const [payments, setPayments] = useState<any[]>([]);
   const [queue, setQueue] = useState<any>(null);
   const [suppliers, setSuppliers] = useState<any[]>([]);
@@ -106,6 +107,9 @@ export function SupplierPaymentsTab({ isOwner, onError }: TabProps) {
         sub="כל העברה והשורות שהיא סגרה — וכל מה שעדיין לא חזרה עליו חשבונית"
         actions={isOwner && (
           <>
+            {/* The pull first, then the match: a document that has not arrived cannot answer
+                for anything. The pull runs the match on its own once it lands. */}
+            <SyncButton service="morning" onError={onError} onDone={onNotice} reload={load} />
             <span title="משווה הוצאות מ־Morning לתשלומים שממתינים לחשבונית">
               <Button variant="ghost" disabled={matching} onClick={runMatch}>
                 {matching ? 'מתאים…' : 'התאמה מ־Morning'}

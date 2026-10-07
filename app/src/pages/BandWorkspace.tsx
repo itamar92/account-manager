@@ -57,6 +57,7 @@ export function BandWorkspace() {
   const [generalExpenses, setGeneralExpenses] = useState<any[]>([]);
   const [allEvents, setAllEvents] = useState<any[]>([]);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [eventModal, setEventModal] = useState<any | null>(null);
   // The rate the two income fields convert between. Fetched rather than assumed, so a change
   // in Morning's settings does not leave this dialog doing last year's arithmetic.
@@ -128,7 +129,10 @@ export function BandWorkspace() {
     navigate(`/band/${MOVED[params.tab] ?? 'summary'}`, { replace: true });
   }, [params.tab]);
 
-  const tabProps = { isOwner, onError: setError, reload: load };
+  // A sync's summary and an error never both apply: whichever came last is the one that is true.
+  const showError = (message: string) => { setError(message); if (message) setNotice(''); };
+  const showNotice = (message: string) => { setNotice(message); if (message) setError(''); };
+  const tabProps = { isOwner, onError: showError, onNotice: showNotice, reload: load };
 
   return (
     <div className="space-y-5">
@@ -137,14 +141,15 @@ export function BandWorkspace() {
         <p className="text-sm text-muted">תצוגה בלבד — עריכה זמינה למנהל בלבד</p>
       )}
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5 whitespace-pre-line">{notice}</div>}
 
-      {tab === 'summary' && <SummaryTab onError={setError} isOwner={isOwner} />}
+      {tab === 'summary' && <SummaryTab onError={showError} isOwner={isOwner} />}
 
       {tab === 'shows' && (
         <ShowsTab {...tabProps} events={events} period={period} onNewEvent={newEvent} />
       )}
 
-      {tab === 'quotes' && <QuotesTab onError={setError} />}
+      {tab === 'quotes' && <QuotesTab onError={showError} />}
 
       {tab === 'suppliers' && <SuppliersTab {...tabProps} />}
 
@@ -226,7 +231,7 @@ export function BandWorkspace() {
                   ))}
                 </div>
                 <p className="text-xs text-faint">
-                  לעריכת ההוצאות עברו ללשונית «הוצאות הופעות»; לעריכת החלוקה פתחו את השורה בטבלת ההכנסות.
+                  ההוצאות והחלוקה נערכות בעמוד ההופעה עצמו — פתחו את ההופעה מרשימת ההופעות.
                 </p>
               </div>
             )}

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { del, post, put } from '../../api';
 import { Button, Input } from '../../ui';
-import { useExpenseCategories, type ExpenseCategory } from './shared';
+import { COST_LINES_PARAM, useExpenseCategories, type ExpenseCategory } from './shared';
 
 /**
  * The cost lines a show carries, and what the band calls each of them.
@@ -23,7 +24,20 @@ export function ExpenseCategoriesPanel({ isOwner, onError, onChange }: {
   onChange: () => void;
 }) {
   const { categories, reload } = useExpenseCategories();
-  const [open, setOpen] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const panel = useRef<HTMLDivElement>(null);
+  // Arriving from a show page's «עריכת שורות העלות» opens the editor and brings it into view; the
+  // parameter is dropped again so a reload does not reopen what the user has since closed.
+  const requested = searchParams.get(COST_LINES_PARAM) === '1';
+  const [open, setOpen] = useState(requested);
+  useEffect(() => {
+    if (!requested) return;
+    setOpen(true);
+    panel.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const next = new URLSearchParams(searchParams);
+    next.delete(COST_LINES_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [requested]);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState('');
   const [newName, setNewName] = useState('');
@@ -59,7 +73,7 @@ export function ExpenseCategoriesPanel({ isOwner, onError, onChange }: {
   const off = categories.filter((c) => !c.active);
 
   return (
-    <div className="bg-surface border border-line rounded-2xl p-4 md:p-5 space-y-3">
+    <div ref={panel} className="bg-surface border border-line rounded-2xl p-4 md:p-5 space-y-3 scroll-mt-20">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h3 className="ser text-lg">שורות עלות בהופעה</h3>

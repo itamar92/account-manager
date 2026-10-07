@@ -130,6 +130,8 @@ export function useSupplierRoles(): {
 export interface TabProps {
   isOwner: boolean;
   onError: (message: string) => void;
+  /** Where a tab reports something that went right — what a sync pulled, say. */
+  onNotice: (message: string) => void;
   reload: () => void;
 }
 
@@ -195,6 +197,13 @@ export function useBandMembers(): {
   React.useEffect(load, [load]);
   return { members, defaultCommissionPercent, reload: load };
 }
+
+/**
+ * The query parameter that opens the cost-line editor on ספקים וחברים, and the link that sets it.
+ * A show page points here, so «where do I rename this line» has a button rather than an answer.
+ */
+export const COST_LINES_PARAM = 'costLines';
+export const COST_LINES_HREF = `/band/suppliers?${COST_LINES_PARAM}=1`;
 
 /**
  * A cost line of a show, as the band defines it — read from the server, because the band

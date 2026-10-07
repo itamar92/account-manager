@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
+import { SyncButton } from '../SyncButton';
 import {
   Button, Card, Input, Modal, StatusBadge, DataTable, FilterBar, PageHeader, PeriodSelect,
   SearchInput, filterClass, textMatch, usePeriodFilter,
@@ -186,6 +187,8 @@ export function Works() {
         sub={<><span className="num">{works.length}</span> עבודות מוצגות · <span className="num text-warn">{nis(unbilledTotal)}</span> טרם חויבו</>}
         actions={
           <>
+            {/* The calendar rules are what draw most works here, so the pull sits with them. */}
+            <SyncButton service="calendar" onError={setError} onDone={setNotice} reload={load} />
             {/* A month's work billed in one document — the way most clients here are invoiced. */}
             <Button variant="ghost" onClick={() => setPeriodOpen(true)}>חשבונית תקופתית</Button>
             <Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>
@@ -210,7 +213,7 @@ export function Works() {
       </FilterBar>
 
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
-      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
+      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5 whitespace-pre-line">{notice}</div>}
 
       {/* Sticky: the actions belong next to the rows you are ticking, however far down the
           table you have scrolled — not at the top of a page you have to scroll back to. */}

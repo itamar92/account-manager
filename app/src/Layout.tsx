@@ -215,6 +215,22 @@ export function Layout() {
               <Calculator size={18} />
             </button>
           )}
+          {/* Settings belong to the app, not to a workspace, so the way in is up here beside the
+              person signed in rather than in one sidebar and missing from the other. */}
+          {isOwner && (
+            <NavLink
+              to="/settings"
+              title="הגדרות"
+              className={({ isActive }) =>
+                clsx(
+                  'p-2 rounded-lg transition-colors',
+                  isActive ? 'bg-accent-soft text-accent-ink' : 'text-faint hover:text-ink-2 hover:bg-soft'
+                )
+              }
+            >
+              <Settings size={18} />
+            </NavLink>
+          )}
           <div
             title={`${user.name} · ${isOwner ? 'בעלים' : 'חבר להקה'}`}
             className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center text-sm font-semibold shrink-0"

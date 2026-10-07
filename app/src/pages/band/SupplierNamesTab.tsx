@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { del, get, post, nis } from '../../api';
+import { SyncButton } from '../../SyncButton';
 import { Button, DataTable, PageHeader, fieldClass } from '../../ui';
 import { roleName, type TabProps } from './shared';
 
@@ -17,7 +18,7 @@ import { roleName, type TabProps } from './shared';
  * listed where they can be fixed, worth most first, each with the supplier it most resembles
  * already picked. The bottom half is the mapping itself, for reading back and correcting.
  */
-export function SupplierNamesTab({ isOwner, onError }: TabProps) {
+export function SupplierNamesTab({ isOwner, onError, onNotice }: TabProps) {
   const [payees, setPayees] = useState<any[]>([]);
   const [unknown, setUnknown] = useState<any[]>([]);
   const [choice, setChoice] = useState<Record<string, string>>({});
@@ -75,6 +76,7 @@ export function SupplierNamesTab({ isOwner, onError }: TabProps) {
       <PageHeader
         title="שמות בחשבוניות"
         sub="איך קוראים לו כאן, ואיך הוא חתום על החשבונית שלו"
+        actions={isOwner && <SyncButton service="morning" onError={onError} onDone={onNotice} reload={load} />}
       />
 
       <p className="text-[13px] text-muted">

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { del, get, post, nis } from '../../api';
+import { SyncButton } from '../../SyncButton';
 import { Button, Combobox, Empty, FilterBar, PageHeader, Pill, PeriodSelect, SearchInput, textMatch } from '../../ui';
 import {
   eventLabel, expenseRowTotal, moneyReceived, paymentStatusLabel, roleName, showHref, type PeriodTabProps,
@@ -48,7 +49,7 @@ interface Props extends PeriodTabProps {
  * ended up reading one show across three tabs; a card that says where the show stands and opens
  * the whole thing is the shorter road to the same numbers.
  */
-export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent }: Props) {
+export function ShowsTab({ events, period, isOwner, onError, onNotice, reload, onNewEvent }: Props) {
   const navigate = useNavigate();
   const location = useLocation();
   // Which shows are on screen lives in the URL rather than in state, so opening one and coming
@@ -60,7 +61,6 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
   const raw = params.get('show');
   const chosen: Filter | null = FILTERS.some(([key]) => key === raw) ? (raw as Filter) : null;
   const search = params.get('q') ?? '';
-  const [syncing, setSyncing] = useState(false);
 
   // Replace rather than push: «back» should leave the list, not walk back through every filter
   // that was tried on the way to the one being read.
@@ -68,18 +68,6 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
     const next = new URLSearchParams(params);
     if (value) next.set(key, value); else next.delete(key);
     setParams(next, { replace: true });
-  };
-
-  const syncCalendar = async () => {
-    setSyncing(true);
-    onError('');
-    try {
-      const d = await post('/integrations/calendar/sync');
-      const r = d.result;
-      if (r.created + r.updated + r.linked === 0) onError(`לא נמצאו הופעות חדשות (${r.matched} אירועים תואמים)`);
-      reload();
-    } catch (err: any) { onError(err.message); }
-    finally { setSyncing(false); }
   };
 
   const openShow = (id: string) => {
@@ -139,9 +127,7 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
         }
         actions={isOwner && (
           <>
-            <Button variant="ghost" disabled={syncing} onClick={syncCalendar}>
-              {syncing ? 'מסנכרן…' : 'משיכה מהיומן'}
-            </Button>
+            <SyncButton service="calendar" label="משיכה מהיומן" onError={onError} onDone={onNotice} reload={reload} />
             <Button onClick={onNewEvent}>הופעה חדשה</Button>
           </>
         )}

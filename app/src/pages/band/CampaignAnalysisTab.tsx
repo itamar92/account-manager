@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { del, get, post, put } from '../../api';
+import { SyncButton } from '../../SyncButton';
 import { Button, Card, PeriodSelect, Section, Tag } from '../../ui';
 import { useBandMembers, type PeriodTabProps } from './shared';
 import { CampaignTasksPanel, israelToday } from './CampaignTasksPanel';
@@ -32,7 +33,7 @@ const JOB_POLL_MS = 4000;
  * it again instead of asking again, and a run still in progress when the page loaded is waited
  * for rather than started twice. Only the owner can start a run; band members read along.
  */
-export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props) {
+export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice, reload }: Props) {
   const [report, setReport] = useState<any>(null);
   const [agent, setAgent] = useState<any>(null);
 
@@ -295,6 +296,8 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError }: Props)
             className="text-xs text-accent hover:underline">
             {sections.allOpen ? 'סגירת הכל' : 'פתיחת הכל'}
           </button>
+          {/* The advisor reads whatever the last pull left behind, so a fresh pull sits beside it. */}
+          <SyncButton service="meta" onError={onError} onDone={onNotice} reload={reload} />
           {jobs.analysis
             ? <Working text="הסוכן מנתח" since={jobs.analysis.started_at} />
             : isOwner && <Button onClick={analyze} disabled={agentBusy}>{report ? 'רענון ניתוח' : 'ניתוח קמפיינים'}</Button>}
