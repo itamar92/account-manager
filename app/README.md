@@ -60,7 +60,7 @@ a field left empty there falls back to these, so an existing deployment keeps wo
 | `AGENT_SSH_PASSPHRASE` | — | the key's passphrase, if it has one |
 | `AGENT_SSH_HOST_KEY` | — | the agent host's public key, from `ssh-keyscan`. **Required in production** |
 | `AGENT_COMMAND` | `claude -p --output-format json` | the fixed command run on that machine; the prompt goes to its stdin |
-| `AGENT_TIMEOUT_MS` | `120000` | how long a single run may take before the connection is dropped |
+| `AGENT_TIMEOUT_MS` | `300000` | how long a single run may take before the connection is dropped — above the wrapper's own 110 s (290 s with the Meta connector) |
 
 ## Users and roles
 
@@ -757,6 +757,14 @@ Three properties are deliberate and worth keeping:
 - **Nothing the agent says takes effect.** It reads a JSON extract — shows, tickets, revenue,
   campaigns, spend curves — and returns text. It gets no database handle, no Meta token and no
   write path, and the member division is deliberately not in the extract it is sent.
+
+**Meta's own connector, optionally.** Where the agent host has Meta's Ads Manager MCP server
+signed in and its read tools named (`deploy/README.md`, «Meta's Ads Manager connector»), the
+agent may also look below the campaign — ad sets, ads, audiences, conversions — before it judges.
+The prompt says so on every run (`LIVE_META_TOOLS` in `campaignAdvisor.ts`) as "if you have these
+tools", because only the host decides whether it does. The host allows those reads one tool at a
+time and refuses everything else, and the prompt repeats that nothing in the account is to be
+changed; the extract stays the authority on which show a campaign was for and what it cost.
 
 Reports are stored, so opening the tab paints the last one instead of spending a minute on a page
 load; a run happens only when the owner presses the button. Band members read along.

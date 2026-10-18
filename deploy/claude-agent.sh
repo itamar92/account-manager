@@ -44,9 +44,43 @@ if [ -r "$AM_AGENT_ENV_FILE" ]; then
   set +a
 fi
 
-# Under the app's own 120 s ceiling (AGENT_TIMEOUT_MS), so a run that overruns ends here with
-# something to read rather than as a connection the app dropped.
-: "${AM_AGENT_TIMEOUT:=110}"
+# Meta's own MCP server (the Ads Manager connector), off unless its read tools are named.
+#
+# AM_AGENT_META_TOOLS lists the exact tools the advisor may call — `mcp__meta-ads__<tool>`,
+# separated by spaces or commas — and nothing else on that server is callable: the connector can
+# also create, edit and switch on campaigns, and the prompt carries text that came from Meta and
+# from a browser form. So there is no wildcard and no bare server name here; a list that does not
+# name tools one by one stops the run instead of quietly allowing all of them.
+#
+# The server is the one a person added and signed in to as this account (`claude mcp add
+# --transport http --scope user meta-ads <url>`, then /mcp → Authenticate). The run reaches it
+# through a config written here, which must carry the same name and URL for that sign-in to be
+# found — hence AM_AGENT_META_URL, which has to match `claude mcp get meta-ads`.
+: "${AM_AGENT_META_TOOLS:=}"
+: "${AM_AGENT_META_URL:=https://mcp.facebook.com/ads}"
+
+meta_tools=()
+if [ -n "$AM_AGENT_META_TOOLS" ]; then
+  # read -a rather than an unquoted expansion, so a `*` in the list is a name to refuse, not a glob.
+  IFS=', ' read -r -a requested <<< "$AM_AGENT_META_TOOLS"
+  for tool in "${requested[@]}"; do
+    [ -n "$tool" ] || continue
+    [[ "$tool" =~ ^mcp__meta-ads__[A-Za-z0-9_-]+$ ]] \
+      || die "AM_AGENT_META_TOOLS: '${tool}' is not one tool of meta-ads — name each read tool exactly"
+    meta_tools+=("$tool")
+  done
+  [[ "$AM_AGENT_META_URL" =~ ^https://[A-Za-z0-9.:/_-]+$ ]] \
+    || die "AM_AGENT_META_URL must be a plain https URL"
+fi
+
+# Under the app's own ceiling (AGENT_TIMEOUT_MS, 300 s by default), so a run that overruns ends
+# here with something to read rather than as a connection the app dropped. A run that may look
+# things up in Meta gets longer than one that only reads its prompt.
+if [ "${#meta_tools[@]}" -gt 0 ]; then
+  : "${AM_AGENT_TIMEOUT:=290}"
+else
+  : "${AM_AGENT_TIMEOUT:=110}"
+fi
 # The advisor's prompts are a few tens of KB of campaign data. A megabyte is not one of them.
 : "${AM_AGENT_MAX_PROMPT_BYTES:=1048576}"
 
@@ -55,14 +89,20 @@ request="${SSH_ORIGINAL_COMMAND-}"
 # The probe: `agentClient.ts:ping()` sends the first word of the configured command with
 # --version. Matched loosely on the suffix so it answers whether that word is `claude` or the
 # path to this wrapper.
+# The Meta line is what tells בדיקת חיבור whether the connector is in play, without a run.
 case "$request" in
   *--version)
-    exec claude --version
+    claude --version
+    if [ "${#meta_tools[@]}" -gt 0 ]; then
+      echo "meta-ads: ${#meta_tools[@]} read tools allowed"
+    fi
+    exit 0
     ;;
 esac
 
 prompt_file="$(mktemp)"
-trap 'rm -f "$prompt_file"' EXIT
+mcp_file=""
+trap 'rm -f "$prompt_file" ${mcp_file:+"$mcp_file"}' EXIT
 cat > "$prompt_file"
 
 size="$(wc -c < "$prompt_file")"
@@ -74,11 +114,26 @@ fi
 model_args=()
 [ -n "${AM_AGENT_MODEL:-}" ] && model_args=(--model "$AM_AGENT_MODEL")
 
+# Without Meta tools, no MCP server is loaded at all (--strict-mcp-config with no config). With
+# them, exactly one is, and dontAsk refuses every call that is not on the list — a -p run has
+# nobody to ask, and a refusal is the right answer for a tool nobody named.
+mcp_args=()
+if [ "${#meta_tools[@]}" -gt 0 ]; then
+  mcp_file="$(mktemp)"
+  printf '{"mcpServers":{"meta-ads":{"type":"http","url":"%s"}}}\n' "$AM_AGENT_META_URL" > "$mcp_file"
+  mcp_args=(
+    --mcp-config "$mcp_file"
+    --allowedTools "$(IFS=,; echo "${meta_tools[*]}")"
+    --permission-mode dontAsk
+  )
+fi
+
 # --tools "" is the security boundary that matters here. The prompt carries campaign names,
 # client names and ad copy — text this app collected from Meta and from a browser form — and an
 # unattended agent that can read it does not also need Bash and Edit on the VM the app runs on.
-# --strict-mcp-config with no --mcp-config means no MCP server is loaded either, so a server
-# left in ~/.claude.json by a person's own session cannot join an unattended run.
+# It covers the built-in tools only; MCP tools are the business of --strict-mcp-config, which
+# keeps a server left in ~/.claude.json by a person's own session out of an unattended run, and
+# of the Meta block above, which lets in one server and only the read tools named for it.
 # --no-session-persistence keeps the advisor from accumulating a transcript per press of the
 # button in the agent account's home.
 set +e
@@ -88,6 +143,7 @@ timeout -k 5 "$AM_AGENT_TIMEOUT" \
     --tools "" \
     --strict-mcp-config \
     --no-session-persistence \
+    "${mcp_args[@]}" \
     "${model_args[@]}" \
   < "$prompt_file"
 status=$?

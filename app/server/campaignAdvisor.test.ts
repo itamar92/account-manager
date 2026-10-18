@@ -54,6 +54,18 @@ test('every prompt carries the band brief, the judging method, the task and the 
   assert.equal(prompt.split(advisor.ADVISOR_METHOD).length - 1, 1);
 });
 
+test('every prompt says how to use the Meta connector, if the host gave one, and never to change anything', () => {
+  const prompt = advisor.buildPrompt('המשימה', '{"schema":1}', {});
+  const methodAt = prompt.indexOf(advisor.ADVISOR_METHOD);
+  const metaAt = prompt.indexOf(advisor.LIVE_META_TOOLS);
+  assert.ok(methodAt >= 0 && metaAt > methodAt && metaAt < prompt.indexOf('המשימה'));
+  // The server name the wrapper allows (`mcp__meta-ads__…`), and the read-only rule spelled out.
+  assert.match(advisor.LIVE_META_TOOLS, /mcp__meta-ads__/);
+  assert.match(advisor.LIVE_META_TOOLS, /אסור לשנות שום דבר/);
+  // Without the tools the advisor still has to answer from the extract.
+  assert.match(advisor.LIVE_META_TOOLS, /אם אין לך כלים כאלה/);
+});
+
 test('a recommendation keeps only links to findings that exist', () => {
   const data = advisor.normaliseAnalysis({
     findings: [{ title: 'א' }, { title: 'ב' }],
