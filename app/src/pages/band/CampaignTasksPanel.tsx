@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { del, get, post, put } from '../../api';
-import { Button, Card, Combobox, Empty, fieldClass } from '../../ui';
+import { Button, Combobox, fieldClass } from '../../ui';
 import { eventLabel, useBandMembers } from './shared';
+import { OverflowMenu, useConfirm } from './advisorShared';
 
 interface Props {
   events: any[];
@@ -10,8 +11,10 @@ interface Props {
   onError: (message: string) => void;
   /** Bumped by the tab when a draft's tasks were just added, so the list re-reads. */
   reloadKey: number;
-  /** Inside a folding section, which already supplies the card and the heading. */
-  bare?: boolean;
+  /** One show's tasks only — the show workspace. Without it, every show's. */
+  eventId?: string;
+  /** Told when a task was ticked or changed here, so the page's counts follow. */
+  onChanged?: () => void;
 }
 
 /** Today in Israel as YYYY-MM-DD — what a due date means, wherever the browser is. */
@@ -20,7 +23,7 @@ export const israelToday = () =>
     .format(new Date());
 
 /** A due date edited in place — smaller than a form field, so a task stays one line. */
-const DATE_CELL = 'bg-surface border border-line rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-accent';
+const DATE_CELL = 'bg-surface border border-line rounded-lg px-2 min-h-9 text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20';
 
 const ddmm = (date: string) => {
   const [, m, d] = String(date || '').split('-');
@@ -32,19 +35,23 @@ const ddmm = (date: string) => {
  *
  * Each show's tasks are reminded by email to the one band member who owns that show's campaign,
  * on the due date and every two days after until somebody ticks it. Everybody can tick a task
- * done; only the owner adds, re-dates, re-assigns or deletes.
+ * done; only the owner adds, re-dates, re-assigns or deletes — and the rarer of those (a reminder
+ * sent now, a delete) wait behind the row's «⋯», away from the checkbox a thumb is aiming at.
  */
-export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }: Props) {
+export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, eventId, onChanged }: Props) {
   const { members } = useBandMembers();
   const [shows, setShows] = useState<any[]>([]);
   const [mail, setMail] = useState<{ configured: boolean; from: string | null } | null>(null);
   const [doneLinks, setDoneLinks] = useState(true);
   const [showDone, setShowDone] = useState(false);
   const [busy, setBusy] = useState('');
+  const [notice, setNotice] = useState('');
+  const { ask, dialog } = useConfirm();
 
-  const [newEvent, setNewEvent] = useState('');
+  const [newEvent, setNewEvent] = useState(eventId ?? '');
   const [newTitle, setNewTitle] = useState('');
   const [newDue, setNewDue] = useState('');
+  useEffect(() => { if (eventId) setNewEvent(eventId); }, [eventId]);
 
   const load = () => {
     get('/band/campaign-tasks')
@@ -57,13 +64,16 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }
   const active = members.filter((m) => m.active);
   const memberName = (key: string | null) => members.find((m) => m.member_key === key)?.name ?? null;
   const upcoming = events.filter((e) => e.date >= today);
+  const listed = eventId ? shows.filter((s) => s.event_id === eventId) : shows;
 
   const act = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key);
     onError('');
+    setNotice('');
     try {
       await fn();
       load();
+      onChanged?.();
     } catch (err: any) { onError(err.message); }
     finally { setBusy(''); }
   };
@@ -71,25 +81,29 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }
   const toggle = (task: any) => act(task.id, () => put(`/band/campaign-tasks/${task.id}`, { done: !task.done_at }));
   const redate = (task: any, due: string) => due && due !== task.due_date
     && act(task.id, () => put(`/band/campaign-tasks/${task.id}`, { due_date: due }));
-  const remove = (task: any) => confirm(`למחוק את «${task.title}»?`)
-    && act(task.id, () => del(`/band/campaign-tasks/${task.id}`));
+  const remove = async (task: any) => {
+    if (await ask('מחיקת משימה', <>למחוק את «{task.title}»? אי אפשר לשחזר אותה.</>, 'מחיקה')) {
+      act(task.id, () => del(`/band/campaign-tasks/${task.id}`));
+    }
+  };
   /** Clears one show's list to start it again. Open tasks only, unless the done ones are on screen too. */
-  const clearShow = (show: any) => {
+  const clearShow = async (show: any) => {
     const open = show.tasks.filter((t: any) => !t.done_at).length;
     const all = showDone || open === 0;
     const count = all ? show.tasks.length : open;
-    if (!count || !confirm(`למחוק ${all ? 'את כל' : 'את'} ${count} המשימות${all ? '' : ' הפתוחות'} של ${show.label}?`)) return;
-    act(`clear:${show.event_id}`, () => del(`/band/campaign-tasks/show/${show.event_id}${all ? '' : '?open=1'}`));
+    if (!count) return;
+    const ok = await ask('מחיקת משימות', <>למחוק {all ? 'את כל' : 'את'} {count} המשימות{all ? '' : ' הפתוחות'} של {show.label}?</>, 'מחיקה');
+    if (ok) act(`clear:${show.event_id}`, () => del(`/band/campaign-tasks/show/${show.event_id}${all ? '' : '?open=1'}`));
   };
-  const setOwner = (eventId: string, key: string) =>
-    act(`owner:${eventId}`, () => put(`/band/campaign-tasks/owner/${eventId}`, { member_key: key || null }));
+  const setOwner = (id: string, key: string) =>
+    act(`owner:${id}`, () => put(`/band/campaign-tasks/owner/${id}`, { member_key: key || null }));
 
   const remind = async (task: any) => {
     setBusy(task.id);
     onError('');
     try {
       const d = await post(`/band/campaign-tasks/${task.id}/remind`);
-      alert(`נשלחה תזכורת ל-${d.to}`);
+      setNotice(`נשלחה תזכורת ל-${d.to}`);
       load();
     } catch (err: any) { onError(err.message); }
     finally { setBusy(''); }
@@ -105,114 +119,105 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }
     { value: '', label: 'ללא אחראי' },
     ...active.map((m) => ({ value: m.member_key, label: m.email ? m.name : `${m.name} (אין מייל)` })),
   ];
+  const doneCount = listed.reduce((n, s) => n + s.tasks.filter((t: any) => t.done_at).length, 0);
 
-  const Wrapper = bare ? React.Fragment : Card;
   return (
-    <Wrapper>
-      <div className={clsx('flex flex-wrap items-center gap-2 mb-1', bare ? 'justify-end' : 'justify-between')}>
-        {!bare && <h2 className="ser text-lg">משימות קמפיין</h2>}
-        <label className="flex items-center gap-1.5 text-xs text-muted">
-          <input type="checkbox" className="accent-accent" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
-          להציג משימות שבוצעו
-        </label>
-      </div>
-      <p className="text-xs text-faint mb-3">
-        לכל הופעה יש אחראי אחד מהלהקה. ביום היעד, מ-9:00, הוא מקבל מייל — ושוב כל יומיים עד שהמשימה מסומנת כבוצעה.
-      </p>
-
+    <div className="space-y-4">
       {mail && !mail.configured && (
-        <p className="text-xs text-warn bg-warn-soft border border-warn/25 rounded-lg px-3 py-2 mb-3">
-          שליחת מיילים כבויה — יש להגדיר SMTP_USER ו-SMTP_PASS (סיסמת אפליקציה של Gmail) בקובץ ה-.env של השרת.
-          המשימות נשמרות בכל מקרה.
-        </p>
+        <div className="rounded-xl bg-warn-soft px-3 py-2.5 text-sm text-warn-ink leading-relaxed">
+          תזכורות במייל כבויות: השרת עוד לא מחובר לתיבת מייל. המשימות נשמרות, אבל אף אחד לא יקבל עליהן מייל.
+          {isOwner && <span className="block text-xs mt-0.5 opacity-90">להפעלה: להגדיר בשרת SMTP_USER ו-SMTP_PASS (סיסמת אפליקציה של Gmail).</span>}
+        </div>
       )}
       {mail?.configured && !doneLinks && isOwner && (
-        <p className="text-xs text-faint mb-3">
-          כדי שבמייל יופיע כפתור «סימון כבוצע», יש להגדיר PUBLIC_BASE_URL בשרת.
+        <p className="text-sm text-muted">כדי שבמייל יופיע כפתור «סימון כבוצע», יש להגדיר PUBLIC_BASE_URL בשרת.</p>
+      )}
+      {notice && <p role="status" className="text-sm text-pos-ink">{notice}</p>}
+
+      {listed.length === 0 && (
+        <p className="text-sm text-body">
+          {eventId ? 'אין עדיין משימות להופעה הזו. משימות מהתוכנית או מבדיקת המצב יופיעו כאן אחרי שתוסיפו אותן.' : 'אין עדיין משימות. אפשר להוסיף אותן מתוכנית קמפיין או ידנית למטה.'}
         </p>
       )}
 
-      {shows.length === 0 && <Empty text="אין עדיין משימות. אפשר להוסיף אותן מתוכנית קמפיין או ידנית למטה." />}
-
-      <div className="space-y-3">
-        {shows.map((show) => {
+      <div className="space-y-5">
+        {listed.map((show) => {
           const tasks = show.tasks.filter((t: any) => showDone || !t.done_at);
           const owner = members.find((m) => m.member_key === show.owner);
           return (
-            <div key={show.event_id} className="bg-soft border border-line rounded-xl p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                <div className="font-medium">{show.label}</div>
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="text-faint">אחראי:</span>
+            <section key={show.event_id} aria-label={show.label}>
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-line">
+                {!eventId ? <h3 className="font-semibold text-ink">{show.label}</h3> : <span className="text-sm font-medium text-muted">אחראי על התזכורות</span>}
+                <div className="flex items-center gap-1.5 text-sm">
+                  {!eventId && <span className="text-muted">אחראי:</span>}
                   {isOwner ? (
                     <Combobox
-                      className="min-w-36"
+                      className="min-w-40"
                       value={show.owner ?? ''}
                       onChange={(key) => setOwner(show.event_id, key)}
                       placeholder="בחרו…"
                       options={memberOptions}
                     />
                   ) : (
-                    <span>{memberName(show.owner) ?? '—'}</span>
+                    <span className="text-ink">{memberName(show.owner) ?? 'לא נבחר'}</span>
+                  )}
+                  {isOwner && show.tasks.length > 0 && (
+                    <OverflowMenu label={`עוד פעולות על המשימות של ${show.label}`} disabled={!!busy}
+                      items={[{ label: showDone || show.open === 0 ? 'מחיקת כל המשימות' : 'מחיקת המשימות הפתוחות', onSelect: () => clearShow(show), danger: true }]} />
                   )}
                 </div>
               </div>
-              {isOwner && show.tasks.length > 0 && (
-                <div className="flex justify-end -mt-1 mb-1">
-                  <button onClick={() => clearShow(show)} disabled={!!busy}
-                    className="text-xs text-neg hover:underline disabled:opacity-50">
-                    {showDone || show.open === 0 ? 'מחיקת כל המשימות' : 'מחיקת המשימות הפתוחות'}
-                  </button>
-                </div>
-              )}
               {!show.owner && show.open > 0 && (
-                <p className="text-xs text-warn mb-2">לא נבחר אחראי — התזכורות להופעה הזו לא יישלחו</p>
+                <p className="text-sm text-warn-ink mt-2">לא נבחר אחראי, אז לא יישלחו תזכורות על ההופעה הזו.</p>
               )}
               {owner && !owner.email && (
-                <p className="text-xs text-warn mb-2">ל{owner.name} אין כתובת מייל בהגדרות הלהקה — התזכורות לא יישלחו</p>
+                <p className="text-sm text-warn-ink mt-2">ל{owner.name} אין כתובת מייל בהגדרות הלהקה, אז התזכורות לא יגיעו.</p>
               )}
 
               {tasks.length === 0 ? (
-                <p className="text-xs text-faint">{show.tasks.length ? 'כל המשימות בוצעו ✓' : 'אין משימות'}</p>
+                <p className="text-sm text-muted py-3">{show.tasks.length ? 'כל המשימות בוצעו.' : 'אין משימות.'}</p>
               ) : (
-                <ul className="space-y-1.5">
+                <ul className="divide-y divide-line">
                   {tasks.map((task: any) => {
                     const overdue = !task.done_at && task.due_date < today;
                     const dueToday = !task.done_at && task.due_date === today;
                     return (
-                      <li key={task.id} className="flex flex-wrap sm:flex-nowrap items-start gap-x-2 gap-y-1 text-sm">
-                        <input type="checkbox" className="accent-accent mt-1 shrink-0" checked={!!task.done_at}
-                          disabled={busy === task.id} onChange={() => toggle(task)} />
-                        <div className="min-w-0 flex-1">
-                          <div className={clsx(task.done_at && 'line-through text-faint')}>
-                            {task.title}
-                            {task.source === 'ai' && <span className="text-[11px] text-faint"> · מהיועץ</span>}
-                          </div>
-                          {task.detail && !task.done_at && (
-                            <div className="text-xs text-muted leading-relaxed whitespace-pre-wrap">{task.detail}</div>
-                          )}
-                        </div>
+                      <li key={task.id} className="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-1 py-2.5">
+                        {/* The label is the whole row's start, so the box is easy to hit on a phone. */}
+                        <label className="flex flex-1 min-w-0 items-start gap-3 cursor-pointer min-h-10">
+                          <input type="checkbox" className="accent-accent w-[18px] h-[18px] mt-0.5 shrink-0" checked={!!task.done_at}
+                            disabled={busy === task.id} onChange={() => toggle(task)} />
+                          <span className="min-w-0">
+                            <span className={clsx('block text-[15px] leading-snug', task.done_at ? 'line-through text-muted' : 'text-ink')}>
+                              {task.title}
+                            </span>
+                            {task.detail && !task.done_at && (
+                              <span className="block text-sm text-muted leading-relaxed whitespace-pre-wrap mt-0.5">{task.detail}</span>
+                            )}
+                            {task.source === 'ai' && <span className="block text-xs text-muted mt-0.5">הצעה של היועץ</span>}
+                          </span>
+                        </label>
                         {/* Under the text on a phone, where beside it would leave the title a word wide. */}
-                        <div className="flex items-center gap-2 shrink-0 text-xs w-full sm:w-auto ps-6 sm:ps-0">
+                        <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto ps-[30px] sm:ps-0">
+                          {overdue && <span className="text-xs font-semibold text-neg-ink">באיחור</span>}
+                          {dueToday && <span className="text-xs font-semibold text-accent-ink">היום</span>}
                           {isOwner && !task.done_at ? (
                             <input type="date" defaultValue={task.due_date} key={task.due_date}
-                              className={clsx(DATE_CELL, overdue ? 'text-neg' : 'text-ink')}
+                              aria-label={`תאריך יעד: ${task.title}`}
+                              className={clsx(DATE_CELL, overdue ? 'text-neg-ink' : 'text-ink')}
                               onBlur={(e) => redate(task, e.target.value)} />
                           ) : (
-                            <span className={clsx(overdue ? 'text-neg' : 'text-faint')}>{ddmm(task.due_date)}</span>
-                          )}
-                          {overdue && <span className="text-neg">באיחור</span>}
-                          {dueToday && <span className="text-accent">היום</span>}
-                          {isOwner && !task.done_at && (
-                            <button onClick={() => remind(task)} disabled={!!busy}
-                              title={task.reminders_sent ? `נשלחו ${task.reminders_sent} תזכורות` : 'שליחת תזכורת עכשיו'}
-                              className="text-accent hover:underline disabled:opacity-50">
-                              תזכורת{task.reminders_sent ? ` (${task.reminders_sent})` : ''}
-                            </button>
+                            <span className={clsx('num text-sm', overdue ? 'text-neg-ink' : 'text-muted')}>{ddmm(task.due_date)}</span>
                           )}
                           {isOwner && (
-                            <button onClick={() => remove(task)} disabled={!!busy}
-                              className="text-neg hover:underline disabled:opacity-50">מחיקה</button>
+                            <OverflowMenu label={`עוד פעולות על «${task.title}»`} disabled={!!busy}
+                              items={[
+                                {
+                                  label: task.reminders_sent ? `שליחת תזכורת עכשיו (נשלחו ${task.reminders_sent})` : 'שליחת תזכורת עכשיו',
+                                  onSelect: () => remind(task), hidden: !!task.done_at,
+                                },
+                                { label: 'מחיקה', onSelect: () => remove(task), danger: true },
+                              ]} />
                           )}
                         </div>
                       </li>
@@ -220,29 +225,39 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }
                   })}
                 </ul>
               )}
-            </div>
+            </section>
           );
         })}
       </div>
 
+      {doneCount > 0 && (
+        <label className="inline-flex items-center gap-2 text-sm text-muted min-h-10 cursor-pointer">
+          <input type="checkbox" className="accent-accent w-4 h-4" checked={showDone} onChange={(e) => setShowDone(e.target.checked)} />
+          להציג גם {doneCount === 1 ? 'משימה אחת שבוצעה' : `${doneCount} משימות שבוצעו`}
+        </label>
+      )}
+
       {isOwner && (
-        <div className="mt-4 border-t border-line pt-3">
-          <div className="text-xs text-faint mb-2">משימה חדשה</div>
-          <div className="grid gap-2 sm:grid-cols-[1fr_2fr_auto_auto] items-center">
-            <Combobox
-              value={newEvent}
-              onChange={setNewEvent}
-              placeholder="הופעה…"
-              options={[{ value: '', label: 'הופעה…' }, ...upcoming.map((e) => ({ value: e.id, label: eventLabel(e) }))]}
-            />
-            <input className={fieldClass} value={newTitle} placeholder="מה לעשות"
+        <div className="rounded-xl bg-soft p-3">
+          <div className="text-sm font-semibold text-ink-2 mb-2">משימה חדשה</div>
+          <div className={clsx('grid gap-2 items-center', eventId ? 'sm:grid-cols-[2fr_auto_auto]' : 'sm:grid-cols-[1fr_2fr_auto_auto]')}>
+            {!eventId && (
+              <Combobox
+                value={newEvent}
+                onChange={setNewEvent}
+                placeholder="הופעה…"
+                options={[{ value: '', label: 'הופעה…' }, ...upcoming.map((e) => ({ value: e.id, label: eventLabel(e) }))]}
+              />
+            )}
+            <input className={fieldClass} value={newTitle} placeholder="מה לעשות" aria-label="מה לעשות"
               onChange={(e) => setNewTitle(e.target.value)} />
-            <input type="date" className={fieldClass} value={newDue} min={today}
+            <input type="date" className={fieldClass} value={newDue} min={today} aria-label="תאריך יעד"
               onChange={(e) => setNewDue(e.target.value)} />
             <Button onClick={addTask} disabled={!newEvent || !newTitle.trim() || !newDue || !!busy}>הוספה</Button>
           </div>
         </div>
       )}
-    </Wrapper>
+      {dialog}
+    </div>
   );
 }

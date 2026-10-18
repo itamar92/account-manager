@@ -1,9 +1,9 @@
 import React, { useEffect, useRef } from 'react';
 import { clsx } from 'clsx';
-import { Button, Empty, Textarea } from '../../ui';
+import { Button, Textarea } from '../../ui';
 import { eventLabel, type BandMember } from './shared';
 import { TaskPicker } from './TaskPicker';
-import { when, Working, type AdvisorJob } from './advisorShared';
+import { InlineError, OverflowMenu, when, Working, type AdvisorJob } from './advisorShared';
 import { ActionButtons } from './MetaActions';
 
 /** A chat answer's tasks, one group per show, in the order the shows first appear. */
@@ -20,7 +20,7 @@ function groupByShow(tasks: any[]): Array<[string, any[]]> {
  * reload: the server only writes the pair once the answer arrives, so until then it comes from the
  * run in progress.
  */
-export function AdvisorChat({ messages, events, isOwner, question, onQuestionChange, onSend, job, agentBusy, members, taskShow, onTasksAdded, onActionDone, onError }: {
+export function AdvisorChat({ messages, events, isOwner, question, onQuestionChange, onSend, job, agentBusy, members, taskShow, onTasksAdded, onActionDone, onError, failure, onDismissFailure, periodLabel, onClear }: {
   messages: any[];
   events: any[];
   isOwner: boolean;
@@ -35,6 +35,12 @@ export function AdvisorChat({ messages, events, isOwner, question, onQuestionCha
   onTasksAdded: () => void;
   onActionDone: () => void;
   onError: (message: string) => void;
+  /** Why the last question went unanswered, said under the box it was typed in. */
+  failure?: string;
+  onDismissFailure: () => void;
+  /** The period the agent reads, as the period summary has it chosen. */
+  periodLabel: string;
+  onClear: () => void;
 }) {
   const thread = useRef<HTMLDivElement>(null);
   const waiting = job?.status === 'running';
@@ -53,23 +59,28 @@ export function AdvisorChat({ messages, events, isOwner, question, onQuestionCha
 
   return (
     <div>
-      <p className="text-xs text-faint mb-3">
-        לסוכן יש את אותם נתונים שבלשונית «פרסום» לתקופה שנבחרה למעלה.
-      </p>
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <p className="text-sm text-muted">הסוכן עונה לפי נתוני הקמפיינים של {periodLabel}.</p>
+        {isOwner && messages.length > 0 && !waiting && (
+          <OverflowMenu label="עוד פעולות על השיחה" items={[{ label: 'מחיקת השיחה', onSelect: onClear, danger: true }]} />
+        )}
+      </div>
 
       {messages.length === 0 && !waiting ? (
-        <Empty text="אין עדיין שאלות" />
+        <p className="text-sm text-body py-2">
+          {isOwner ? 'עוד לא נשאלו שאלות. אפשר לשאול כל דבר על הקמפיינים, והתשובה נשמרת כאן.' : 'עוד לא נשאלו שאלות.'}
+        </p>
       ) : (
         <div ref={thread} className="flex flex-col gap-2 max-h-[32rem] overflow-y-auto">
           {messages.map((message: any) => (
             <div key={message.id} className={bubble(message.role)}>
-              <div className="text-xs text-faint mb-1">
+              <div className="text-xs text-muted mb-1">
                 {message.role === 'user' ? 'אתם' : 'הסוכן'} · {when(message.created_at)}
               </div>
               <p className="whitespace-pre-wrap text-ink">{message.content}</p>
               {message.tasks?.length > 0 && (
                 <div className="border-t border-line mt-2 pt-2 space-y-3">
-                  <div className="text-faint text-xs">משימות שהסוכן מציע — כל משימה מסומנת תישלח כתזכורת במייל ביום היעד</div>
+                  <div className="text-muted text-xs">משימות שהסוכן מציע. כל משימה מסומנת נשלחת כתזכורת במייל ביום היעד.</div>
                   {groupByShow(message.tasks).map(([eventId, tasks]) => (
                     <TaskPicker key={eventId} eventId={eventId} tasks={tasks} sourceId={message.id}
                       label={eventById(eventId) ? eventLabel(eventById(eventId)) : undefined}
@@ -88,13 +99,13 @@ export function AdvisorChat({ messages, events, isOwner, question, onQuestionCha
           ))}
           {waiting && job?.message && (
             <div className={bubble('user')}>
-              <div className="text-xs text-faint mb-1">אתם · {when(job.started_at)}</div>
+              <div className="text-xs text-muted mb-1">אתם · {when(job.started_at)}</div>
               <p className="whitespace-pre-wrap text-ink">{job.message}</p>
             </div>
           )}
           {waiting && (
             <div className={bubble('assistant')}>
-              <Working text="הסוכן חושב" since={job?.started_at} />
+              <Working text="הסוכן חושב" since={job?.started_at} hint={false} />
             </div>
           )}
         </div>
@@ -113,11 +124,12 @@ export function AdvisorChat({ messages, events, isOwner, question, onQuestionCha
             }}
           />
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs text-faint">
-              {agentBusy && !waiting ? 'הסוכן עסוק בבקשה אחרת — אפשר לשלוח כשיסיים' : <span className="hidden sm:inline">Ctrl+Enter לשליחה</span>}
+            <span className="text-xs text-muted">
+              {agentBusy && !waiting ? 'הסוכן עסוק בבקשה אחרת. אפשר לשלוח כשיסיים.' : <span className="hidden sm:inline">Ctrl+Enter לשליחה</span>}
             </span>
             <Button onClick={onSend} disabled={!question.trim() || agentBusy}>שליחה</Button>
           </div>
+          <InlineError text={failure} onDismiss={onDismissFailure} />
         </div>
       )}
     </div>

@@ -71,26 +71,29 @@ export function TaskPicker({ eventId, label, tasks, sourceId, show, members, isO
       {label && <div className="text-xs font-medium text-ink-2">{label}</div>}
       <ul className="space-y-1.5">
         {picks.map((pick, i) => (
-          <li key={i} className="flex flex-wrap sm:flex-nowrap items-start gap-x-2 gap-y-1">
-            <input type="checkbox" className="accent-accent mt-1 shrink-0" checked={pick.checked}
-              disabled={locked} onChange={(e) => update(i, { checked: e.target.checked })} />
+          <li key={i} className="flex flex-wrap sm:flex-nowrap items-start gap-x-3 gap-y-1">
             {/* Wide enough that on a phone the date drops under the task rather than squeezing it. */}
-            <div className="min-w-[12rem] flex-1">
-              <div>{pick.title}</div>
-              {pick.detail && <div className="text-xs text-muted leading-relaxed">{pick.detail}</div>}
-            </div>
+            <label className="flex min-w-[12rem] flex-1 items-start gap-3 min-h-10 cursor-pointer">
+              <input type="checkbox" className="accent-accent w-[18px] h-[18px] mt-0.5 shrink-0" checked={pick.checked}
+                disabled={locked} onChange={(e) => update(i, { checked: e.target.checked })} />
+              <span className="min-w-0">
+                <span className="block text-sm text-ink">{pick.title}</span>
+                {pick.detail && <span className="block text-sm text-muted leading-relaxed">{pick.detail}</span>}
+              </span>
+            </label>
             <input type="date" value={pick.due_date} disabled={locked} min={israelToday()}
-              className="shrink-0 ms-6 sm:ms-0 bg-surface border border-line rounded-lg px-2 py-1 text-xs focus:outline-none focus:border-accent"
+              aria-label={`תאריך יעד: ${pick.title}`}
+              className="shrink-0 ms-[30px] sm:ms-0 bg-surface border border-line rounded-lg px-2 min-h-9 text-sm focus:outline-none focus:border-accent focus:ring-2 focus:ring-accent/20"
               onChange={(e) => update(i, { due_date: e.target.value })} />
           </li>
         ))}
       </ul>
       {added ? (
-        <p className="text-xs text-pos">נוספו למשימות ✓</p>
+        <p className="text-sm text-pos-ink">נוספו למשימות של ההופעה.</p>
       ) : isOwner && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-faint">אחראי לתזכורות:</span>
-          <select value={owner} onChange={(e) => setOwner(e.target.value)}
+          <span className="text-sm text-muted">אחראי לתזכורות:</span>
+          <select value={owner} aria-label="אחראי לתזכורות" onChange={(e) => setOwner(e.target.value)}
             className="bg-soft border border-line rounded-lg px-3 py-2 text-sm text-ink focus:outline-none focus:border-accent">
             <option value="">ללא אחראי (לא יישלחו מיילים)</option>
             {members.filter((m) => m.active).map((m) => (

@@ -163,7 +163,7 @@ function VenueRow({ venue, read, onSave, onEmail }: {
           ) : venue.hosts.length ? (
             <Tag><CircleDashed className="w-3.5 h-3.5" aria-hidden />לא נקלט ב-{venue.hosts.join(', ')}</Tag>
           ) : (
-            <Tag tone="warn">אין קישור לעמוד הכרטיסים — הוסיפו אותו ב«בדיקת מצב וכרטיסים»</Tag>
+            <Tag tone="warn">אין קישור לעמוד הכרטיסים. מוסיפים אותו ב«מצב הקמפיין» של ההופעה</Tag>
           )}
           {venue.status === 'requested' && venue.requested_at && <span className="text-xs text-faint">ביקשנו {when(venue.requested_at)}</span>}
         </div>
