@@ -214,12 +214,60 @@ that key has:
 this app collected from Meta, and an agent summarising that text has no business also holding
 Bash and Edit on the VM the app runs on; `--strict-mcp-config` with no config keeps a stray MCP
 server out of an unattended run for the same reason. The wrapper also caps the prompt at 1 MB
-and stops the run at 110 s, under the app's own 120 s ceiling, so an overrun comes back as a
-message rather than as a dropped connection.
+and stops the run at 110 s (290 s with the Meta tools below), under the app's own 300 s ceiling,
+so an overrun comes back as a message rather than as a dropped connection.
 
 It is a **copy**, owned by root: a `git pull` on the VM does not change what the key can run, and
 the agent account cannot rewrite its own restriction. `sudo deploy/setup-claude-agent.sh` again
 is what installs a new version.
+
+### Optional: Meta's Ads Manager connector, read tools only
+
+The advisor's prompt carries campaign-level figures from the app's own Meta sync. Meta's official
+MCP server goes a level below — ad sets, ads, audiences, conversions, the pixel — and the advisor
+can use it to check what the extract cannot show. It is **off** until the wrapper is told which of
+its tools are reads, because the same server can also create, edit and switch on campaigns.
+
+1. **Add and sign in to the server as the agent account**, once (§4a's login has to exist first):
+
+   ```bash
+   sudo -u aiagent -i
+   set -a; . ~/.config/am-agent/env; set +a        # only if the login is a setup-token
+   claude mcp add --transport http --scope user meta-ads https://mcp.facebook.com/ads
+   claude                                          # /mcp → meta-ads → Authenticate
+   ```
+
+   The sign-in URL opens in a browser on your own machine; the page it ends on
+   (`http://localhost:<port>/callback?…`) cannot load there, so copy its address and, from a
+   second SSH session on the VM, `curl "<that address>"`. Keep the name `meta-ads` — the wrapper
+   only knows that one — and do not answer "always allow" to any tool prompt in that session: a
+   saved allow rule would let an unattended run call that tool too.
+
+2. **List the read tools** — `/mcp` → meta-ads → View tools — and put the reporting ones in
+   `/home/aiagent/.config/am-agent/env`, each by its full name, separated by spaces:
+
+   ```
+   AM_AGENT_META_TOOLS="mcp__meta-ads__<tool> mcp__meta-ads__<tool> …"
+   AM_AGENT_META_URL=https://mcp.facebook.com/ads     # exactly what `claude mcp get meta-ads` shows
+   ```
+
+   Only tools that read: insights, lists, getters, diagnostics. Anything that creates, updates,
+   duplicates, pauses, activates or deletes stays off the list. The wrapper refuses a wildcard or
+   the bare server name — the list has to name tools one by one.
+
+3. **Install the wrapper** that knows about it: `sudo deploy/setup-claude-agent.sh --skip-install`
+   from the checkout (it leaves the login and the env file alone).
+
+4. **Raise the app's ceiling** if `deploy/.env` still says `AGENT_TIMEOUT_MS=120000` — it has to
+   be above the wrapper's 290 s, so `300000` — or set it in Settings → סוכן AI. Then
+   **בדיקת חיבור** answers with a second line, `meta-ads: N read tools allowed`.
+
+What the run gets is the one server, through a config the wrapper writes for that run
+(`--strict-mcp-config` still keeps every other server out), and `--permission-mode dontAsk`, which
+refuses any call not on the list. The prompt tells the agent the same — read, never change — and
+to treat the app's extract as the authority on shows, tickets and money. A run that reads Meta
+can outlast Cloudflare's 100 s; the tab then keeps waiting for the answer instead of showing the
+524. To switch it off, comment `AM_AGENT_META_TOOLS` out again — no reinstall needed.
 
 ### Point the app at it
 

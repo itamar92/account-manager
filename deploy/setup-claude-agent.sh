@@ -121,8 +121,16 @@ if [ ! -f "$ENV_FILE" ]; then
 # Optional. Unset means whatever the account's plan defaults to.
 #AM_AGENT_MODEL=
 
-# Seconds. Keep it under the app's AGENT_TIMEOUT_MS (120000 by default).
+# Seconds. Keep it under the app's AGENT_TIMEOUT_MS (300000 by default). Unset means 110, or
+# 290 when the Meta tools below are on.
 #AM_AGENT_TIMEOUT=110
+
+# Optional. Meta's Ads Manager connector, read tools only — see deploy/README.md §4a. Add the
+# server as this account first (claude mcp add --transport http --scope user meta-ads <url>,
+# then /mcp → Authenticate), then name each read tool here, exactly, separated by spaces.
+# The URL must be the one `claude mcp get meta-ads` shows.
+#AM_AGENT_META_TOOLS="mcp__meta-ads__<tool> mcp__meta-ads__<tool>"
+#AM_AGENT_META_URL=https://mcp.facebook.com/ads
 ENVTMPL
   chown "$AGENT_USER:$AGENT_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"

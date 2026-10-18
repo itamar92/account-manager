@@ -129,14 +129,28 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     return () => clearInterval(timer);
   }, [remoteKinds]);
 
-  /** Starts a run and holds it until it answers; its error is shown here, so the server forgets it. */
-  const run = async <T,>(kind: JobKind, details: Partial<AdvisorJob>, request: () => Promise<T>): Promise<T | null> => {
+  /**
+   * Starts a run and holds it until it answers; its error is shown here, so the server forgets it.
+   * Null is a run that failed; undefined one still working after its request was cut, whose answer
+   * the poll will paint.
+   */
+  const run = async <T,>(kind: JobKind, details: Partial<AdvisorJob>, request: () => Promise<T>): Promise<T | null | undefined> => {
     onError('');
     awaiting.current.add(kind);
     setLocalJobs((j) => ({ ...j, [kind]: { kind, status: 'running', started_at: new Date().toISOString(), ...details } }));
     try {
       return await request();
     } catch (err: any) {
+      // Cloudflare answers a request still open after 100 s with a 524 while the run goes on — a
+      // run that looks things up in Meta can take that long. The server knows whether it is still
+      // working, so ask it before calling this a failure, and wait for the answer the way a reload
+      // would.
+      const jobs: AdvisorJob[] = await get('/band/campaign-jobs').then((d) => d.jobs ?? []).catch(() => []);
+      if (jobs.some((job) => job.kind === kind && job.status === 'running')) {
+        awaiting.current.delete(kind);
+        pollRef.current();
+        return undefined;
+      }
       onError(err.message);
       if (isOwner) del(`/band/campaign-jobs/${kind}`).catch(() => {});
       return null;
@@ -225,7 +239,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     const d = await run('chat', { message: text }, () => post(`/band/campaign-chat${query()}`, { message: text }));
     if (d) setMessages(d.messages);
     // Hands the question back rather than losing what was typed to a failed round trip.
-    else setQuestion(text);
+    else if (d === null) setQuestion(text);
   };
 
   const clearThread = async () => {
