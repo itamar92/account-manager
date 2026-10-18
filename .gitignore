@@ -26,3 +26,6 @@ deadline-calendar.json
 
 # Generated knowledge graph (run `graphify .` to rebuild locally)
 graphify-out/
+
+# Impeccable design-skill archive (critique snapshots, live-mode state) — local only
+.impeccable/
