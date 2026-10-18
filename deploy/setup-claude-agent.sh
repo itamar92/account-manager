@@ -131,6 +131,11 @@ if [ ! -f "$ENV_FILE" ]; then
 # The URL must be the one `claude mcp get meta-ads` shows.
 #AM_AGENT_META_TOOLS="mcp__meta-ads__<tool> mcp__meta-ads__<tool>"
 #AM_AGENT_META_URL=https://mcp.facebook.com/ads
+
+# The advisor's ticket check reads the club's ticket page with the web tools (and nothing else).
+# On unless set to 0. Seconds for that run below.
+#AM_AGENT_WEB=1
+#AM_AGENT_WEB_TIMEOUT=170
 ENVTMPL
   chown "$AGENT_USER:$AGENT_USER" "$ENV_FILE"
   chmod 600 "$ENV_FILE"

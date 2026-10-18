@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
-import { Check, Copy } from 'lucide-react';
+import { Check, Copy, RotateCcw } from 'lucide-react';
 import { nis } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Combobox, Tag, Textarea } from '../../ui';
@@ -36,6 +36,8 @@ interface Props {
   members: BandMember[];
   taskShow: (eventId: string) => any;
   onTasksAdded: () => void;
+  /** Forgets every plan and review of the show, and with `withTasks` its tasks — to start over. */
+  onReset: (withTasks: boolean) => Promise<void>;
   onError: (message: string) => void;
 }
 
@@ -173,6 +175,8 @@ function AdPreview({ creative }: { creative: any }) {
 export function CampaignPlan(props: Props) {
   const { events, isOwner, savedDrafts, eventId, report, job } = props;
   const [copiedAll, setCopiedAll] = useState(false);
+  const [resetting, setResetting] = useState<null | 'ask' | 'busy'>(null);
+  const [resetTasks, setResetTasks] = useState(false);
   const plan = report?.response;
   const today = new Date().toISOString().slice(0, 10);
   const event = events.find((e) => e.id === eventId);
@@ -186,6 +190,17 @@ export function CampaignPlan(props: Props) {
   const hasTasks = plan?.tasks?.length > 0;
   const hasNotes = plan?.notes?.length > 0;
   const drafting = job?.status === 'running';
+  const showTasks: any[] = props.taskShow(eventId)?.tasks ?? [];
+
+  const reset = async () => {
+    setResetting('busy');
+    try {
+      await props.onReset(resetTasks);
+    } finally {
+      setResetting(null);
+      setResetTasks(false);
+    }
+  };
 
   const copyAll = () => {
     navigator.clipboard.writeText(planText(plan)).then(() => {
@@ -275,11 +290,44 @@ export function CampaignPlan(props: Props) {
                 <p className="text-xs text-muted mt-1">ביקשתם: {report.request.brief}</p>
               )}
             </div>
-            <Button variant="ghost" onClick={copyAll} className="!px-3 !py-2 inline-flex items-center gap-1.5">
-              {copiedAll ? <Check className="w-4 h-4 text-pos" /> : <Copy className="w-4 h-4" />}
-              {copiedAll ? 'הועתק' : 'העתקת הכל'}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="ghost" onClick={copyAll} className="!px-3 !py-2 inline-flex items-center gap-1.5">
+                {copiedAll ? <Check className="w-4 h-4 text-pos" /> : <Copy className="w-4 h-4" />}
+                {copiedAll ? 'הועתק' : 'העתקת הכל'}
+              </Button>
+              {isOwner && !drafting && (
+                <Button variant="ghost" onClick={() => setResetting('ask')} disabled={!!resetting || props.agentBusy}
+                  className="!px-3 !py-2 inline-flex items-center gap-1.5 !text-neg">
+                  <RotateCcw className="w-4 h-4" /> התחלה מחדש
+                </Button>
+              )}
+            </div>
           </header>
+
+          {resetting && (
+            <div className="rounded-xl border border-neg/25 bg-neg-soft p-3 mb-5 space-y-2" role="alertdialog" aria-label="התחלה מחדש">
+              <p className="text-sm text-ink">
+                למחוק את התוכנית ואת בדיקות המצב של {label} (כל הגרסאות) ולהתחיל מאפס?
+                בדיקות הכרטיסים והקישורים לאתר המועדון נשמרים.
+              </p>
+              {showTasks.length > 0 && (
+                <label className="flex items-center gap-1.5 text-sm text-body">
+                  <input type="checkbox" className="accent-accent" checked={resetTasks}
+                    onChange={(e) => setResetTasks(e.target.checked)} disabled={resetting === 'busy'} />
+                  למחוק גם את {showTasks.length} משימות ההופעה
+                  {showTasks.some((t) => t.done_at) && ' (כולל אלה שבוצעו)'}
+                </label>
+              )}
+              <div className="flex gap-2">
+                <Button variant="danger" onClick={reset} disabled={resetting === 'busy'}>
+                  {resetting === 'busy' ? 'מוחק…' : 'מחיקה והתחלה מחדש'}
+                </Button>
+                <Button variant="ghost" onClick={() => { setResetting(null); setResetTasks(false); }} disabled={resetting === 'busy'}>
+                  ביטול
+                </Button>
+              </div>
+            </div>
+          )}
 
           <Step n={1} title="קמפיין">
             <Field label="מטרה" value={plan.objective} copy={plan.objective ?? ''} />

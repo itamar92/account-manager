@@ -255,6 +255,19 @@ its tools are reads, because the same server can also create, edit and switch on
    duplicates, pauses, activates or deletes stays off the list. The wrapper refuses a wildcard or
    the bare server name — the list has to name tools one by one.
 
+   A list that covers what the advisor's prompts ask for — ad set and ad settings and metrics,
+   Meta's own recommendations and alerts, delivery errors, change history and audiences:
+
+   ```
+   AM_AGENT_META_TOOLS="mcp__meta-ads__ads_get_ad_accounts mcp__meta-ads__ads_get_ad_entities
+     mcp__meta-ads__ads_get_field_context mcp__meta-ads__ads_get_opportunity_score
+     mcp__meta-ads__ads_insights_performance_trend mcp__meta-ads__ads_insights_anomaly_signal
+     mcp__meta-ads__ads_get_errors mcp__meta-ads__ads_account_get_activity_logs
+     mcp__meta-ads__ads_get_ad_account_custom_audiences mcp__meta-ads__ads_get_creatives"
+   ```
+
+   Check each name against what `/mcp` lists — the server's tool names can change.
+
 3. **Install the wrapper** that knows about it: `sudo deploy/setup-claude-agent.sh --skip-install`
    from the checkout (it leaves the login and the env file alone).
 
@@ -268,6 +281,15 @@ refuses any call not on the list. The prompt tells the agent the same — read, 
 to treat the app's extract as the authority on shows, tickets and money. A run that reads Meta
 can outlast Cloudflare's 100 s; the tab then keeps waiting for the answer instead of showing the
 524. To switch it off, comment `AM_AGENT_META_TOOLS` out again — no reinstall needed.
+
+### The ticket check (web)
+
+The advisor's «בדיקת כרטיסים» reads the show's page on the club's site. That run, and only that
+run, gets `WebSearch` and `WebFetch` — no Meta server, no other tool — and its prompt holds only the
+band's name and the show, so a web page with instructions in it has nothing in the run to reach.
+It is on by default after `setup-claude-agent.sh --skip-install` installs the new wrapper;
+`AM_AGENT_WEB=0` in the env file turns it off, and `AM_AGENT_WEB_TIMEOUT` (170 s) bounds it.
+**בדיקת חיבור** says `web: ticket checks allowed` when it is on.
 
 ### Point the app at it
 

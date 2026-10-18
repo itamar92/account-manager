@@ -73,6 +73,14 @@ if [ -n "$AM_AGENT_META_TOOLS" ]; then
     || die "AM_AGENT_META_URL must be a plain https URL"
 fi
 
+# The ticket check (app/server/ticketCheck.ts) reads the club's ticket page on the open web. It is
+# the only run that may browse, and it gets the two web tools and nothing else — no Meta server, no
+# Bash — and a prompt the app builds from the show and the band's name alone, so a web page that
+# says something it should not has nothing in the run to reach. On by default; AM_AGENT_WEB=0 turns
+# it off, and the app then reports the check as unavailable.
+: "${AM_AGENT_WEB:=1}"
+: "${AM_AGENT_WEB_TIMEOUT:=170}"
+
 # Under the app's own ceiling (AGENT_TIMEOUT_MS, 300 s by default), so a run that overruns ends
 # here with something to read rather than as a connection the app dropped. A run that may look
 # things up in Meta gets longer than one that only reads its prompt.
@@ -96,7 +104,20 @@ case "$request" in
     if [ "${#meta_tools[@]}" -gt 0 ]; then
       echo "meta-ads: ${#meta_tools[@]} read tools allowed"
     fi
+    if [ "$AM_AGENT_WEB" = "1" ]; then
+      echo "web: ticket checks allowed"
+    fi
     exit 0
+    ;;
+esac
+
+# The app asks for a web run by naming the web tools (ticketCheck.ts:webCommand()). As with the
+# probe, the request is only matched: what runs is the fixed command below.
+web=0
+case "$request" in
+  *"--tools WebSearch,WebFetch"*)
+    [ "$AM_AGENT_WEB" = "1" ] || die "web lookups are off on this host (AM_AGENT_WEB=0)"
+    web=1
     ;;
 esac
 
@@ -126,6 +147,24 @@ if [ "${#meta_tools[@]}" -gt 0 ]; then
     --allowedTools "$(IFS=,; echo "${meta_tools[*]}")"
     --permission-mode dontAsk
   )
+fi
+
+if [ "$web" = "1" ]; then
+  set +e
+  timeout -k 5 "$AM_AGENT_WEB_TIMEOUT" \
+    claude -p \
+      --output-format json \
+      --tools "WebSearch,WebFetch" \
+      --allowedTools "WebSearch,WebFetch" \
+      --permission-mode dontAsk \
+      --strict-mcp-config \
+      --no-session-persistence \
+      "${model_args[@]}" \
+    < "$prompt_file"
+  status=$?
+  set -e
+  [ "$status" -eq 124 ] && echo "am-agent: the ticket check did not answer within ${AM_AGENT_WEB_TIMEOUT}s" >&2
+  exit "$status"
 fi
 
 # --tools "" is the security boundary that matters here. The prompt carries campaign names,

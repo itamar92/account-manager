@@ -8,6 +8,7 @@ import { CampaignTasksPanel, israelToday } from './CampaignTasksPanel';
 import { AdvisorSummary, FindingCounts, FindingsList, SuggestionsList } from './AdvisorReport';
 import { CampaignPlan, type SavedDraft } from './CampaignPlan';
 import { AdvisorChat } from './AdvisorChat';
+import { CampaignReview } from './CampaignReview';
 import { ddmm, useOpenSections, Working, type AdvisorJob } from './advisorShared';
 
 interface Props extends PeriodTabProps {
@@ -42,6 +43,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
   const [draftReport, setDraftReport] = useState<any>(null);
   const [draftKey, setDraftKey] = useState(0);
   const [brief, setBrief] = useState('');
+  const [reviewKey, setReviewKey] = useState(0);
 
   const [messages, setMessages] = useState<any[]>([]);
   const [question, setQuestion] = useState('');
@@ -92,6 +94,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     if (kind === 'analysis') loadReport();
     if (kind === 'chat') loadChat();
     if (kind === 'draft') { loadDrafts(); setDraftKey((k) => k + 1); }
+    if (kind === 'review' || kind === 'tickets') setReviewKey((k) => k + 1);
   };
 
   // Read through a ref so the poll's timer always calls the newest closure — the period may have
@@ -206,11 +209,61 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     if (remoteJobs.chat) sections.set('chat', true);
   }, [remoteJobs.chat?.started_at]);
 
+  // A status review or a ticket check still running when the page loaded is shown for its show.
+  const remoteShowJob = remoteJobs.review ?? remoteJobs.tickets;
+  useEffect(() => {
+    if (!remoteShowJob?.event_id) return;
+    if (remoteShowJob.event_id !== draftEvent) setDraftEvent(remoteShowJob.event_id);
+    sections.set('review', true);
+  }, [remoteShowJob?.started_at]);
+
   // ---- actions
 
   const analyze = async () => {
     const d = await run('analysis', {}, () => post(`/band/campaign-analysis${query()}`));
     if (d) setReport(d.report);
+  };
+
+  const clearReport = async () => {
+    if (!confirm('לנקות את הייעוץ הכללי לתקופה הזו? אפשר לבקש ייעוץ חדש בכל רגע.')) return;
+    try {
+      await del(`/band/campaign-analysis${query()}`);
+      setReport(null);
+    } catch (err: any) { onError(err.message); }
+  };
+
+  /** Starts the chosen show over: its plans and reviews, and its tasks if asked. */
+  const resetShow = async (withTasks: boolean) => {
+    if (!draftEvent) return;
+    onError('');
+    try {
+      await del(`/band/campaign-draft/${draftEvent}${withTasks ? '?tasks=1' : ''}`);
+      setDraftReport(null);
+      setBrief('');
+      loadDrafts();
+      setReviewKey((k) => k + 1);
+      if (withTasks) tasksAdded();
+    } catch (err: any) { onError(err.message); }
+  };
+
+  const review = async (note: string, checkTickets: boolean) => {
+    if (!draftEvent) return;
+    const eventId = draftEvent;
+    if (!searchParams.get('plan')) setDraftEvent(eventId);
+    const d = await run('review', { event_id: eventId, message: note },
+      () => post('/band/campaign-review', { event_id: eventId, note, check_tickets: checkTickets }));
+    if (d) {
+      setReviewKey((k) => k + 1);
+      if (d.ticket_error) onError(`בדיקת הכרטיסים נכשלה, הבדיקה נעשתה בלעדיה: ${d.ticket_error}`);
+    }
+  };
+
+  const checkTickets = async (note: string) => {
+    if (!draftEvent) return;
+    const eventId = draftEvent;
+    const d = await run('tickets', { event_id: eventId, message: note },
+      () => post('/band/ticket-check', { event_id: eventId, note }));
+    if (d) setReviewKey((k) => k + 1);
   };
 
   const makeDraft = async () => {
@@ -264,6 +317,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     findings: findings.some((f) => f?.severity === 'high'),
     suggestions: false,
     plan: !!searchParams.get('plan') || !!jobs.draft,
+    review: !!jobs.review || !!jobs.tickets,
     tasks: lateTasks + todayTasks > 0,
     chat: !!jobs.chat,
   });
@@ -312,9 +366,12 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           </button>
           {/* The advisor reads whatever the last pull left behind, so a fresh pull sits beside it. */}
           <SyncButton service="meta" onError={onError} onDone={onNotice} reload={reload} />
+          {isOwner && report && !jobs.analysis && (
+            <button type="button" onClick={clearReport} className="text-xs text-neg hover:underline">ניקוי הייעוץ</button>
+          )}
           {jobs.analysis
             ? <Working text="הסוכן מנתח" since={jobs.analysis.started_at} />
-            : isOwner && <Button onClick={analyze} disabled={agentBusy}>{report ? 'רענון ניתוח' : 'ניתוח קמפיינים'}</Button>}
+            : isOwner && <Button onClick={analyze} disabled={agentBusy}>{report ? 'ייעוץ חדש' : 'ניתוח קמפיינים'}</Button>}
         </div>
       </div>
       {!report && !jobs.analysis && (
@@ -364,6 +421,31 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           agentBusy={agentBusy}
           onBuild={makeDraft}
           onChoose={chooseCreative}
+          members={members}
+          taskShow={taskShow}
+          onTasksAdded={tasksAdded}
+          onReset={resetShow}
+          onError={onError}
+        />
+      </Section>
+
+      <Section title="בדיקת מצב וכרטיסים" open={sections.isOpen('review')} onToggle={() => sections.toggle('review')}
+        summary={jobs.review
+          ? <Tag tone="accent">הסוכן בודק את הקמפיין…</Tag>
+          : jobs.tickets
+            ? <Tag tone="accent">הסוכן בודק כרטיסים…</Tag>
+            : planLabel && <Tag>{planLabel}</Tag>}>
+        <CampaignReview
+          events={events}
+          isOwner={isOwner}
+          eventId={draftEvent}
+          onEventChange={setDraftEvent}
+          reloadKey={reviewKey}
+          reviewJob={jobs.review}
+          ticketJob={jobs.tickets}
+          agentBusy={agentBusy}
+          onReview={review}
+          onCheckTickets={checkTickets}
           members={members}
           taskShow={taskShow}
           onTasksAdded={tasksAdded}

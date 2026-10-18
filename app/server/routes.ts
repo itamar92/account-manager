@@ -77,11 +77,13 @@ import { listClients, listInvoices, listWorks, outstandingSql } from './queries.
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
 import {
-  analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearChat, dismissJob, draftCampaign,
-  lastReport, listJobs, savedDrafts, trackJob,
+  analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearAnalysis, clearChat, clearShowAdvice,
+  dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, trackJob,
 } from './campaignAdvisor.js';
+import { reviewCampaign } from './campaignReview.js';
+import { checkTickets, lastTicketCheck, setTicketLinks, ticketLinks } from './ticketCheck.js';
 import {
-  createTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
+  createTasks, deleteShowTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
 } from './campaignTasks.js';
 import { mailStatus } from './mailer.js';
 import { quoteRouter } from './quoteRoutes.js';
@@ -2322,6 +2324,11 @@ router.post('/band/campaign-analysis', requireOwner, handleAsync(async (req, res
   res.json({ report: await trackJob('analysis', { range }, () => analyzeCampaigns(range)) });
 }));
 
+/** Forgets this period's advice, so the tab is empty until a new one is asked for. */
+router.delete('/band/campaign-analysis', requireOwner, handle((req, res) => {
+  res.json(clearAnalysis(dateRange(req.query)));
+}));
+
 /**
  * What the agent is working on right now, and the last run that failed. A page reloaded during a
  * run reads this to keep waiting for the answer instead of offering to start it again.
@@ -2358,6 +2365,52 @@ router.post('/band/campaign-draft', requireOwner, handleAsync(async (req, res) =
   if (!eventId) return res.status(400).json({ error: 'event_id is required' });
   const brief = String(req.body?.brief || '').slice(0, 2000);
   res.json({ report: await trackJob('draft', { event_id: eventId, brief }, () => draftCampaign(eventId, brief)) });
+}));
+
+/**
+ * Starts a show over: every plan and status review of it is forgotten, and with `?tasks=1` its
+ * tasks too. Ticket checks and the club's links stay — they are facts, and the next plan uses them.
+ */
+router.delete('/band/campaign-draft/:eventId', requireOwner, handle((req, res) => {
+  const advice = clearShowAdvice(req.params.eventId);
+  const tasks = req.query?.tasks === '1' ? deleteShowTasks(req.params.eventId) : { deleted: 0 };
+  res.json({ deleted: advice.deleted, tasks_deleted: tasks.deleted });
+}));
+
+/**
+ * A show's campaign as it stands: the last status review, the last look at the club's ticket page,
+ * and the links that look starts from.
+ */
+router.get('/band/campaign-review/:eventId', requireAuth, handle((req, res) => {
+  const eventId = req.params.eventId;
+  res.json({ review: lastReport('review', {}, eventId), tickets: lastTicketCheck(eventId), links: ticketLinks(eventId) });
+}));
+
+/**
+ * Re-advises a campaign that is already running: the plan against what happened since, and one
+ * decision. `check_tickets` reads the club's ticket page first unless it was read in the last hours.
+ */
+router.post('/band/campaign-review', requireOwner, handleAsync(async (req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const note = String(req.body?.note || '').slice(0, 2000);
+  const check = req.body?.check_tickets !== false;
+  res.json(await trackJob('review', { event_id: eventId, message: note },
+    () => reviewCampaign(eventId, { note, checkTickets: check })));
+}));
+
+/** Looks the show up on the club's site. `note` is the answer to the question the last check asked. */
+router.post('/band/ticket-check', requireOwner, handleAsync(async (req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const note = String(req.body?.note || '').slice(0, 1000);
+  res.json({ tickets: await trackJob('tickets', { event_id: eventId, message: note }, () => checkTickets(eventId, note)) });
+}));
+
+/** The club's site and the show's ticket page, typed by hand. An empty value clears it. */
+router.put('/band/ticket-links/:eventId', requireOwner, handle((req, res) => {
+  const body = req.body ?? {};
+  res.json({ links: setTicketLinks(req.params.eventId, { ticket_url: body.ticket_url, venue_site: body.venue_site }) });
 }));
 
 /** Keeps the headline or description chosen from a plan's alternatives. */
@@ -2405,6 +2458,11 @@ router.post('/band/campaign-tasks', requireOwner, handle((req, res) => {
   const inputs = Array.isArray(body.tasks) ? body.tasks : [body];
   const reportId = body.report_id ? String(body.report_id) : null;
   res.json({ tasks: createTasks(eventId, inputs, { source: reportId ? 'ai' : 'manual', reportId }) });
+}));
+
+/** Clears a show's tasks to start its list again — all of them, or with `?open=1` the open ones. */
+router.delete('/band/campaign-tasks/show/:eventId', requireOwner, handle((req, res) => {
+  res.json(deleteShowTasks(req.params.eventId, { openOnly: req.query?.open === '1' }));
 }));
 
 /** Who on the band gets this show's reminders. `member_key: null` clears it. */

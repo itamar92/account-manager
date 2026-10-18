@@ -618,10 +618,10 @@ CREATE INDEX IF NOT EXISTS idx_meta_campaign_daily_date ON meta_campaign_daily(d
 -- period selector has moved on.
 CREATE TABLE IF NOT EXISTS ai_campaign_reports (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,                     -- 'analysis' (a period) | 'draft' (one show)
+  kind TEXT NOT NULL,                     -- 'analysis' (a period) | 'draft' | 'review' | 'tickets' (one show)
   range_from TEXT,
   range_to TEXT,
-  event_id TEXT,                          -- the show a draft is for; null for an analysis
+  event_id TEXT,                          -- the show a draft, review or ticket check is for
   request TEXT NOT NULL,                  -- JSON: what was asked
   response TEXT NOT NULL,                 -- JSON: what came back, already parsed and validated
   duration_ms INTEGER,
@@ -690,6 +690,15 @@ CREATE TABLE IF NOT EXISTS campaign_tasks (
 
 CREATE INDEX IF NOT EXISTS idx_campaign_tasks_event ON campaign_tasks(event_id, due_date);
 CREATE INDEX IF NOT EXISTS idx_campaign_tasks_due ON campaign_tasks(done_at, due_date);
+
+-- The official site of each club, by venue name as the shows table writes it. A venue hosts many
+-- shows, so its site is typed (or found by the advisor) once and every later ticket check of a show
+-- there starts from it.
+CREATE TABLE IF NOT EXISTS venue_websites (
+  venue TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
 -- ---------- band quotes (docs/QUOTES-DESIGN.md) ----------
 -- A price quote for a show. A template is a row of the same table with is_template = 1: the
@@ -876,6 +885,9 @@ addColumnIfMissing('band_event_expenses', 'campaign_locked', 'INTEGER NOT NULL D
 // can be read as a proportion ("318 מתוך 420") instead of a bare number, which is the only way
 // to tell a full small room from an empty large one. 0 means nobody has said.
 addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
+// The show's own ticket page on the club's site. Where the advisor's ticket check goes first; filled
+// in by hand, or by the check itself the first time it finds the page.
+addColumnIfMissing('band_events', 'ticket_url', 'TEXT');
 // Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
 // due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
 addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');

@@ -73,6 +73,14 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }
     && act(task.id, () => put(`/band/campaign-tasks/${task.id}`, { due_date: due }));
   const remove = (task: any) => confirm(`למחוק את «${task.title}»?`)
     && act(task.id, () => del(`/band/campaign-tasks/${task.id}`));
+  /** Clears one show's list to start it again. Open tasks only, unless the done ones are on screen too. */
+  const clearShow = (show: any) => {
+    const open = show.tasks.filter((t: any) => !t.done_at).length;
+    const all = showDone || open === 0;
+    const count = all ? show.tasks.length : open;
+    if (!count || !confirm(`למחוק ${all ? 'את כל' : 'את'} ${count} המשימות${all ? '' : ' הפתוחות'} של ${show.label}?`)) return;
+    act(`clear:${show.event_id}`, () => del(`/band/campaign-tasks/show/${show.event_id}${all ? '' : '?open=1'}`));
+  };
   const setOwner = (eventId: string, key: string) =>
     act(`owner:${eventId}`, () => put(`/band/campaign-tasks/owner/${eventId}`, { member_key: key || null }));
 
@@ -149,6 +157,14 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, bare }
                   )}
                 </div>
               </div>
+              {isOwner && show.tasks.length > 0 && (
+                <div className="flex justify-end -mt-1 mb-1">
+                  <button onClick={() => clearShow(show)} disabled={!!busy}
+                    className="text-xs text-neg hover:underline disabled:opacity-50">
+                    {showDone || show.open === 0 ? 'מחיקת כל המשימות' : 'מחיקת המשימות הפתוחות'}
+                  </button>
+                </div>
+              )}
               {!show.owner && show.open > 0 && (
                 <p className="text-xs text-warn mb-2">לא נבחר אחראי — התזכורות להופעה הזו לא יישלחו</p>
               )}
