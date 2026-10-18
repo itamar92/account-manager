@@ -8,8 +8,10 @@
  * show's tasks and which were done, the campaigns tied to the show with their daily spend, what the
  * club's site said about tickets, and the last review, so the answer can say what changed.
  *
- * Like every advisor answer it is text for a person. The decision it recommends is carried out in
- * Ads Manager by hand, and the tasks it proposes are offered, not added.
+ * Like every advisor answer it is text for a person. A decision that is one click — pause, a new
+ * daily budget, an end date — also comes back as an action, previewed against Meta before the owner
+ * may confirm it (`metaActions.ts`); anything else is carried out in Ads Manager by hand, and the
+ * tasks it proposes are offered, not added.
  */
 import { db } from './db.js';
 import { AgentError } from './agentClient.js';
@@ -20,6 +22,7 @@ import { checkTickets, lastTicketCheck, ticketLinks } from './ticketCheck.js';
 import { campaignDaily, listCampaigns } from './metaSync.js';
 import { eventLabel } from './band.js';
 import { addDays, israelDate } from './campaignTasks.js';
+import { ACTIONS_GUIDE, ACTIONS_SCHEMA, cleanActions } from './metaActions.js';
 
 export const REVIEW_STATUSES = ['on_track', 'at_risk', 'off_track', 'not_started', 'finished'] as const;
 export const REVIEW_ACTIONS = [
@@ -47,7 +50,8 @@ const REVIEW_SCHEMA = `{
   "alternatives": [ { "title": "אפשרות אחרת", "detail": "מה היא אומרת", "when": "מתי עדיף לבחור בה" } ],
   "tickets": "מה ידוע על מכירת הכרטיסים, ומאיפה (אתר המועדון / הספרים / לא ידוע)",
   "tasks": [ { "title": "פעולה קצרה לביצוע", "detail": "מה בדיוק ולפי איזה סף", "due_date": "YYYY-MM-DD" } ],
-  "questions": ["שאלה למשתמש שהתשובה עליה תשנה את ההחלטה"]
+  "questions": ["שאלה למשתמש שהתשובה עליה תשנה את ההחלטה"],
+  ${ACTIONS_SCHEMA}
 }`;
 
 /** Keeps what the screen renders, in the shape it expects. Unknown enums read as nothing said. */
@@ -79,6 +83,7 @@ export function normaliseReview(data: any) {
     tickets: text(data?.tickets),
     tasks: cleanSuggestedTasks(data?.tasks),
     questions: list(data?.questions).map(text).filter((q): q is string => !!q),
+    actions: cleanActions(data?.actions),
   };
 }
 
@@ -184,6 +189,11 @@ export async function reviewCampaign(
       '- questions: רק אם תשובה של המשתמש באמת תשנה את ההחלטה. אחרת מערך ריק.',
       'אם יש לך כלי Meta — בדוק את הקמפיינים של ההופעה ברמת קבוצת המודעות והמודעה (תקציב יומי נוכחי, מצב,',
       'צפיות בדף הנחיתה, תדירות) לפני שאתה מחליט, וציין מה ראית.',
+      '',
+      ACTIONS_GUIDE,
+      'כשההחלטה (decision) היא השהיה, עצירה, הפעלה או שינוי תקציב — החזר אותה גם כפעולה, עם campaign_id מ-show_campaigns.',
+      'מעקב: בדוק ב-tracking.venues אם הפיקסל באתר הכרטיסים של המועדון, והתייחס לכך בהחלטה ובחלופות.',
+      '',
       'כתוב הכל בעברית.',
     ].join('\n'),
     REVIEW_SCHEMA,

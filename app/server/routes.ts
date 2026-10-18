@@ -82,6 +82,9 @@ import {
 } from './campaignAdvisor.js';
 import { reviewCampaign } from './campaignReview.js';
 import { checkTickets, lastTicketCheck, setTicketLinks, ticketLinks } from './ticketCheck.js';
+import { cancelAction, executeAction, listActions, previewAction, PREVIEW_TTL_MINUTES } from './metaActions.js';
+import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
+import { isMetaWriteConfigured } from './metaClient.js';
 import {
   createTasks, deleteShowTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
 } from './campaignTasks.js';
@@ -2254,6 +2257,9 @@ router.get('/integrations/calendar/calendars', requireOwner, handleAsync(async (
 router.post('/integrations/meta/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
   const result = await pullCampaignsFromMeta({ days });
+  // The pixel's counts ride along, so the advisor's next run knows which clubs' sites carry it. A
+  // failure there is not the sync's: the spend has landed, and the panel shows the pixel's error.
+  await refreshPixelSnapshot().catch(() => null);
   res.json({ result: { ...result, applied: applyCampaignSpend() } });
 }));
 
@@ -2434,6 +2440,52 @@ router.post('/band/campaign-chat', requireOwner, handleAsync(async (req, res) =>
 
 router.delete('/band/campaign-chat', requireOwner, handle((_req, res) => {
   res.json(clearChat(CAMPAIGN_CHAT_THREAD));
+}));
+
+// ---- the advisor's actions in Meta: preview first, then confirm ----
+
+/**
+ * The actions previewed and carried out, newest first, and whether the app can write at all —
+ * without the write token every action still previews, and the preview is done by hand.
+ */
+router.get('/band/meta-actions', requireAuth, handle((_req, res) => {
+  res.json({ actions: listActions(), write_configured: isMetaWriteConfigured(), preview_minutes: PREVIEW_TTL_MINUTES });
+}));
+
+/**
+ * Step one of every change: reads the target live from Meta and lays out «now → after». Nothing
+ * is sent to Meta here; the stored preview is the only thing the confirm below can carry out.
+ */
+router.post('/band/meta-actions/preview', requireOwner, handleAsync(async (req, res) => {
+  const body = req.body ?? {};
+  res.json({ preview: await previewAction(body.action, { source: body.source, source_id: body.source_id, event_id: body.event_id }) });
+}));
+
+/** Step two: carries out a preview the owner has just read, if Meta still matches it. */
+router.post('/band/meta-actions/:id/execute', requireOwner, handleAsync(async (req, res) => {
+  res.json({ action: await executeAction(req.params.id) });
+}));
+
+router.post('/band/meta-actions/:id/cancel', requireOwner, handle((req, res) => {
+  res.json({ action: cancelAction(req.params.id) });
+}));
+
+// ---- the pixel, and the clubs whose ticket pages should carry it ----
+
+/** The pixel as last read, and every club with a show coming up. `?refresh=1` reads Meta again. */
+router.get('/band/pixel', requireOwner, handleAsync(async (req, res) => {
+  res.json(await pixelOverview({ refresh: req.query?.refresh === '1' }));
+}));
+
+/** What the owner recorded about a club: asked, installed, declined, and who to write to. */
+router.put('/band/pixel/venue', requireOwner, handle((req, res) => {
+  const body = req.body ?? {};
+  res.json({ venue: setVenuePixel(String(body.venue ?? ''), body) });
+}));
+
+/** The request to a club, composed for the owner's own mail app. Nothing is sent from here. */
+router.get('/band/pixel/email', requireOwner, handle((req, res) => {
+  res.json({ email: pixelEmail(String(req.query?.venue ?? '')) });
 }));
 
 // ---- campaign tasks: the advisor's follow-ups, with email reminders ----

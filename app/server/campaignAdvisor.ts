@@ -11,7 +11,9 @@
  * being wrong, and the only way to guarantee they agree is to compute it once.
  *
  * The agent gets a JSON document and returns a JSON document. It has no database handle, no Meta
- * token and no write path: nothing it says takes effect until a person acts on it. Where the agent
+ * token and no write path: nothing it says takes effect until a person acts on it. A change it
+ * recommends may come back as an `action`, which the app previews against Meta's live state and
+ * carries out only when the owner confirms that preview (`metaActions.ts`). Where the agent
  * host has Meta's own connector switched on (`deploy/claude-agent.sh`), the agent may also look
  * things up in the ad account — through read tools the host names one by one, never from here.
  */
@@ -21,6 +23,8 @@ import { runAgent, AgentError } from './agentClient.js';
 import { adAnalysis, campaignDaily, listCampaigns, monthlyBreakdown, pastAdCopy } from './metaSync.js';
 import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
+import { ACTIONS_GUIDE, ACTIONS_SCHEMA, cleanActions, type ProposedAction } from './metaActions.js';
+import { PURCHASES_PER_WEEK_TO_OPTIMISE, trackingContext } from './metaPixel.js';
 
 // ---------------------------------------------------------------- context
 
@@ -47,6 +51,8 @@ export interface AdviserContext {
   }>;
   /** What the band's earlier ads said, by campaign — join to `campaigns` for how each did. */
   past_ads: ReturnType<typeof pastAdCopy>;
+  /** The pixel and whether it fires on each club's ticket site — see metaPixel.ts. */
+  tracking: ReturnType<typeof trackingContext>;
 }
 
 /** What the last look at a show's ticket page found, in the few fields a judgement needs. */
@@ -150,6 +156,7 @@ export function buildContext(range: { from?: string; to?: string } = {}): Advise
     monthly: monthlyBreakdown(range).months,
     upcoming_shows: upcoming,
     past_ads: pastAdCopy(PAST_ADS),
+    tracking: trackingContext(),
   };
 }
 
@@ -207,13 +214,13 @@ export const ADVISOR_METHOD = `
 - סוג המטרה (objective) קובע מה למדוד: קמפיין חשיפה נשפט לפי עלות לאלף חשיפות ופרסום, לא לפי קליקים;
   קמפיין תנועה לפי עלות לקליק. «קליקים» בנתונים הם כל הקליקים, לא רק קליקים על הקישור, ולכן הם גבוהים
   מהמספר שמופיע ב-Ads Manager. תדירות = impressions חלקי reach לכל חיי הקמפיין, ואינה תדירות יומית.
-- מה שאין בנתונים: רמת קבוצת מודעות ומודעה, המרות, פיקסל, קהלים. אל תשפוט קהל או קריאייטיב שאתה לא
-  רואה — אלא אם בדקת אותו בכלי Meta (ראה למטה). אם ההמלצה תלויה בנתון כזה ולא בדקת אותו, אמור איזה נתון
-  חסר והמלץ לבדוק אותו ב-Ads Manager.
-- המלצות הן הוראות לבן אדם, כי אתה לא משנה דבר בחשבון המודעות. כל המלצה: שם הקמפיין בדיוק כפי שהוא
+- מה שאין בנתונים: רמת קבוצת מודעות ומודעה, המרות, קהלים. מצב הפיקסל מופיע ב-tracking (ראה למטה).
+  אל תשפוט קהל או קריאייטיב שאתה לא רואה — אלא אם בדקת אותו בכלי Meta (ראה למטה). אם ההמלצה תלויה בנתון
+  כזה ולא בדקת אותו, אמור איזה נתון חסר והמלץ לבדוק אותו ב-Ads Manager.
+- המלצות הן הוראות לבן אדם — אתה עצמך לא משנה דבר בחשבון המודעות. כל המלצה: שם הקמפיין בדיוק כפי שהוא
   בנתונים, הגדרה אחת, מהערך הנוכחי לערך החדש בשקלים ליום, ותנאי החלטה מספרי («לעצור אם העלות לכרטיס עדיין
   מעל X בעוד שלושה ימים»). קמפיין חדש נפתח במצב מושהה. העלאות תקציב — בצעדים קטנים ולא בקפיצה,
-  חוץ מכשנשאר פחות משבוע.
+  חוץ מכשנשאר פחות משבוע. מה שאפשר לבצע בלחיצה מוחזר גם כפעולה (actions), כשהתשובה מבקשת זאת.
 `.trim();
 
 /**
@@ -268,8 +275,36 @@ export const META_CAPABILITIES = `
   לקריאייטיב.
 - קהל Advantage+ פעיל, עם המיקום הגאוגרפי כמגבלה קשיחה סביב מקום ההופעה.
 - אם יש לך כלי Opportunity Score, ההמלצות שלו הן ברמת החשבון — ציין רק את אלה שרלוונטיות להופעה.
-- מעקב מכירות: הפיקסל של החשבון לא פעיל. אם מערכת הכרטיסים של המקום מאפשרת להוסיף פיקסל של Meta, זו הדרך
-  היחידה למדוד רכישות — אפשר להמליץ לבקש זאת מהמקום, אבל אל תניח שיש נתוני המרה.
+- מעקב מכירות דרך פיקסל במערכת הכרטיסים של המועדון — ראה «מעקב מכירות» למטה.
+`.trim();
+
+/**
+ * Ads that use the pixel, where the club's ticket site carries it — and the request to the club
+ * where it does not.
+ *
+ * The rule follows Meta's own: a campaign optimised for purchases needs a few dozen of them a week
+ * to learn from, and a band's single show rarely has that, so the step below Purchase
+ * (InitiateCheckout, then ViewContent) is the honest optimisation until it does. What the pixel
+ * always gives, even with few purchases, is the audience of people who opened the ticket page —
+ * the warmest one there is for the last week.
+ */
+export const TRACKING_GUIDE = `
+מעקב מכירות (tracking בנתונים):
+- tracking.pixel: הפיקסל של החשבון ומה הוא קיבל ב-tracking.days הימים האחרונים — events לפי סוג אירוע,
+  sites לפי האתר שבו נקלט. tracking.venues: לכל מועדון עם הופעה קרובה — מה המועדון אמר (club_status:
+  none / requested / installed / declined) והאם הפיקסל באמת נקלט באתר הכרטיסים שלו (fires_on_ticket_site).
+  tracking.read_at null — מצב הפיקסל לא נקרא; אמור זאת ואל תנחש.
+- הופעה שהפיקסל נקלט באתר הכרטיסים שלה ויש אירועי Purchase: המלץ על קמפיין מכירות (Sales / OUTCOME_SALES)
+  עם הפיקסל. אופטימיזציה ל-Purchase רק אם יש בערך ${PURCHASES_PER_WEEK_TO_OPTIMISE} רכישות בשבוע ומעלה; אחרת ל-InitiateCheckout,
+  ואם גם הם מעטים — ל-ViewContent, ומעבר ל-Purchase כשיש נפח. הוסף רימרקטינג: קהל מותאם של מבקרי עמוד ההופעה
+  (ViewContent או InitiateCheckout ב-14 הימים האחרונים) בהחרגת מי שרכש (Purchase), לדחיפה של השבוע האחרון.
+  כתוב את שמות האירועים והקהלים בדיוק, כדי שאפשר יהיה לבנות אותם ב-Ads Manager.
+- הפיקסל נקלט באתר אבל אין Purchase: הרכישה עצמה לא נמדדת — המלץ לבקש מהמועדון להוסיף Purchase בעמוד האישור,
+  ובינתיים אופטימיזציה ל-ViewContent או לצפיות בדף הנחיתה, ורימרקטינג למבקרי העמוד.
+- מועדון בלי פיקסל באתר (club_status none או requested, ו-fires_on_ticket_site false): אל תניח נתוני המרה.
+  המלץ לבקש מהמועדון להתקין — באפליקציה, במסך «פיקסל ומעקב מכירות», יש מייל מוכן למועדון — ובינתיים
+  LANDING_PAGE_VIEWS ורימרקטינג לקהלי וידאו ודף. club_status declined: אל תציע שוב, עבוד בלי.
+- אין פיקסל בחשבון (tracking.pixel null): המלץ ליצור פיקסל, והחזר זאת כפעולה create_pixel אם התשובה מקבלת actions.
 `.trim();
 
 /** Wraps a task and its schema around the context, and demands JSON and nothing else. */
@@ -282,6 +317,8 @@ export function buildPrompt(task: string, schema: string, context: unknown): str
     LIVE_META_TOOLS,
     '',
     META_CAPABILITIES,
+    '',
+    TRACKING_GUIDE,
     '',
     task,
     '',
@@ -608,7 +645,8 @@ const ANALYSIS_SCHEMA = `{
     { "title": "המלצה קצרה", "detail": "מה בדיוק לעשות",
       "expected_impact": "מה זה צפוי לשנות", "effort": "low" | "medium" | "high",
       "addresses": [מספרי הממצאים שההמלצה פותרת — מיקומם במערך findings, החל מ-0] }
-  ]
+  ],
+  ${ACTIONS_SCHEMA}
 }`;
 
 /**
@@ -616,7 +654,9 @@ const ANALYSIS_SCHEMA = `{
  * fixes it as one thought instead of saying the same thing twice in two lists; a number pointing
  * past the findings would link a recommendation to nothing.
  */
-export function normaliseAnalysis(data: any) {
+export function normaliseAnalysis(raw: any) {
+  // The actions are cleaned like a draft's tasks; an answer without them is left as it came.
+  const data = raw && typeof raw === 'object' && 'actions' in raw ? { ...raw, actions: cleanActions(raw.actions) } : raw;
   const findings = Array.isArray(data?.findings) ? data.findings.length : 0;
   if (!Array.isArray(data?.suggestions)) return data;
   return {
@@ -646,6 +686,9 @@ export async function analyzeCampaigns(range: { from?: string; to?: string } = {
       'התייחס במפורש להופעות עם עלות לכרטיס חריגה, לקמפיינים שהמשיכו להוציא אחרי ההופעה,',
       'ולהוצאה שלא שויכה לאף הופעה (unmapped_spend) אם יש כזו.',
       'כל event_id ו-campaign_id חייבים להילקח מהנתונים — אל תמציא מזהים.',
+      '',
+      ACTIONS_GUIDE,
+      '',
       'כתוב הכל בעברית.',
     ].join('\n'),
     ANALYSIS_SCHEMA,
@@ -675,6 +718,12 @@ const DRAFT_SCHEMA = `{
     { "title": "פעולה קצרה לביצוע", "detail": "מה בדיוק לבדוק או לשנות, ולפי איזה סף",
       "due_date": "YYYY-MM-DD" }
   ],
+  "tracking": {
+    "pixel_ready": true | false,
+    "optimization": "על מה לבצע אופטימיזציה ולמה (Purchase / InitiateCheckout / ViewContent / LANDING_PAGE_VIEWS)",
+    "retargeting": "קהל רימרקטינג מבוסס פיקסל ואיך להגדיר אותו" | null,
+    "club_request": "מה לבקש מהמועדון לגבי הפיקסל, אם צריך" | null
+  },
   "notes": ["הערה כללית שאינה משימה עם תאריך"]
 }`;
 
@@ -714,8 +763,22 @@ function normaliseDraft(data: any) {
           description_options: options(data.creative.description, data.creative.description_options),
         }
       : data?.creative,
+    tracking: cleanTracking(data?.tracking),
     tasks: cleanSuggestedTasks(data?.tasks),
   };
+}
+
+/** The plan's tracking block, or null when the agent left it out or filled it with nothing. */
+export function cleanTracking(data: any) {
+  if (!data || typeof data !== 'object') return null;
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const tracking = {
+    pixel_ready: data.pixel_ready === true,
+    optimization: text(data.optimization),
+    retargeting: text(data.retargeting),
+    club_request: text(data.club_request),
+  };
+  return tracking.optimization || tracking.retargeting || tracking.club_request ? tracking : null;
 }
 
 export async function draftCampaign(eventId: string, brief: string): Promise<StoredReport> {
@@ -756,6 +819,10 @@ export async function draftCampaign(eventId: string, brief: string): Promise<Sto
       'כל משימה: פעולה אחת, ניתנת לביצוע, עם ספים מספריים מהנתונים כשאפשר (למשל עלות לכרטיס מעל X).',
       'כל due_date בין היום לבין יומיים אחרי ההופעה, בסדר כרונולוגי, בדרך כלל 4-8 משימות.',
       'notes מיועד רק להערות כלליות שאין להן תאריך.',
+      '',
+      'מעקב (tracking): לפי «מעקב מכירות» למעלה ולפי tracking.venues של המועדון של target_show — האם אפשר',
+      'לעבוד עם הפיקסל (pixel_ready), על מה לבצע אופטימיזציה, איזה קהל רימרקטינג לבנות, ומה לבקש מהמועדון אם צריך.',
+      'אם הפיקסל לא באתר הכרטיסים של המועדון — הוסף משימה מוקדמת «לשלוח למועדון בקשה להוסיף פיקסל».',
     ].filter(Boolean).join('\n'),
     DRAFT_SCHEMA,
     context
@@ -777,6 +844,8 @@ export interface ChatMessage {
   content: string;
   /** Tasks an answer proposed, each for one show. Empty for a question, or an answer with none. */
   tasks: Array<SuggestedTask & { event_id: string }>;
+  /** Changes in Meta an answer proposed, each previewed before it can be carried out. */
+  actions: ProposedAction[];
   created_at: string;
 }
 
@@ -786,14 +855,13 @@ const CHAT_HISTORY_TURNS = 12;
 export function chatHistory(threadId: string): ChatMessage[] {
   const rows = db
     .prepare('SELECT * FROM ai_chat_messages WHERE thread_id = ? ORDER BY created_at, rowid')
-    .all(threadId) as Array<Omit<ChatMessage, 'tasks'> & { tasks: string | null }>;
-  return rows.map((row) => {
-    let tasks: ChatMessage['tasks'] = [];
+    .all(threadId) as Array<Omit<ChatMessage, 'tasks' | 'actions'> & { tasks: string | null; actions: string | null }>;
+  const list = (json: string | null) => {
     try {
-      tasks = row.tasks ? JSON.parse(row.tasks) : [];
-    } catch { /* a row that cannot be read proposes nothing */ }
-    return { ...row, tasks };
-  });
+      return json ? JSON.parse(json) : [];
+    } catch { return []; /* a row that cannot be read proposes nothing */ }
+  };
+  return rows.map((row) => ({ ...row, tasks: list(row.tasks), actions: list(row.actions) }));
 }
 
 export function clearChat(threadId: string): { deleted: number } {
@@ -801,9 +869,12 @@ export function clearChat(threadId: string): { deleted: number } {
   return { deleted: info.changes };
 }
 
-function appendChat(threadId: string, role: 'user' | 'assistant', content: string, tasks: ChatMessage['tasks'] = []) {
-  db.prepare('INSERT INTO ai_chat_messages (id, thread_id, role, content, tasks) VALUES (?, ?, ?, ?, ?)')
-    .run(uuid(), threadId, role, content, tasks.length ? JSON.stringify(tasks) : null);
+function appendChat(
+  threadId: string, role: 'user' | 'assistant', content: string,
+  tasks: ChatMessage['tasks'] = [], actions: ProposedAction[] = []
+) {
+  db.prepare('INSERT INTO ai_chat_messages (id, thread_id, role, content, tasks, actions) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(uuid(), threadId, role, content, tasks.length ? JSON.stringify(tasks) : null, actions.length ? JSON.stringify(actions) : null);
 }
 
 /**
@@ -825,7 +896,8 @@ const CHAT_SCHEMA = `{
   "tasks": [
     { "event_id": "מזהה הופעה מ-upcoming_shows", "title": "פעולה קצרה לביצוע",
       "detail": "מה בדיוק לבדוק או לשנות, ולפי איזה סף", "due_date": "YYYY-MM-DD" }
-  ]
+  ],
+  ${ACTIONS_SCHEMA}
 }`;
 
 /**
@@ -861,6 +933,9 @@ export async function chat(threadId: string, message: string, range: { from?: st
       'אם השאלה היא שאלת הבנה ולא שאלת "מה לעשות" — החזר tasks ריק.',
       'אם הוספת משימות, ציין זאת במשפט קצר בסוף התשובה.',
       '',
+      ACTIONS_GUIDE,
+      'בשיחה — החזר actions רק כשהמשתמש מבקש לבצע משהו, או כשהתשובה ממליצה במפורש על שינוי כזה עכשיו.',
+      '',
       'השיחה עד כה:',
       ...history.map((m) => `${m.role === 'user' ? 'משתמש' : 'יועץ'}: ${m.content}`),
       `משתמש: ${message}`,
@@ -874,6 +949,6 @@ export async function chat(threadId: string, message: string, range: { from?: st
   const eventIds = new Set(context.upcoming_shows.map((show) => show.id));
 
   appendChat(threadId, 'user', message);
-  appendChat(threadId, 'assistant', answer, cleanChatTasks(data?.tasks, eventIds));
+  appendChat(threadId, 'assistant', answer, cleanChatTasks(data?.tasks, eventIds), cleanActions(data?.actions));
   return chatHistory(threadId);
 }

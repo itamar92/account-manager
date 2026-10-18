@@ -5,6 +5,7 @@ import { Button, Combobox, Input, Tag, Textarea } from '../../ui';
 import { eventLabel, type BandMember } from './shared';
 import { TaskPicker } from './TaskPicker';
 import { when, Working, type AdvisorJob } from './advisorShared';
+import { ActionButtons } from './MetaActions';
 
 type Tone = 'neutral' | 'pos' | 'warn' | 'neg' | 'accent';
 
@@ -52,6 +53,8 @@ interface Props {
   members: BandMember[];
   taskShow: (eventId: string) => any;
   onTasksAdded: () => void;
+  /** A change the review proposed was carried out in Meta. */
+  onActionDone: () => void;
   onError: (message: string) => void;
 }
 
@@ -137,7 +140,7 @@ export function CampaignReview(props: Props) {
     <div className="space-y-4">
       <p className="text-xs text-faint">
         לקמפיין שכבר רץ: הסוכן משווה את התוכנית למה שקרה מאז, בודק באתר המועדון כמה כרטיסים נמכרו, וממליץ מה לעשות עכשיו.
-        שום דבר לא משתנה ב-Meta.
+        שום דבר לא משתנה ב-Meta בלי תצוגה מקדימה ואישור שלכם.
       </p>
 
       <Combobox
@@ -291,6 +294,9 @@ export function CampaignReview(props: Props) {
                   {review.decision.condition && <p className="text-xs text-muted leading-relaxed">בדיקה הבאה: {review.decision.condition}</p>}
                 </div>
               )}
+
+              <ActionButtons actions={review.actions} source="review" sourceId={data!.review.id} eventId={eventId}
+                isOwner={isOwner} onError={props.onError} onDone={props.onActionDone} />
 
               {review.progress?.length > 0 && (
                 <div>

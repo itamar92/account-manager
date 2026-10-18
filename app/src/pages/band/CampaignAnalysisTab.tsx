@@ -10,6 +10,8 @@ import { CampaignPlan, type SavedDraft } from './CampaignPlan';
 import { AdvisorChat } from './AdvisorChat';
 import { CampaignReview } from './CampaignReview';
 import { ddmm, useOpenSections, Working, type AdvisorJob } from './advisorShared';
+import { ActionButtons, ActionsLog } from './MetaActions';
+import { PixelPanel } from './PixelPanel';
 
 interface Props extends PeriodTabProps {
   events: any[];
@@ -25,8 +27,10 @@ const JOB_POLL_MS = 4000;
  *
  * That tab reports what each show's promotion cost. This one asks an AI agent, over an SSH
  * connection to a machine where it is already logged in, whether that was money well spent, what
- * to change, and what a campaign for the next show should look like. Nothing here writes to Meta
- * or to the books: every answer is text to read, argue with, and act on by hand.
+ * to change, and what a campaign for the next show should look like. Nothing the agent says writes
+ * to Meta or to the books: an answer is text to read and argue with, and a change it proposes that
+ * one click can make is offered behind a preview read live from Meta, carried out only when the
+ * owner confirms it (`MetaActions.tsx`).
  *
  * The page is the verdict on top and folding sections under it, each heading saying what is
  * inside, so the answer is read first and the detail opened when wanted. Everything the agent
@@ -44,6 +48,10 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
   const [draftKey, setDraftKey] = useState(0);
   const [brief, setBrief] = useState('');
   const [reviewKey, setReviewKey] = useState(0);
+
+  // Bumped when a change was carried out in Meta, so the log of actions re-reads.
+  const [actionsKey, setActionsKey] = useState(0);
+  const actionDone = () => setActionsKey((k) => k + 1);
 
   const [messages, setMessages] = useState<any[]>([]);
   const [question, setQuestion] = useState('');
@@ -320,6 +328,8 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     review: !!jobs.review || !!jobs.tickets,
     tasks: lateTasks + todayTasks > 0,
     chat: !!jobs.chat,
+    pixel: false,
+    actions: false,
   });
 
   const showSuggestion = (index: number) => {
@@ -399,6 +409,10 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
         <Section title="המלצות" open={sections.isOpen('suggestions')} onToggle={() => sections.toggle('suggestions')}
           summary={<Tag tone="accent">{suggestions.length} המלצות</Tag>}>
           <SuggestionsList suggestions={suggestions} findings={findings} />
+          <div className="mt-3">
+            <ActionButtons actions={answer?.actions} source="analysis" sourceId={report?.id}
+              isOwner={isOwner} onError={onError} onDone={actionDone} />
+          </div>
         </Section>
       )}
 
@@ -449,6 +463,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           members={members}
           taskShow={taskShow}
           onTasksAdded={tasksAdded}
+          onActionDone={actionDone}
           onError={onError}
         />
       </Section>
@@ -484,8 +499,19 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           members={members}
           taskShow={taskShow}
           onTasksAdded={tasksAdded}
+          onActionDone={actionDone}
           onError={onError}
         />
+      </Section>
+
+      <Section title="פיקסל ומעקב מכירות" open={sections.isOpen('pixel')} onToggle={() => sections.toggle('pixel')}
+        summary={<Tag>פיקסל במערכת הכרטיסים של המועדונים</Tag>}>
+        {sections.isOpen('pixel') && <PixelPanel isOwner={isOwner} onError={onError} onChanged={actionDone} />}
+      </Section>
+
+      <Section title="פעולות ב-Meta" open={sections.isOpen('actions')} onToggle={() => sections.toggle('actions')}
+        summary={<Tag>כל שינוי — אחרי תצוגה מקדימה ואישור</Tag>}>
+        <ActionsLog reloadKey={actionsKey} />
       </Section>
     </div>
   );
