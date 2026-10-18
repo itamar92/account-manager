@@ -15,13 +15,14 @@
  *     if the target still reads as it did: anything changed in between (in Ads Manager, or by an
  *     earlier action) and the owner is shown a new preview instead of a change they never saw.
  *
- * Writes go out with their own token (`META_WRITE_ACCESS_TOKEN`, `metaClient.ts`). Without it every
- * action can still be previewed, and the preview is then the instruction for Ads Manager.
+ * Writes go out with the sync's own token (`META_ACCESS_TOKEN`), which needs `ads_management` for
+ * them. A token with `ads_read` only still previews everything; confirming is then refused by Meta,
+ * with a message saying which permission to add, and the preview is the instruction for Ads Manager.
  */
 import { db, uuid, getBandName, getMetaCurrencyRate, getSetting } from './db.js';
 import { AgentError } from './agentClient.js';
 import {
-  adAccountId, fetchObject, fetchPixels, graphWrite, isMetaConfigured, isMetaWriteConfigured, MetaError,
+  adAccountId, fetchObject, fetchPixels, graphWrite, isMetaConfigured, MetaError,
 } from './metaClient.js';
 import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
@@ -166,7 +167,6 @@ export interface ActionPreview {
   warnings: string[];
   /** Why it cannot be carried out. Non-empty means the confirm button is not offered. */
   blockers: string[];
-  write_configured: boolean;
   can_execute: boolean;
   created_at: string;
   expires_at: string;
@@ -288,7 +288,6 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
   const warnings: string[] = [];
   const blockers: string[] = [];
   const changes: ActionChange[] = [];
-  const writeConfigured = isMetaWriteConfigured();
 
   if (action.type === 'create_pixel') {
     const list: Array<{ id: string; name: string | null }> = live.list ?? [];
@@ -298,7 +297,6 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
     if (list.length) {
       warnings.push(`כבר יש בחשבון פיקסל: ${list.map((p) => `«${p.name ?? p.id}» (${p.id})`).join(', ')} — בדרך כלל עדיף לתת למועדונים את הקיים ולא לפתוח חדש.`);
     }
-    if (!writeConfigured) blockers.push('ביצוע פעולות ב-Meta לא מוגדר (חסר META_WRITE_ACCESS_TOKEN) — אפשר ליצור פיקסל ב-Events Manager ידנית.');
     return {
       action,
       title: 'יצירת פיקסל Meta לחשבון המודעות',
@@ -307,8 +305,7 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
       changes,
       warnings,
       blockers,
-      write_configured: writeConfigured,
-      can_execute: writeConfigured && blockers.length === 0,
+      can_execute: blockers.length === 0,
     };
   }
 
@@ -384,7 +381,6 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
       break;
     }
   }
-  if (!writeConfigured) blockers.push('ביצוע פעולות ב-Meta לא מוגדר (חסר META_WRITE_ACCESS_TOKEN) — אפשר לבצע את השינוי ידנית ב-Ads Manager לפי התצוגה הזו.');
 
   return {
     action,
@@ -401,8 +397,7 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
     changes,
     warnings,
     blockers,
-    write_configured: writeConfigured,
-    can_execute: writeConfigured && blockers.length === 0,
+    can_execute: blockers.length === 0,
   };
 }
 
@@ -504,7 +499,6 @@ export async function executeAction(id: string): Promise<ActionRecord> {
     finish(id, 'cancelled', { error: 'התצוגה המקדימה פגה' });
     throw new AgentError(`התצוגה המקדימה ישנה מ-${PREVIEW_TTL_MINUTES} דקות — הציגו אותה מחדש לפני הביצוע`, 409);
   }
-  if (!isMetaWriteConfigured()) throw new MetaError('ביצוע פעולות ב-Meta לא מוגדר — חסר META_WRITE_ACCESS_TOKEN', 503);
 
   const claimed = db.prepare(`UPDATE meta_actions SET status = 'executing' WHERE id = ? AND status = 'previewed'`).run(id);
   if (claimed.changes === 0) throw new AgentError('הפעולה כבר בביצוע', 409);

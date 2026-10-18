@@ -231,7 +231,7 @@ export function ActionButtons({ actions, source, sourceId, eventId, isOwner, onD
 
 /** What the app did in Meta, and what it was asked to and did not — newest first. */
 export function ActionsLog({ reloadKey }: { reloadKey: number }) {
-  const [data, setData] = useState<{ actions: any[]; write_configured: boolean } | null>(null);
+  const [data, setData] = useState<{ actions: any[] } | null>(null);
   useEffect(() => {
     get('/band/meta-actions').then(setData).catch(() => {});
   }, [reloadKey]);
@@ -239,12 +239,6 @@ export function ActionsLog({ reloadKey }: { reloadKey: number }) {
   const shown = data.actions.filter((a) => a.status !== 'previewed' || Date.parse(a.preview.expires_at) > Date.now());
   return (
     <div className="space-y-2">
-      {!data.write_configured && (
-        <p className="text-sm text-body leading-relaxed">
-          האפליקציה יכולה רק לקרוא מ-Meta, לא לשנות. כל שינוי עדיין נפתח בתצוגה מקדימה, ואותו עושים ידנית ב-Ads Manager.
-          <span className="block text-xs text-muted mt-1">כדי שהאישור יבצע את השינוי בעצמו: להגדיר בשרת META_WRITE_ACCESS_TOKEN עם הרשאת ads_management.</span>
-        </p>
-      )}
       {shown.length === 0 ? <p className="text-sm text-muted">עוד לא נעשה שום שינוי ב-Meta מהאפליקציה. שינוי שהסוכן מציע יופיע כאן אחרי שתאשרו אותו.</p> : (
         <ul className="divide-y divide-line rounded-xl border border-line">
           {shown.map((a) => (
