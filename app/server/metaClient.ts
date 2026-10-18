@@ -7,10 +7,10 @@
  * person, so its token does not expire every 60 days and does not stop working when someone
  * changes their password. Reading your own ad account with `ads_read` needs no App Review.
  *
- * Reads only, with one exception kept apart at the bottom of the file: the writes the campaign
- * advisor's actions make (`metaActions.ts`) go out with a token of their own,
- * `META_WRITE_ACCESS_TOKEN`, so that the sync's token never gains a write scope and the app
- * cannot change the account at all until somebody deliberately hands it a second token.
+ * Reads, with one exception kept apart at the bottom of the file: the writes the campaign
+ * advisor's actions make (`metaActions.ts`), each only after the owner confirmed its preview. They
+ * use the same token, which then needs `ads_management` beside `ads_read`; a token without it
+ * still syncs, and a confirmed action is refused by Meta with a message that says so.
  */
 
 // Overridable so the sync can be pointed at a stub, the same way GREEN_INVOICE_BASE_URL points
@@ -55,11 +55,11 @@ function accessToken(): string {
  * part worth showing — "(#190) invalid token" says what to fix, a bare 400 does not. The token
  * is never included in an error, since these messages reach the browser.
  */
-async function graph<T>(path: string, params: Record<string, string>, write?: { token: string }): Promise<T> {
+async function graph<T>(path: string, params: Record<string, string>, write = false): Promise<T> {
   const res = write
     ? await fetch(`${GRAPH_URL}/${API_VERSION}/${path}`, {
         method: 'POST',
-        body: new URLSearchParams({ ...params, access_token: write.token }),
+        body: new URLSearchParams({ ...params, access_token: accessToken() }),
       })
     : await fetch(`${GRAPH_URL}/${API_VERSION}/${path}?${new URLSearchParams({ ...params, access_token: accessToken() })}`);
 
@@ -73,7 +73,13 @@ async function graph<T>(path: string, params: Record<string, string>, write?: { 
     const err = body.error;
     // 190 is an expired or revoked token, 102 a session problem — both mean "generate a new
     // system user token", which is worth saying rather than leaving as a code.
-    const hint = err.code === 190 || err.code === 102 ? ' — יש להנפיק טוקן חדש ב-Business Settings' : '';
+    // On a write, 10 and the 200s are permission errors: the token was generated with ads_read
+    // only, which is enough for everything but the advisor's actions.
+    const hint = err.code === 190 || err.code === 102
+      ? ' — יש להנפיק טוקן חדש ב-Business Settings'
+      : write && (err.code === 10 || (err.code >= 200 && err.code < 300))
+        ? ' — לטוקן של Meta אין הרשאת ads_management. יש להנפיק אותו מחדש עם ads_management ו-ads_read ולעדכן את META_ACCESS_TOKEN'
+        : '';
     throw new MetaError(`Meta: ${err.message || 'שגיאה לא ידועה'}${hint}`, res.status === 403 ? 403 : 502);
   }
   if (!res.ok) throw new MetaError(`Meta ${path} נכשל (${res.status})`);
@@ -299,20 +305,10 @@ export async function fetchPixelStats(pixelId: string, aggregation: 'event' | 'h
 // ---------------------------------------------------------------- writes
 
 /**
- * The token the advisor's actions are carried out with — a system user token with
- * `ads_management`. Optional: without it every action can still be previewed, and is then done by
- * hand in Ads Manager.
- */
-export function isMetaWriteConfigured(): boolean {
-  return Boolean(process.env.META_WRITE_ACCESS_TOKEN?.trim() && process.env.META_AD_ACCOUNT_ID?.trim());
-}
-
-/**
- * One write. Only `metaActions.ts` calls this, and only for an action a person saw previewed and
- * confirmed; the paths it can reach are the few that module builds, never one from a request.
+ * One write, with the sync's token. Only `metaActions.ts` calls this, and only for an action a
+ * person saw previewed and confirmed; the paths it can reach are the few that module builds,
+ * never one from a request.
  */
 export async function graphWrite<T = any>(path: string, params: Record<string, string>): Promise<T> {
-  const token = (process.env.META_WRITE_ACCESS_TOKEN || '').trim();
-  if (!token) throw new MetaError('ביצוע פעולות ב-Meta לא מוגדר — חסר META_WRITE_ACCESS_TOKEN', 503);
-  return graph<T>(path, params, { token });
+  return graph<T>(path, params, true);
 }

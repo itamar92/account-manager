@@ -21,6 +21,9 @@ const server = http.createServer((req, res) => {
     req.on('data', (c) => { raw += c; });
     req.on('end', () => {
       const params = Object.fromEntries(new URLSearchParams(raw));
+      if (params.access_token === 'read-only-token') {
+        return send({ error: { message: '(#200) Requires ads_management permission to manage the object', code: 200 } });
+      }
       delete params.access_token;
       writes.push({ path: parts.join('/'), params });
       if (parts[1] === 'adspixels') return send({ id: '777000111' });
@@ -41,7 +44,6 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'meta-actions-test-
 process.env.META_GRAPH_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 process.env.META_ACCESS_TOKEN = 'read-token';
 process.env.META_AD_ACCOUNT_ID = '1234567';
-process.env.META_WRITE_ACCESS_TOKEN = 'write-token';
 
 const { db } = await import('./db.js');
 const actions = await import('./metaActions.js');
@@ -160,16 +162,17 @@ test('an end date is the last minute of that day in Israel, with that day\'s off
   assert.deepEqual(writes.at(-1), { path: CAMPAIGN, params: { stop_time: '2099-11-04T23:59:00+02:00' } });
 });
 
-test('without the write token everything still previews, and nothing can be confirmed', async () => {
-  delete process.env.META_WRITE_ACCESS_TOKEN;
+test('a token without ads_management still previews, and confirming says which permission is missing', async () => {
+  process.env.META_ACCESS_TOKEN = 'read-only-token';
   try {
     const preview = await actions.previewAction({ type: 'set_daily_budget', level: 'campaign', id: CAMPAIGN, daily_budget: 75 });
-    assert.equal(preview.write_configured, false);
-    assert.equal(preview.can_execute, false);
-    assert.match(preview.blockers.join(' '), /META_WRITE_ACCESS_TOKEN/);
-    await assert.rejects(actions.executeAction(preview.id), { status: 409 });
+    assert.equal(preview.can_execute, true);
+    const before = writes.length;
+    await assert.rejects(actions.executeAction(preview.id), { message: /ads_management/ });
+    assert.equal(writes.length, before);
+    assert.equal(actions.getAction(preview.id).status, 'failed');
   } finally {
-    process.env.META_WRITE_ACCESS_TOKEN = 'write-token';
+    process.env.META_ACCESS_TOKEN = 'read-token';
   }
 });
 

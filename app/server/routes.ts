@@ -84,7 +84,6 @@ import { reviewCampaign } from './campaignReview.js';
 import { checkTickets, lastTicketCheck, setTicketLinks, ticketLinks } from './ticketCheck.js';
 import { cancelAction, executeAction, listActions, previewAction, PREVIEW_TTL_MINUTES } from './metaActions.js';
 import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
-import { isMetaWriteConfigured } from './metaClient.js';
 import {
   createTasks, deleteShowTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
 } from './campaignTasks.js';
@@ -2452,12 +2451,9 @@ router.delete('/band/campaign-chat', requireOwner, handle((_req, res) => {
 
 // ---- the advisor's actions in Meta: preview first, then confirm ----
 
-/**
- * The actions previewed and carried out, newest first, and whether the app can write at all —
- * without the write token every action still previews, and the preview is done by hand.
- */
+/** The actions previewed and carried out, newest first — the log of what the app did in Meta. */
 router.get('/band/meta-actions', requireAuth, handle((_req, res) => {
-  res.json({ actions: listActions(), write_configured: isMetaWriteConfigured(), preview_minutes: PREVIEW_TTL_MINUTES });
+  res.json({ actions: listActions(), preview_minutes: PREVIEW_TTL_MINUTES });
 }));
 
 /**

@@ -41,10 +41,9 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs `calendar.readonly`, and `calendar.events` too for quotes to create their «אופציה» events — see `deploy/README.md` |
 | `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
-| `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
+| `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token and the ad account; without them the Meta sync is disabled. `ads_read` is enough for the sync; the campaign advisor's actions (pause, daily budget, end date, create a pixel) also need `ads_management` on the same token |
 | `META_API_VERSION` | `v25.0` | Graph API version |
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
-| `META_WRITE_ACCESS_TOKEN` | — | a second system-user token, with `ads_management`, for the campaign advisor's actions (pause, daily budget, end date, create a pixel). Optional: without it every action still previews and is done by hand in Ads Manager. Kept apart from `META_ACCESS_TOKEN` so the sync's token never gains a write scope |
 | `APP_SECRET_KEY` | a generated `secret.key` beside the database | encrypts the secrets saved from the UI (the agent's SSH key). See below |
 | `SMTP_USER` / `SMTP_PASS` | — | Gmail address and app password for campaign-task reminder emails; without them no reminder is sent |
 | `SMTP_FROM` / `SMTP_HOST` / `SMTP_PORT` | `<band name> <SMTP_USER>` / `smtp.gmail.com` / `465` | sender and server overrides for those emails |
@@ -810,12 +809,14 @@ the answer with «תצוגה מקדימה». Two steps that cannot be merged:
    reading the target again: if anything the preview showed has changed — in Ads Manager, or by an
    earlier action — nothing is sent and the owner is asked to look again. A double press sends once.
 
-Writes go out with `META_WRITE_ACCESS_TOKEN`; without it the confirm button is not offered and the
-preview is the instruction for Ads Manager. To switch writing on: Business Settings → Users → System
-users → the app's system user → Assign assets → the ad account with *Manage campaigns* (and the
-pixel / dataset with *Manage*), then Generate token for the same Meta app with `ads_management` and
-`ads_read`, put it in `deploy/.env` as `META_WRITE_ACCESS_TOKEN` and restart. If Meta refuses to create a
-pixel with it, create one in Events Manager instead — the panel reads whichever pixel the account has. Every preview and its outcome is kept (`meta_actions`)
+Writes go out with the sync's own `META_ACCESS_TOKEN`, so that token needs `ads_management` as well
+as `ads_read`. With `ads_read` only, every preview still works and confirming is refused by Meta with
+a message naming the missing permission; the preview is then the instruction for Ads Manager. To
+check a token, paste it into Meta's Access Token Debugger and read its scopes. To add the permission:
+Business Settings → Users → System users → the app's system user (with the ad account on *Full
+access*) → Generate token for the same Meta app with `ads_management` and `ads_read`, replace
+`META_ACCESS_TOKEN` in `deploy/.env` and restart. If Meta refuses to create a pixel with it, create
+one in Events Manager instead — the panel reads whichever pixel the account has. Every preview and its outcome is kept (`meta_actions`)
 and listed under «פעולות ב-Meta». New campaigns, audiences and creative stay instructions: they
 need choices — images, a page, targeting — that a preview cannot show honestly in one line.
 
