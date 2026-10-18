@@ -211,6 +211,8 @@ test('the email to the club carries the pixel id, the ticket page and the four e
   assert.match(email.body, /Eventer/);
   for (const event of ['PageView', 'ViewContent', 'InitiateCheckout', 'Purchase']) assert.match(email.body, new RegExp(event));
   assert.deepEqual(email.warnings, []);
+  // Plain hyphens only: an em dash in a message to a club reads as machine-written.
+  assert.doesNotMatch(`${email.subject}\n${email.body}`, /[—–]/);
   assert.throws(() => pixel.pixelEmail('מקום שלא קיים'), { status: 404 });
 });
 
