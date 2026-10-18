@@ -378,7 +378,9 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
   const showWorking = !!showId && runningShow === showId;
 
   // The advisor is useless without the connection, and saying which half is missing beats a
-  // button that fails when pressed. The tasks do not need it, so they stay.
+  // button that fails when pressed. The tasks and the pixel do not need it, so they stay: the
+  // pixel panel reads Meta directly, and asking the clubs to install it can start before the
+  // agent is set up.
   if (agent && !agent.configured) {
     return (
       <div className="space-y-4">
@@ -387,12 +389,20 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           <p className="text-sm text-body leading-relaxed max-w-[70ch]">
             הסוכן עוד לא מחובר. הניתוח רץ על מכונה אחרת דרך חיבור SSH: צריך למלא את השרת, המשתמש,
             המפתח הפרטי ומפתח המארח ב<span className="text-ink font-medium">הגדרות ← סוכן AI</span>,
-            ולבדוק שם את החיבור. בינתיים אפשר לעבוד עם המשימות.
+            ולבדוק שם את החיבור. בינתיים אפשר לעבוד עם המשימות ועם הפיקסל.
           </p>
         </Card>
         <Card>
           <h2 className="ser text-lg mb-3">משימות קמפיין</h2>
           <CampaignTasksPanel events={events} isOwner={isOwner} onError={onError} reloadKey={tasksKey} onChanged={tasksAdded} />
+        </Card>
+        <Card>
+          <h2 className="ser text-lg mb-3">פיקסל ומעקב מכירות</h2>
+          <PixelPanel isOwner={isOwner} onError={onError} onChanged={actionDone} />
+        </Card>
+        <Card>
+          <h2 className="ser text-lg mb-3">שינויים שנעשו ב-Meta</h2>
+          <ActionsLog reloadKey={actionsKey} />
         </Card>
       </div>
     );
