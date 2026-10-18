@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import { clsx } from 'clsx';
-import { Check, Copy, RotateCcw } from 'lucide-react';
+import { Check, Copy } from 'lucide-react';
 import { nis } from '../../api';
 import { useAuth } from '../../AuthContext';
-import { Button, Combobox, Tag, Textarea } from '../../ui';
+import { Button, Tag, Textarea } from '../../ui';
 import { eventLabel, type BandMember } from './shared';
 import { TaskPicker } from './TaskPicker';
-import { CopyButton, ddmm, when, Working, type AdvisorJob } from './advisorShared';
+import { CopyButton, ddmm, InlineError, OverflowMenu, when, Working, type AdvisorJob } from './advisorShared';
 
 export interface SavedDraft {
   report_id: string;
@@ -19,9 +19,8 @@ export interface SavedDraft {
 interface Props {
   events: any[];
   isOwner: boolean;
-  savedDrafts: SavedDraft[];
+  /** The show chosen in the strip above — the only show picker on the page. */
   eventId: string;
-  onEventChange: (eventId: string) => void;
   /** The newest plan of the chosen show, as stored. */
   report: any;
   brief: string;
@@ -30,6 +29,9 @@ interface Props {
   job?: AdvisorJob;
   /** The agent is answering something else; it takes one request at a time. */
   agentBusy: boolean;
+  /** Why the last attempt to draft failed, said beside its button. */
+  failure?: string;
+  onDismissFailure: () => void;
   onBuild: () => void;
   /** Keeps a headline or description chosen from the alternatives. */
   onChoose: (field: 'headline' | 'description', value: string) => void;
@@ -65,11 +67,11 @@ function Step({ n, title, last, children }: { n: number; title: string; last?: b
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
-        <span className="num grid place-items-center w-7 h-7 shrink-0 rounded-full bg-accent text-white text-sm font-bold">{n}</span>
+        <span className="num grid place-items-center w-7 h-7 shrink-0 rounded-full bg-accent-soft text-accent-ink text-sm font-bold">{n}</span>
         {!last && <span className="flex-1 w-px bg-line mt-1" />}
       </div>
       <div className={clsx('min-w-0 flex-1', !last && 'pb-6')}>
-        <h3 className="text-sm font-bold text-ink leading-7 mb-2">{title}</h3>
+        <h3 className="text-[15px] font-bold text-ink leading-7 mb-2">{title}</h3>
         {children}
       </div>
     </div>
@@ -90,7 +92,7 @@ function Field({ label, value, copy, children }: { label: string; value?: React.
 function Label({ text, copy, extra }: { text: string; copy?: string; extra?: string }) {
   return (
     <div className="flex items-center gap-1 min-h-8">
-      <span className="text-xs text-faint">{text}{extra}</span>
+      <span className="text-xs font-medium text-muted">{text}{extra}</span>
       {copy !== undefined && <CopyButton text={copy} label={`העתקת ${text}`} />}
     </div>
   );
@@ -169,28 +171,22 @@ function AdPreview({ creative }: { creative: any }) {
  * תוכנית קמפיין — a campaign for a show that has not happened yet, laid out in the order it is
  * entered in Ads Manager, each setting with its own copy button.
  *
- * Every plan is stored, and the tab opens on the one you were working on, so a plan never needs
+ * Every plan is stored, and the page opens on the show you were working on, so a plan never needs
  * making twice to be read again — or to add its tasks a day later. Nothing here reaches Meta.
  */
 export function CampaignPlan(props: Props) {
-  const { events, isOwner, savedDrafts, eventId, report, job } = props;
+  const { events, isOwner, eventId, report, job } = props;
   const [copiedAll, setCopiedAll] = useState(false);
   const [resetting, setResetting] = useState<null | 'ask' | 'busy'>(null);
   const [resetTasks, setResetTasks] = useState(false);
+  const [rebuilding, setRebuilding] = useState(false);
   const plan = report?.response;
-  const today = new Date().toISOString().slice(0, 10);
   const event = events.find((e) => e.id === eventId);
-  const label = event ? eventLabel(event) : savedDrafts.find((d) => d.event_id === eventId)?.label ?? '';
-
-  // Shows that are still ahead, plus any show with a saved plan, so choosing a plan from the list
-  // above never leaves the picker blank.
-  const choosable = events.filter((e) => e.date >= today || savedDrafts.some((d) => d.event_id === e.id));
+  const label = event ? eventLabel(event) : '';
   const runDays = days(plan?.schedule?.start, plan?.schedule?.end);
-  const hasCreative = !!plan?.creative;
-  const hasTasks = plan?.tasks?.length > 0;
-  const hasNotes = plan?.notes?.length > 0;
   const drafting = job?.status === 'running';
   const showTasks: any[] = props.taskShow(eventId)?.tasks ?? [];
+  const busyElsewhere = props.agentBusy && !drafting;
 
   const reset = async () => {
     setResetting('busy');
@@ -209,223 +205,210 @@ export function CampaignPlan(props: Props) {
     }).catch(() => {});
   };
 
-  return (
-    <div className="space-y-4">
-      <p className="text-xs text-faint">
-        תוכנית לקמפיין להופעה שעוד לא הייתה, בנויה על מה שעבד בקמפיינים הקודמים. כל תוכנית נשמרת —
-        אפשר לחזור אליה בכל זמן. שום דבר לא נוצר ב-Meta.
-      </p>
+  const build = () => {
+    setRebuilding(false);
+    props.onBuild();
+  };
 
-      {savedDrafts.length > 0 && (
+  // The brief and the button that spends a run on it, shown when there is no plan yet or the
+  // owner asked to build it again.
+  const askForm = isOwner && (!plan || rebuilding || drafting) && (
+    <div className="space-y-3">
+      <Textarea
+        label="משהו שחשוב שהסוכן ידע? (לא חובה)"
+        value={props.brief}
+        rows={2}
+        disabled={drafting}
+        placeholder="למשל: תקציב עד 800 ₪, הדגש על קהל צעיר מהמרכז"
+        onChange={(e) => props.onBriefChange(e.target.value)}
+      />
+      {drafting ? (
+        <Working text={`הסוכן בונה תוכנית ל${label || 'הופעה'}`} since={job?.started_at} />
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={build} disabled={busyElsewhere}
+            title={busyElsewhere ? 'הסוכן עונה על בקשה אחרת. אפשר לבקש כשיסיים.' : undefined}>
+            {plan ? 'בנייה מחדש' : 'בניית תוכנית'}
+          </Button>
+          {rebuilding && <Button variant="ghost" onClick={() => setRebuilding(false)}>ביטול</Button>}
+          {busyElsewhere && <span className="text-xs text-muted">הסוכן עסוק בבקשה אחרת</span>}
+        </div>
+      )}
+      <InlineError text={props.failure} onDismiss={props.onDismissFailure} />
+    </div>
+  );
+
+  if (!plan) {
+    return (
+      <div className="max-w-2xl space-y-4">
         <div>
-          <div className="text-xs text-faint mb-1.5">תוכניות שמורות</div>
-          <div className="flex flex-wrap gap-1.5">
-            {savedDrafts.map((draft) => {
-              const active = draft.event_id === eventId;
-              return (
-                <button key={draft.event_id} type="button" onClick={() => props.onEventChange(draft.event_id)}
-                  aria-pressed={active}
-                  className={clsx('rounded-full border px-3 py-1.5 text-sm transition-colors',
-                    active ? 'border-accent bg-accent text-white' : 'border-line bg-surface text-ink-2 hover:border-accent/50')}>
-                  {draft.label}
-                  <span className={clsx('ms-1.5 text-xs', active ? 'text-white/80' : 'text-faint')}>
-                    · {draft.date < today ? 'עברה' : `נשמרה ${when(draft.created_at).split(',')[0]}`}
-                  </span>
-                </button>
-              );
-            })}
+          <h3 className="text-base font-bold text-ink">עוד אין תוכנית קמפיין להופעה הזו</h3>
+          <p className="text-sm text-body leading-relaxed mt-1">
+            {isOwner
+              ? 'הסוכן בונה קמפיין לפי מה שעבד בהופעות הקודמות: קהל, תקציב, תאריכים ונוסח מודעה, בסדר שבו Ads Manager שואל. שום דבר לא נוצר ב-Meta.'
+              : 'כשבעל העסק יבנה תוכנית, היא תופיע כאן.'}
+          </p>
+        </div>
+        {askForm}
+      </div>
+    );
+  }
+
+  const hasCreative = !!plan.creative;
+  const hasTasks = plan.tasks?.length > 0;
+  const hasTracking = !!plan.tracking;
+  const hasNotes = plan.notes?.length > 0;
+  let step = 2;
+  const nextStep = () => ++step;
+
+  return (
+    <article className="space-y-5">
+      <header className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm text-muted">
+            נבנתה ב-{when(report.created_at)}
+            {report.duration_ms ? ` · ${Math.round(report.duration_ms / 1000)} שניות` : ''}
+          </p>
+          {report.request?.brief && <p className="text-sm text-body mt-0.5">ביקשתם: {report.request.brief}</p>}
+        </div>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" onClick={copyAll} className="!px-3 inline-flex items-center gap-1.5">
+            {copiedAll ? <Check className="w-4 h-4 text-pos" /> : <Copy className="w-4 h-4" />}
+            {copiedAll ? 'הועתק' : 'העתקת הכל'}
+          </Button>
+          {isOwner && (
+            <OverflowMenu label="עוד פעולות על התוכנית" disabled={drafting || !!resetting}
+              items={[
+                { label: 'בנייה מחדש עם הנחיה חדשה', onSelect: () => setRebuilding(true) },
+                { label: 'מחיקה והתחלה מחדש', onSelect: () => setResetting('ask'), danger: true },
+              ]} />
+          )}
+        </div>
+      </header>
+
+      {askForm && <div className="rounded-xl bg-soft p-3 md:p-4">{askForm}</div>}
+
+      {resetting && (
+        <div className="rounded-xl border border-neg/25 bg-neg-soft p-3 space-y-3" role="alertdialog" aria-label="התחלה מחדש">
+          <p className="text-sm text-ink leading-relaxed">
+            למחוק את התוכנית ואת בדיקות המצב של {label} (כל הגרסאות) ולהתחיל מאפס?
+            בדיקות הכרטיסים והקישורים לאתר המועדון נשמרים.
+          </p>
+          {showTasks.length > 0 && (
+            <label className="flex items-center gap-2 text-sm text-body min-h-10">
+              <input type="checkbox" className="accent-accent w-4 h-4" checked={resetTasks}
+                onChange={(e) => setResetTasks(e.target.checked)} disabled={resetting === 'busy'} />
+              למחוק גם את {showTasks.length} משימות ההופעה
+              {showTasks.some((t) => t.done_at) && ' (כולל אלה שבוצעו)'}
+            </label>
+          )}
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={reset} disabled={resetting === 'busy'}>
+              {resetting === 'busy' ? 'מוחק…' : 'מחיקה והתחלה מחדש'}
+            </Button>
+            <Button variant="ghost" onClick={() => { setResetting(null); setResetTasks(false); }} disabled={resetting === 'busy'}>
+              ביטול
+            </Button>
           </div>
         </div>
       )}
 
-      {isOwner && (
-        <div className="rounded-xl border border-line bg-soft p-3 space-y-3">
-          <div className="grid gap-3 sm:grid-cols-[1fr_auto] items-center">
-            <Combobox
-              value={eventId}
-              onChange={props.onEventChange}
-              placeholder="בחרו הופעה…"
-              options={[
-                { value: '', label: 'בחרו הופעה…' },
-                ...choosable.map((e) => ({ value: e.id, label: eventLabel(e) })),
-              ]}
-            />
-            {!drafting && (
-              <Button variant={plan ? 'ghost' : 'primary'} onClick={props.onBuild} disabled={!eventId || props.agentBusy}>
-                {plan ? 'בנייה מחדש' : 'בניית תוכנית'}
-              </Button>
-            )}
-          </div>
-          <Textarea
-            label="משהו שחשוב שהסוכן ידע? (לא חובה)"
-            value={props.brief}
-            rows={2}
-            disabled={drafting}
-            placeholder="למשל: תקציב עד 800 ₪, הדגש על קהל צעיר מהמרכז"
-            onChange={(e) => props.onBriefChange(e.target.value)}
-          />
-          {drafting && <Working text={`הסוכן בונה תוכנית${label ? ` ל${label}` : ''}`} since={job?.started_at} />}
-          {!choosable.some((e) => e.date >= today) && (
-            <p className="text-xs text-warn">אין הופעות עתידיות בטבלת ההכנסות</p>
-          )}
-        </div>
-      )}
+      <div>
+        <Step n={1} title="קמפיין">
+          <Field label="מטרה" value={plan.objective} copy={plan.objective ?? ''} />
+        </Step>
 
-      {!plan && !drafting && eventId && (
-        <p className="text-sm text-faint text-center py-4">
-          {isOwner ? 'עוד אין תוכנית להופעה הזו — «בניית תוכנית» תבקש מהסוכן לבנות אחת' : 'עוד אין תוכנית להופעה הזו'}
-        </p>
-      )}
-
-      {plan && (
-        <article className="rounded-xl border border-line p-3 md:p-4">
-          <header className="flex flex-wrap items-start justify-between gap-2 mb-5">
-            <div className="min-w-0">
-              <h3 className="ser text-lg text-ink">{label}</h3>
-              <p className="text-xs text-faint">
-                נשמרה ב-{when(report.created_at)}
-                {report.duration_ms ? ` · ${Math.round(report.duration_ms / 1000)} שניות` : ''}
-              </p>
-              {report.request?.brief && (
-                <p className="text-xs text-muted mt-1">ביקשתם: {report.request.brief}</p>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button variant="ghost" onClick={copyAll} className="!px-3 !py-2 inline-flex items-center gap-1.5">
-                {copiedAll ? <Check className="w-4 h-4 text-pos" /> : <Copy className="w-4 h-4" />}
-                {copiedAll ? 'הועתק' : 'העתקת הכל'}
-              </Button>
-              {isOwner && !drafting && (
-                <Button variant="ghost" onClick={() => setResetting('ask')} disabled={!!resetting || props.agentBusy}
-                  className="!px-3 !py-2 inline-flex items-center gap-1.5 !text-neg">
-                  <RotateCcw className="w-4 h-4" /> התחלה מחדש
-                </Button>
-              )}
-            </div>
-          </header>
-
-          {resetting && (
-            <div className="rounded-xl border border-neg/25 bg-neg-soft p-3 mb-5 space-y-2" role="alertdialog" aria-label="התחלה מחדש">
-              <p className="text-sm text-ink">
-                למחוק את התוכנית ואת בדיקות המצב של {label} (כל הגרסאות) ולהתחיל מאפס?
-                בדיקות הכרטיסים והקישורים לאתר המועדון נשמרים.
-              </p>
-              {showTasks.length > 0 && (
-                <label className="flex items-center gap-1.5 text-sm text-body">
-                  <input type="checkbox" className="accent-accent" checked={resetTasks}
-                    onChange={(e) => setResetTasks(e.target.checked)} disabled={resetting === 'busy'} />
-                  למחוק גם את {showTasks.length} משימות ההופעה
-                  {showTasks.some((t) => t.done_at) && ' (כולל אלה שבוצעו)'}
-                </label>
-              )}
-              <div className="flex gap-2">
-                <Button variant="danger" onClick={reset} disabled={resetting === 'busy'}>
-                  {resetting === 'busy' ? 'מוחק…' : 'מחיקה והתחלה מחדש'}
-                </Button>
-                <Button variant="ghost" onClick={() => { setResetting(null); setResetTasks(false); }} disabled={resetting === 'busy'}>
-                  ביטול
-                </Button>
-              </div>
-            </div>
-          )}
-
-          <Step n={1} title="קמפיין">
-            <Field label="מטרה" value={plan.objective} copy={plan.objective ?? ''} />
-          </Step>
-
-          <Step n={2} title="קבוצת מודעות" last={!hasCreative && !hasTasks && !hasNotes}>
-            <div className="space-y-3">
-              <Field label="קהל" value={plan.audience} copy={plan.audience ?? ''} />
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { label: 'תקציב כולל', value: nis(plan.budget_total), copy: String(plan.budget_total ?? '') },
-                  { label: 'ליום', value: nis(plan.daily_budget), copy: String(plan.daily_budget ?? '') },
-                  { label: 'ימים', value: runDays ?? '—' },
-                ].map((stat) => (
-                  // The copy button sits in the corner, so on a phone the figure keeps the tile's full width.
-                  <div key={stat.label} className="relative rounded-lg bg-soft px-3 py-2 min-w-0">
-                    <div className="text-xs text-faint pe-7">{stat.label}</div>
-                    <div className="num text-base font-bold text-ink">{stat.value}</div>
-                    {stat.copy !== undefined && (
-                      <div className="absolute top-0.5 end-0.5"><CopyButton text={stat.copy} label={`העתקת ${stat.label}`} /></div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <Field label="תאריכים">
-                <span className="num">{ddmm(plan.schedule?.start)} – {ddmm(plan.schedule?.end)}</span>
-                {event?.date && <span className="text-xs text-faint"> · ההופעה ב-{ddmm(event.date)}</span>}
-              </Field>
-              {plan.placements?.length > 0 && (
-                <div>
-                  <div className="text-xs text-faint mb-1">מיקומים</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {plan.placements.map((p: string) => <Tag key={p}>{p}</Tag>)}
-                  </div>
-                </div>
-              )}
-            </div>
-          </Step>
-
-          {hasCreative && (
-            <Step n={3} title="מודעה" last={!hasTasks && !hasNotes}>
-              <div className="grid gap-4 lg:grid-cols-2 items-start">
-                <AdPreview creative={plan.creative} />
-                <div className="space-y-4">
-                  {/* The full text is in the preview beside this; here it only needs to be copied. */}
-                  <div>
-                    <Label text="טקסט ראשי" copy={plan.creative.primary_text ?? ''} />
-                    <p className="text-sm text-muted line-clamp-2 leading-relaxed">{plan.creative.primary_text}</p>
-                  </div>
-                  <Wordings label="כותרת" options={plan.creative.headline_options} current={plan.creative.headline}
-                    editable={isOwner} onChoose={(v) => props.onChoose('headline', v)} />
-                  <Wordings label="תיאור" options={plan.creative.description_options} current={plan.creative.description}
-                    editable={isOwner} onChoose={(v) => props.onChoose('description', v)} />
-                  {plan.creative.based_on && (
-                    <p className="text-xs text-faint leading-relaxed">מבוסס על: {plan.creative.based_on}</p>
+        <Step n={2} title="קבוצת מודעות" last={!hasCreative && !hasTasks && !hasTracking && !hasNotes}>
+          <div className="space-y-4">
+            <Field label="קהל" value={plan.audience} copy={plan.audience ?? ''} />
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: 'תקציב כולל', value: nis(plan.budget_total), copy: String(plan.budget_total ?? '') },
+                { label: 'ליום', value: nis(plan.daily_budget), copy: String(plan.daily_budget ?? '') },
+                { label: 'ימים', value: runDays ?? '—' },
+              ].map((stat) => (
+                // The copy button sits in the corner, so on a phone the figure keeps the tile's full width.
+                <div key={stat.label} className="relative rounded-xl bg-soft px-3 py-2.5 min-w-0">
+                  <div className="text-xs text-muted pe-8">{stat.label}</div>
+                  <div className="num text-lg font-bold text-ink tracking-[-0.02em]">{stat.value}</div>
+                  {stat.copy !== undefined && (
+                    <div className="absolute top-1.5 end-1.5"><CopyButton text={stat.copy} label={`העתקת ${stat.label}`} /></div>
                   )}
                 </div>
+              ))}
+            </div>
+            <Field label="תאריכים">
+              <span className="num">{ddmm(plan.schedule?.start)} – {ddmm(plan.schedule?.end)}</span>
+              {event?.date && <span className="text-sm text-muted"> · ההופעה ב-{ddmm(event.date)}</span>}
+            </Field>
+            {plan.placements?.length > 0 && (
+              <div>
+                <div className="text-xs text-muted mb-1.5">מיקומים</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {plan.placements.map((p: string) => <Tag key={p}>{p}</Tag>)}
+                </div>
               </div>
-            </Step>
-          )}
+            )}
+          </div>
+        </Step>
 
-          {hasTasks && (
-            <Step n={hasCreative ? 4 : 3} title="משימות מעקב" last={!hasNotes}>
-              <p className="text-xs text-faint mb-2">כל משימה מסומנת תישלח כתזכורת במייל ביום היעד</p>
-              <TaskPicker eventId={eventId} tasks={plan.tasks} sourceId={report.id}
-                show={props.taskShow(eventId)} members={props.members} isOwner={isOwner}
-                onAdded={props.onTasksAdded} onError={props.onError} />
-            </Step>
-          )}
-
-          {hasNotes && (
-            <Step n={(hasCreative ? 4 : 3) + (hasTasks ? 1 : 0)} title="הערות" last>
-              <ul className="space-y-1.5 text-sm text-body leading-relaxed list-disc ps-4">
-                {plan.notes.map((note: string, i: number) => <li key={i}>{note}</li>)}
-              </ul>
-            </Step>
-          )}
-
-          {plan.tracking && (
-            <div className="mt-4 rounded-xl border border-line bg-soft px-3 py-2.5 space-y-1.5 text-sm">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-faint">מעקב מכירות</span>
-                <Tag tone={plan.tracking.pixel_ready ? 'pos' : 'warn'}>
-                  {plan.tracking.pixel_ready ? 'עם הפיקסל באתר הכרטיסים' : 'בלי פיקסל באתר הכרטיסים'}
-                </Tag>
+        {hasCreative && (
+          <Step n={nextStep()} title="מודעה" last={!hasTasks && !hasTracking && !hasNotes}>
+            <div className="grid gap-5 lg:grid-cols-2 items-start">
+              <AdPreview creative={plan.creative} />
+              <div className="space-y-4">
+                {/* The full text is in the preview beside this; here it only needs to be copied. */}
+                <div>
+                  <Label text="טקסט ראשי" copy={plan.creative.primary_text ?? ''} />
+                  <p className="text-sm text-muted line-clamp-2 leading-relaxed">{plan.creative.primary_text}</p>
+                </div>
+                <Wordings label="כותרת" options={plan.creative.headline_options} current={plan.creative.headline}
+                  editable={isOwner} onChoose={(v) => props.onChoose('headline', v)} />
+                <Wordings label="תיאור" options={plan.creative.description_options} current={plan.creative.description}
+                  editable={isOwner} onChoose={(v) => props.onChoose('description', v)} />
+                {plan.creative.based_on && (
+                  <p className="text-xs text-muted leading-relaxed">מבוסס על: {plan.creative.based_on}</p>
+                )}
               </div>
-              {plan.tracking.optimization && <p className="text-body leading-relaxed"><span className="text-xs text-faint">אופטימיזציה: </span>{plan.tracking.optimization}</p>}
-              {plan.tracking.retargeting && <p className="text-body leading-relaxed"><span className="text-xs text-faint">רימרקטינג: </span>{plan.tracking.retargeting}</p>}
+            </div>
+          </Step>
+        )}
+
+        {hasTracking && (
+          <Step n={nextStep()} title="מעקב מכירות" last={!hasTasks && !hasNotes}>
+            <div className="space-y-2 text-sm">
+              <Tag tone={plan.tracking.pixel_ready ? 'pos' : 'warn'}>
+                {plan.tracking.pixel_ready ? 'הפיקסל באתר הכרטיסים' : 'אין פיקסל באתר הכרטיסים'}
+              </Tag>
+              {plan.tracking.optimization && <p className="text-body leading-relaxed"><span className="text-muted">אופטימיזציה: </span>{plan.tracking.optimization}</p>}
+              {plan.tracking.retargeting && <p className="text-body leading-relaxed"><span className="text-muted">רימרקטינג: </span>{plan.tracking.retargeting}</p>}
               {plan.tracking.club_request && (
                 <p className="text-body leading-relaxed">
-                  <span className="text-xs text-faint">לבקש מהמועדון: </span>{plan.tracking.club_request}
-                  <span className="text-xs text-faint"> — מייל מוכן ב«פיקסל ומעקב מכירות»</span>
+                  <span className="text-muted">לבקש מהמועדון: </span>{plan.tracking.club_request}.
+                  {' '}<span className="text-muted">מייל מוכן למועדון נמצא ב«פיקסל ו-Meta» למטה.</span>
                 </p>
               )}
             </div>
-          )}
-        </article>
-      )}
-    </div>
+          </Step>
+        )}
+
+        {hasTasks && (
+          <Step n={nextStep()} title="משימות מעקב" last={!hasNotes}>
+            <p className="text-sm text-muted mb-2">כל משימה מסומנת נשלחת כתזכורת במייל ביום היעד.</p>
+            <TaskPicker eventId={eventId} tasks={plan.tasks} sourceId={report.id}
+              show={props.taskShow(eventId)} members={props.members} isOwner={isOwner}
+              onAdded={props.onTasksAdded} onError={props.onError} />
+          </Step>
+        )}
+
+        {hasNotes && (
+          <Step n={nextStep()} title="הערות" last>
+            <ul className="space-y-1.5 text-sm text-body leading-relaxed list-disc ps-4">
+              {plan.notes.map((note: string, i: number) => <li key={i}>{note}</li>)}
+            </ul>
+          </Step>
+        )}
+      </div>
+    </article>
   );
 }

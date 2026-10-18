@@ -505,6 +505,73 @@ export function savedDrafts(): Array<{ report_id: string; event_id: string; labe
   }));
 }
 
+/** One upcoming show as the advisor's show strip draws it. */
+export interface ShowSummary {
+  event_id: string;
+  label: string;
+  venue: string;
+  date: string;
+  days_left: number;
+  capacity: number | null;
+  plan: { report_id: string; created_at: string; budget_total: number | null; start: string | null; end: string | null } | null;
+  review: { status: string | null; headline: string | null; decision: string | null; created_at: string } | null;
+  tickets: { availability: string | null; sold: number | null; left: number | null; capacity: number | null; created_at: string } | null;
+  spend: number | null;
+  pixel_status: string | null;
+}
+
+/**
+ * Every show still ahead (and any show with a plan from the last fortnight), soonest first, with
+ * what the advisor last said about it: the plan, the status review and the ticket check, and what
+ * its campaigns have spent so far.
+ *
+ * A read of stored answers and synced figures only — the strip at the top of the tab is built
+ * from this, and it must paint on every visit without spending a run.
+ */
+export function showSummaries(spendByEvent: Map<string, { spend: number }>): ShowSummary[] {
+  const today = israelDate();
+  const rows = db
+    .prepare(
+      `SELECT e.id, e.venue, e.date, e.capacity, p.status AS pixel_status
+       FROM band_events e LEFT JOIN venue_pixel p ON p.venue = e.venue
+       WHERE e.date >= ?
+          OR (e.date >= date(?, ?) AND EXISTS (SELECT 1 FROM ai_campaign_reports r WHERE r.kind = 'draft' AND r.event_id = e.id))
+       ORDER BY e.date`
+    )
+    .all(today, today, `-${SAVED_PLAN_DAYS} days`) as Array<{ id: string; venue: string; date: string; capacity: number | null; pixel_status: string | null }>;
+  const dayMs = 86_400_000;
+  return rows.map((row) => {
+    const plan = lastReport('draft', {}, row.id);
+    const review = lastReport('review', {}, row.id);
+    const tickets = lastReport('tickets', {}, row.id);
+    const p = plan?.response as any;
+    const r = review?.response as any;
+    const t = tickets?.response as any;
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+    return {
+      event_id: row.id,
+      label: eventLabel(row.venue, row.date),
+      venue: row.venue,
+      date: row.date,
+      days_left: Math.round((Date.parse(row.date) - Date.parse(today)) / dayMs),
+      capacity: num(row.capacity) || null,
+      plan: plan ? {
+        report_id: plan.id, created_at: plan.created_at,
+        budget_total: num(p?.budget_total), start: p?.schedule?.start ?? null, end: p?.schedule?.end ?? null,
+      } : null,
+      review: review ? {
+        status: r?.status ?? null, headline: r?.headline ?? null, decision: r?.decision?.title ?? null, created_at: review.created_at,
+      } : null,
+      tickets: tickets && t?.found !== false ? {
+        availability: t?.availability ?? null, sold: num(t?.tickets_sold), left: num(t?.tickets_left),
+        capacity: num(t?.capacity), created_at: tickets.created_at,
+      } : null,
+      spend: spendByEvent.get(row.id)?.spend ?? null,
+      pixel_status: row.pixel_status ?? null,
+    };
+  });
+}
+
 /**
  * Keeps the headline or description chosen from a plan's alternatives, so the plan reads the same
  * after a reload, on another phone, and to the band. Only one of the options the agent offered

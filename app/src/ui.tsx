@@ -32,18 +32,22 @@ export function Section({ title, summary, open, onToggle, actions, children, cla
   return (
     <section className={clsx('bg-surface border border-line rounded-2xl', className)}>
       <div className="flex items-center gap-2 px-4 md:px-5">
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          aria-controls={bodyId}
-          className="flex-1 min-w-0 min-h-14 flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 text-start"
-        >
-          {/* Pointing down when open, and towards the reading direction's end when closed. */}
-          <ChevronDown className={clsx('w-4 h-4 shrink-0 text-muted transition-transform', !open && 'rotate-90')} />
-          <h2 className="ser text-lg">{title}</h2>
-          {summary && <span className="flex flex-wrap items-center gap-1.5">{summary}</span>}
-        </button>
+        {/* The heading holds the button, not the other way round, so a screen reader's list of
+            headings still finds every section. */}
+        <h2 className="flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-controls={bodyId}
+            className="w-full min-h-14 flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 text-start"
+          >
+            {/* Pointing down when open, and towards the reading direction's end when closed. */}
+            <ChevronDown className={clsx('w-4 h-4 shrink-0 text-muted transition-transform', !open && 'rotate-90')} />
+            <span className="ser text-lg">{title}</span>
+            {summary && <span className="flex flex-wrap items-center gap-1.5 font-normal">{summary}</span>}
+          </button>
+        </h2>
         {actions && <div className="shrink-0 flex items-center gap-2">{actions}</div>}
       </div>
       {open && <div id={bodyId} className="px-4 pb-4 md:px-5 md:pb-5">{children}</div>}
@@ -59,9 +63,9 @@ export function Tag({ tone = 'neutral', children, className }: {
 }) {
   const tones = {
     neutral: 'bg-soft border-line text-muted',
-    pos: 'bg-pos-soft border-pos/20 text-pos',
+    pos: 'bg-pos-soft border-pos/20 text-pos-ink',
     warn: 'bg-warn-soft border-warn/25 text-warn-ink',
-    neg: 'bg-neg-soft border-neg/20 text-neg',
+    neg: 'bg-neg-soft border-neg/20 text-neg-ink',
     accent: 'bg-accent-soft border-accent/20 text-accent-ink',
   };
   return (
@@ -238,7 +242,7 @@ export function PeriodBadge({ status }: { status: string }) {
 }
 
 export function Button({
-  children, onClick, variant = 'primary', type = 'button', disabled, className,
+  children, onClick, variant = 'primary', type = 'button', disabled, className, title,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -246,6 +250,8 @@ export function Button({
   type?: 'button' | 'submit';
   disabled?: boolean;
   className?: string;
+  /** Says why a disabled button is waiting, on hover. */
+  title?: string;
 }) {
   const styles = {
     primary: 'bg-accent text-white hover:brightness-110',
@@ -257,8 +263,10 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={clsx(
-        'px-4 py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed',
+        // The press shows on the way down, not after the click lands.
+        'px-4 py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100',
         styles[variant],
         className
       )}
@@ -271,7 +279,7 @@ export function Button({
 /** The one field style, shared by every input, textarea and select on the app. */
 export const fieldClass =
   'w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ghost ' +
-  'focus:outline-none focus:border-accent focus:bg-surface transition-colors';
+  'focus:outline-none focus:border-accent focus:bg-surface focus:ring-2 focus:ring-accent/20 transition-colors';
 
 export function Input({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
   return (

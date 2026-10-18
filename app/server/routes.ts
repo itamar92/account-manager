@@ -21,7 +21,7 @@ import {
 } from './morningExpenses.js';
 import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
 import {
-  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, listCampaigns, metaStatus,
+  adAnalysis, applyCampaignSpend, attributedSpendByEvent, campaignDaily, deleteMapping, listCampaigns, metaStatus,
   monthlyBreakdown, pullCampaignsFromMeta, setMapping,
 } from './metaSync.js';
 import {
@@ -78,7 +78,7 @@ import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
 import {
   analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearAnalysis, clearChat, clearShowAdvice,
-  dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, trackJob,
+  dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, showSummaries, trackJob,
 } from './campaignAdvisor.js';
 import { reviewCampaign } from './campaignReview.js';
 import { checkTickets, lastTicketCheck, setTicketLinks, ticketLinks } from './ticketCheck.js';
@@ -2352,6 +2352,14 @@ router.delete('/band/campaign-jobs/:kind', requireOwner, handle((req, res) => {
 /** Every show's newest plan, for the tab to open on the one you were working on. */
 router.get('/band/campaign-drafts', requireAuth, handle((_req, res) => {
   res.json({ drafts: savedDrafts() });
+}));
+
+/**
+ * The shows the advisor's strip offers: each upcoming show with its last plan, status review and
+ * ticket check, what its campaigns spent, and what its club said about the pixel. A read only.
+ */
+router.get('/band/campaign-shows', requireAuth, handle((_req, res) => {
+  res.json({ shows: showSummaries(attributedSpendByEvent()) });
 }));
 
 /** The last campaign plan drafted for a show, if there is one. */

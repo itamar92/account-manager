@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, Eye, XCircle, Zap } from 'lucide-react';
 import { get, post } from '../../api';
-import { Button, Empty, Modal, Tag } from '../../ui';
-import { when } from './advisorShared';
+import { Button, Modal, Tag } from '../../ui';
+import { clsx } from 'clsx';
+import { InlineError, when } from './advisorShared';
 
 /** An action as an advisor answer carries it — see server/metaActions.ts. */
 export interface ProposedAction {
@@ -159,19 +160,23 @@ export function ActionPreviewModal({ preview, onClose, onDone }: {
  * The changes an advisor answer proposes, each behind a preview. A band member sees what was
  * proposed; only the owner can open a preview, since opening one reads Meta and confirming writes.
  */
-export function ActionButtons({ actions, source, sourceId, eventId, isOwner, onError, onDone, title }: {
+export function ActionButtons({ actions, source, sourceId, eventId, isOwner, onDone, title, prominent }: {
   actions: ProposedAction[] | undefined;
   source: 'review' | 'analysis' | 'chat' | 'pixel';
   sourceId?: string;
   eventId?: string;
   isOwner: boolean;
-  onError: (message: string) => void;
+  /** Kept for callers; a failed preview is now said beside its own button instead. */
+  onError?: (message: string) => void;
   onDone?: (action: any) => void;
   title?: string;
+  /** The change is the recommended decision itself, so its button is the primary one. */
+  prominent?: boolean;
 }) {
   const [preview, setPreview] = useState<any>(null);
   const [finished, setFinished] = useState<any>(null);
   const [loading, setLoading] = useState<number | null>(null);
+  const [problem, setProblem] = useState<{ index: number; text: string } | null>(null);
   if (!actions?.length) return null;
 
   // The parent hears of a change only once its preview is closed: re-reading on the spot can
@@ -184,32 +189,36 @@ export function ActionButtons({ actions, source, sourceId, eventId, isOwner, onE
 
   const open = async (action: ProposedAction, i: number) => {
     setLoading(i);
-    onError('');
+    setProblem(null);
     try {
       const d = await post('/band/meta-actions/preview', { action, source, source_id: sourceId, event_id: eventId });
       setPreview(d.preview);
     } catch (err: any) {
-      onError(err.message);
+      setProblem({ index: i, text: `לא הצלחנו לקרוא את המצב הנוכחי מ-Meta: ${err.message}. אפשר לנסות שוב, או לעשות את השינוי ידנית ב-Ads Manager.` });
     } finally { setLoading(null); }
   };
 
   return (
-    <div className="space-y-1.5">
-      <div className="text-xs text-faint">{title ?? 'פעולות שאפשר לבצע ב-Meta — כל אחת אחרי תצוגה מקדימה ואישור'}</div>
-      <ul className="space-y-1.5">
+    <div className="space-y-2">
+      <div className="text-xs text-body">{title ?? 'שינוי שאפשר לעשות ב-Meta. הוא נפתח קודם בתצוגה מקדימה, ומתבצע רק באישור שלכם.'}</div>
+      <ul className="space-y-2">
         {actions.map((action, i) => (
-          <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 text-sm font-medium text-ink">
-                <Zap className="w-3.5 h-3.5 text-accent shrink-0" aria-hidden />{actionLabel(action)}
+          <li key={i} className="space-y-2">
+            <div className={clsx('flex flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-2.5',
+              prominent ? 'bg-surface' : 'border border-line bg-surface')}>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-sm font-semibold text-ink">
+                  <Zap className="w-3.5 h-3.5 text-accent shrink-0" aria-hidden />{actionLabel(action)}
+                </div>
+                {action.reason && <div className="text-sm text-muted leading-relaxed">{action.reason}</div>}
               </div>
-              {action.reason && <div className="text-xs text-muted leading-relaxed">{action.reason}</div>}
+              {isOwner && (
+                <Button variant={prominent ? 'primary' : 'ghost'} className="!px-3.5" disabled={loading != null} onClick={() => open(action, i)}>
+                  <span className="inline-flex items-center gap-1.5"><Eye className="w-4 h-4" aria-hidden />{loading === i ? 'קורא מ-Meta…' : 'תצוגה מקדימה'}</span>
+                </Button>
+              )}
             </div>
-            {isOwner && (
-              <Button variant="ghost" className="!px-3 !py-1.5" disabled={loading != null} onClick={() => open(action, i)}>
-                <span className="inline-flex items-center gap-1"><Eye className="w-3.5 h-3.5" aria-hidden />{loading === i ? 'קורא מ-Meta…' : 'תצוגה מקדימה'}</span>
-              </Button>
-            )}
+            {problem?.index === i && <InlineError text={problem.text} onDismiss={() => setProblem(null)} />}
           </li>
         ))}
       </ul>
@@ -231,12 +240,12 @@ export function ActionsLog({ reloadKey }: { reloadKey: number }) {
   return (
     <div className="space-y-2">
       {!data.write_configured && (
-        <p className="text-xs text-faint leading-relaxed">
-          ביצוע ב-Meta כבוי: אפשר לראות תצוגה מקדימה של כל פעולה ולבצע אותה ידנית. כדי שהאישור יבצע אותה —
-          להגדיר בשרת META_WRITE_ACCESS_TOKEN (טוקן System User עם ads_management).
+        <p className="text-sm text-body leading-relaxed">
+          האפליקציה יכולה רק לקרוא מ-Meta, לא לשנות. כל שינוי עדיין נפתח בתצוגה מקדימה, ואותו עושים ידנית ב-Ads Manager.
+          <span className="block text-xs text-muted mt-1">כדי שהאישור יבצע את השינוי בעצמו: להגדיר בשרת META_WRITE_ACCESS_TOKEN עם הרשאת ads_management.</span>
         </p>
       )}
-      {shown.length === 0 ? <Empty text="עוד לא בוצעו פעולות" /> : (
+      {shown.length === 0 ? <p className="text-sm text-muted">עוד לא נעשה שום שינוי ב-Meta מהאפליקציה. שינוי שהסוכן מציע יופיע כאן אחרי שתאשרו אותו.</p> : (
         <ul className="divide-y divide-line rounded-xl border border-line">
           {shown.map((a) => (
             <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
