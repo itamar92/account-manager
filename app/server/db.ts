@@ -700,6 +700,46 @@ CREATE TABLE IF NOT EXISTS venue_websites (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- Whether each club's ticket page carries the band's Meta pixel — the only way a campaign can
+-- learn who bought a ticket. Per venue, like its site: the pixel goes into the club's ticketing
+-- system once and serves every show there. 'installed' is what the club said; whether the pixel
+-- actually fires on their site is read from Meta, not stored.
+CREATE TABLE IF NOT EXISTS venue_pixel (
+  venue TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'none' CHECK (status IN ('none','requested','installed','declined')),
+  contact_email TEXT,                     -- who at the club the request goes to
+  platform TEXT,                          -- the ticketing system the club sells through
+  note TEXT,
+  requested_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The advisor's actions on the ad account. Every row starts as a preview: the live state of the
+-- target as read from Meta, and the change, exactly as the owner was shown it. Only that row can be
+-- carried out, only by the owner pressing confirm, and only while the target still reads as it did
+-- — so nothing reaches Meta that a person did not see first, and the table doubles as the log.
+CREATE TABLE IF NOT EXISTS meta_actions (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,                     -- pause | activate | set_daily_budget | set_end_date | create_pixel
+  level TEXT,                             -- campaign | adset | ad (null for create_pixel)
+  target_id TEXT,
+  target_name TEXT,
+  action TEXT NOT NULL,                   -- JSON: the action as proposed
+  preview TEXT NOT NULL,                  -- JSON: what the owner was shown
+  state TEXT NOT NULL,                    -- JSON: the live fields the preview was computed from
+  status TEXT NOT NULL DEFAULT 'previewed'
+    CHECK (status IN ('previewed','executing','done','failed','cancelled')),
+  source TEXT,                            -- review | analysis | chat | pixel — where it was proposed
+  source_id TEXT,                         -- the report or chat message
+  event_id TEXT,
+  result TEXT,                            -- JSON: what Meta answered
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  executed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_actions_created ON meta_actions(created_at);
+
 -- ---------- band quotes (docs/QUOTES-DESIGN.md) ----------
 -- A price quote for a show. A template is a row of the same table with is_template = 1: the
 -- usual intro, lines and terms, with no client, number or validity of its own, so it is
@@ -891,6 +931,8 @@ addColumnIfMissing('band_events', 'ticket_url', 'TEXT');
 // Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
 // due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
 addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');
+// The Meta changes an answer proposed — previewed and confirmed one by one (metaActions.ts).
+addColumnIfMissing('ai_chat_messages', 'actions', 'TEXT');
 // A supplier's standing fee, pre-filled onto the cost line of every show they are staffed on.
 // 0 (the default, and what every supplier entered before this column had) means nobody has
 // said what they charge, and the cost line is left to be typed by hand as before.

@@ -169,7 +169,8 @@ export function SuggestionsList({ suggestions, findings }: { suggestions: any[];
   return (
     <>
       <p className="text-xs text-faint mb-3">
-        מדורגות מהחשובה לפחות חשובה. הסוכן לא משנה דבר ב-Meta — כל שינוי נעשה ידנית ב-Ads Manager.
+        מדורגות מהחשובה לפחות חשובה. הסוכן לא משנה דבר ב-Meta בעצמו — שינוי שאפשר לבצע בלחיצה מופיע למטה,
+        ומתבצע רק אחרי תצוגה מקדימה ואישור; כל השאר נעשה ידנית ב-Ads Manager.
       </p>
       <ol className="space-y-2">
         {suggestions.map((suggestion, i) => (

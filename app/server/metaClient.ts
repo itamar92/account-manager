@@ -7,7 +7,10 @@
  * person, so its token does not expire every 60 days and does not stop working when someone
  * changes their password. Reading your own ad account with `ads_read` needs no App Review.
  *
- * Read-only, like the calendar client — nothing here creates, pauses or pays for anything.
+ * Reads only, with one exception kept apart at the bottom of the file: the writes the campaign
+ * advisor's actions make (`metaActions.ts`) go out with a token of their own,
+ * `META_WRITE_ACCESS_TOKEN`, so that the sync's token never gains a write scope and the app
+ * cannot change the account at all until somebody deliberately hands it a second token.
  */
 
 // Overridable so the sync can be pointed at a stub, the same way GREEN_INVOICE_BASE_URL points
@@ -52,9 +55,13 @@ function accessToken(): string {
  * part worth showing — "(#190) invalid token" says what to fix, a bare 400 does not. The token
  * is never included in an error, since these messages reach the browser.
  */
-async function graph<T>(path: string, params: Record<string, string>): Promise<T> {
-  const query = new URLSearchParams({ ...params, access_token: accessToken() });
-  const res = await fetch(`${GRAPH_URL}/${API_VERSION}/${path}?${query}`);
+async function graph<T>(path: string, params: Record<string, string>, write?: { token: string }): Promise<T> {
+  const res = write
+    ? await fetch(`${GRAPH_URL}/${API_VERSION}/${path}`, {
+        method: 'POST',
+        body: new URLSearchParams({ ...params, access_token: write.token }),
+      })
+    : await fetch(`${GRAPH_URL}/${API_VERSION}/${path}?${new URLSearchParams({ ...params, access_token: accessToken() })}`);
 
   let body: any;
   try {
@@ -242,4 +249,70 @@ export async function fetchAds(): Promise<MetaAdCopy[]> {
 /** Cheap connectivity probe: proves the token works without pulling any reporting. */
 export async function ping(): Promise<MetaAccount> {
   return fetchAccount();
+}
+
+/** One object — a campaign, ad set, ad or pixel — with the fields asked for. */
+export async function fetchObject(id: string, fields: string): Promise<any> {
+  if (!/^\d+$/.test(id)) throw new MetaError(`מזהה Meta לא תקין: ${id}`, 400);
+  return graph<any>(id, { fields });
+}
+
+export interface MetaPixel {
+  id: string;
+  name: string | null;
+  last_fired_time: string | null;
+  is_unavailable: boolean;
+}
+
+/** The ad account's pixels (datasets). Same `ads_read` scope as the campaigns. */
+export async function fetchPixels(): Promise<MetaPixel[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/adspixels`, { fields: 'id,name,last_fired_time,is_unavailable' });
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    name: text(row.name),
+    last_fired_time: text(row.last_fired_time),
+    is_unavailable: row.is_unavailable === true,
+  }));
+}
+
+/**
+ * What a pixel received since `since`, summed over the period by `aggregation` — `event` gives
+ * PageView / ViewContent / Purchase…, `host` gives the sites it fired on. The second is how a
+ * club's ticket page is known to carry the pixel without anyone having to say so.
+ */
+export async function fetchPixelStats(pixelId: string, aggregation: 'event' | 'host', since: Date): Promise<Record<string, number>> {
+  if (!/^\d+$/.test(pixelId)) throw new MetaError(`מזהה פיקסל לא תקין: ${pixelId}`, 400);
+  const body = await graph<any>(`${pixelId}/stats`, {
+    aggregation,
+    start_time: String(Math.floor(since.getTime() / 1000)),
+  });
+  const totals: Record<string, number> = {};
+  for (const bucket of Array.isArray(body?.data) ? body.data : []) {
+    for (const row of Array.isArray(bucket?.data) ? bucket.data : []) {
+      const key = text(row?.value);
+      if (key) totals[key] = (totals[key] ?? 0) + num(row?.count);
+    }
+  }
+  return totals;
+}
+
+// ---------------------------------------------------------------- writes
+
+/**
+ * The token the advisor's actions are carried out with — a system user token with
+ * `ads_management`. Optional: without it every action can still be previewed, and is then done by
+ * hand in Ads Manager.
+ */
+export function isMetaWriteConfigured(): boolean {
+  return Boolean(process.env.META_WRITE_ACCESS_TOKEN?.trim() && process.env.META_AD_ACCOUNT_ID?.trim());
+}
+
+/**
+ * One write. Only `metaActions.ts` calls this, and only for an action a person saw previewed and
+ * confirmed; the paths it can reach are the few that module builds, never one from a request.
+ */
+export async function graphWrite<T = any>(path: string, params: Record<string, string>): Promise<T> {
+  const token = (process.env.META_WRITE_ACCESS_TOKEN || '').trim();
+  if (!token) throw new MetaError('ביצוע פעולות ב-Meta לא מוגדר — חסר META_WRITE_ACCESS_TOKEN', 503);
+  return graph<T>(path, params, { token });
 }

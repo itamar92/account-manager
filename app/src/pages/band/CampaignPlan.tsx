@@ -405,6 +405,25 @@ export function CampaignPlan(props: Props) {
               </ul>
             </Step>
           )}
+
+          {plan.tracking && (
+            <div className="mt-4 rounded-xl border border-line bg-soft px-3 py-2.5 space-y-1.5 text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-faint">מעקב מכירות</span>
+                <Tag tone={plan.tracking.pixel_ready ? 'pos' : 'warn'}>
+                  {plan.tracking.pixel_ready ? 'עם הפיקסל באתר הכרטיסים' : 'בלי פיקסל באתר הכרטיסים'}
+                </Tag>
+              </div>
+              {plan.tracking.optimization && <p className="text-body leading-relaxed"><span className="text-xs text-faint">אופטימיזציה: </span>{plan.tracking.optimization}</p>}
+              {plan.tracking.retargeting && <p className="text-body leading-relaxed"><span className="text-xs text-faint">רימרקטינג: </span>{plan.tracking.retargeting}</p>}
+              {plan.tracking.club_request && (
+                <p className="text-body leading-relaxed">
+                  <span className="text-xs text-faint">לבקש מהמועדון: </span>{plan.tracking.club_request}
+                  <span className="text-xs text-faint"> — מייל מוכן ב«פיקסל ומעקב מכירות»</span>
+                </p>
+              )}
+            </div>
+          )}
         </article>
       )}
     </div>

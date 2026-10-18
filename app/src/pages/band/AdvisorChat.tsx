@@ -4,6 +4,7 @@ import { Button, Empty, Textarea } from '../../ui';
 import { eventLabel, type BandMember } from './shared';
 import { TaskPicker } from './TaskPicker';
 import { when, Working, type AdvisorJob } from './advisorShared';
+import { ActionButtons } from './MetaActions';
 
 /** A chat answer's tasks, one group per show, in the order the shows first appear. */
 function groupByShow(tasks: any[]): Array<[string, any[]]> {
@@ -19,7 +20,7 @@ function groupByShow(tasks: any[]): Array<[string, any[]]> {
  * reload: the server only writes the pair once the answer arrives, so until then it comes from the
  * run in progress.
  */
-export function AdvisorChat({ messages, events, isOwner, question, onQuestionChange, onSend, job, agentBusy, members, taskShow, onTasksAdded, onError }: {
+export function AdvisorChat({ messages, events, isOwner, question, onQuestionChange, onSend, job, agentBusy, members, taskShow, onTasksAdded, onActionDone, onError }: {
   messages: any[];
   events: any[];
   isOwner: boolean;
@@ -32,6 +33,7 @@ export function AdvisorChat({ messages, events, isOwner, question, onQuestionCha
   members: BandMember[];
   taskShow: (eventId: string) => any;
   onTasksAdded: () => void;
+  onActionDone: () => void;
   onError: (message: string) => void;
 }) {
   const thread = useRef<HTMLDivElement>(null);
@@ -74,6 +76,12 @@ export function AdvisorChat({ messages, events, isOwner, question, onQuestionCha
                       show={taskShow(eventId)} members={members} isOwner={isOwner}
                       onAdded={onTasksAdded} onError={onError} />
                   ))}
+                </div>
+              )}
+              {message.actions?.length > 0 && (
+                <div className="border-t border-line mt-2 pt-2">
+                  <ActionButtons actions={message.actions} source="chat" sourceId={message.id}
+                    isOwner={isOwner} onError={onError} onDone={onActionDone} />
                 </div>
               )}
             </div>

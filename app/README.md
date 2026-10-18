@@ -44,6 +44,7 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
 | `META_API_VERSION` | `v25.0` | Graph API version |
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
+| `META_WRITE_ACCESS_TOKEN` | — | a second system-user token, with `ads_management`, for the campaign advisor's actions (pause, daily budget, end date, create a pixel). Optional: without it every action still previews and is done by hand in Ads Manager. Kept apart from `META_ACCESS_TOKEN` so the sync's token never gains a write scope |
 | `APP_SECRET_KEY` | a generated `secret.key` beside the database | encrypts the secrets saved from the UI (the agent's SSH key). See below |
 | `SMTP_USER` / `SMTP_PASS` | — | Gmail address and app password for campaign-task reminder emails; without them no reminder is sent |
 | `SMTP_FROM` / `SMTP_HOST` / `SMTP_PORT` | `<band name> <SMTP_USER>` / `smtp.gmail.com` / `465` | sender and server overrides for those emails |
@@ -756,7 +757,9 @@ Three properties are deliberate and worth keeping:
   the app refuses to connect in production.
 - **Nothing the agent says takes effect.** It reads a JSON extract — shows, tickets, revenue,
   campaigns, spend curves — and returns text. It gets no database handle, no Meta token and no
-  write path, and the member division is deliberately not in the extract it is sent.
+  write path, and the member division is deliberately not in the extract it is sent. A change it
+  recommends may also come back as a structured action, which only the app can carry out, and only
+  after the owner has seen it previewed (below).
 
 **Meta's own connector, optionally.** Where the agent host has Meta's Ads Manager MCP server
 signed in and its read tools named (`deploy/README.md`, «Meta's Ads Manager connector»), the
@@ -792,6 +795,48 @@ answer — the club's site (kept per venue, `venue_websites`), the show's page
 only where none was known. The last check of every upcoming show is also in the context of every
 other advisor run.
 
+**Actions in Meta — preview first, then confirm (`metaActions.ts`).** Where a recommendation is
+one click — pause or switch on a campaign, ad set or ad, set a daily budget, set an end date, create
+the account's pixel — the analysis, the status review and the chat answer carry it as an `action`
+beside the text (`{type, level, id, daily_budget?, end_date?, reason}`), and the tab lists it under
+the answer with «תצוגה מקדימה». Two steps that cannot be merged:
+
+1. **Preview** reads the target live from Meta — its real name, status, budget and end date, and
+   which ad account it is in — and lays the change out as «now → after», with warnings (a raise of
+   more than 20% restarts learning; the campaign's show is over; the budget is set at the other
+   level) and blockers (not the band's account, already in that state, a typo-sized budget). The
+   preview is stored with the state it was computed from. Nothing is sent to Meta.
+2. **Confirm** carries out only a stored preview, by the owner, within 15 minutes, and only after
+   reading the target again: if anything the preview showed has changed — in Ads Manager, or by an
+   earlier action — nothing is sent and the owner is asked to look again. A double press sends once.
+
+Writes go out with `META_WRITE_ACCESS_TOKEN`; without it the confirm button is not offered and the
+preview is the instruction for Ads Manager. To switch writing on: Business Settings → Users → System
+users → the app's system user → Assign assets → the ad account with *Manage campaigns* (and the
+pixel / dataset with *Manage*), then Generate token for the same Meta app with `ads_management` and
+`ads_read`, put it in `deploy/.env` as `META_WRITE_ACCESS_TOKEN` and restart. If Meta refuses to create a
+pixel with it, create one in Events Manager instead — the panel reads whichever pixel the account has. Every preview and its outcome is kept (`meta_actions`)
+and listed under «פעולות ב-Meta». New campaigns, audiences and creative stay instructions: they
+need choices — images, a page, targeting — that a preview cannot show honestly in one line.
+
+**The pixel and the clubs (`metaPixel.ts`, «פיקסל ומעקב מכירות»).** Tickets are sold on the
+club's site, so Meta only learns of a purchase if the club's ticketing system runs the band's
+pixel. The panel shows the account's pixel and what it received over 28 days by event (PageView →
+ViewContent → InitiateCheckout → Purchase), and, for every club with a show coming up, two things
+kept apart: what the club said (asked / installed / declined, with its contact and ticketing
+system) and whether the pixel actually **fires on the club's ticket site** — read from the
+pixel's per-site counts against the host of the show's ticket page, nobody's word. With no pixel
+on the account it offers to create one (an action like the others). «מייל למועדון» composes the
+request to the club — the pixel id, the show's page, where ticketing systems take a pixel id, the
+four events and what the club gets and does not give away — editable, and opened in the owner's own
+Gmail or mail app; nothing is sent by the app, and the club is marked «ביקשנו».
+
+The same reading goes to the advisor (`tracking` in the context, refreshed by every Meta sync), and
+its prompt (`TRACKING_GUIDE`) turns it into ads: where the pixel fires on a club's site, a sales
+campaign optimised for Purchase once there are roughly 30 a week (InitiateCheckout or ViewContent
+until then) and a last-week retargeting audience of ticket-page visitors minus buyers; where it does
+not, landing-page views and a request to the club. A plan carries this as its «מעקב מכירות» block.
+
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/band/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
@@ -808,6 +853,13 @@ other advisor run.
 | `GET /api/band/campaign-chat` | the follow-up thread |
 | `POST /api/band/campaign-chat` | ask a follow-up `{message}` (owner); answers may carry proposed `tasks` |
 | `DELETE /api/band/campaign-chat` | clear the thread (owner) |
+| `GET /api/band/meta-actions` | the actions previewed and carried out, and whether writing is configured |
+| `POST /api/band/meta-actions/preview` | read the target live and store a preview `{action, source?, source_id?, event_id?}` (owner) |
+| `POST /api/band/meta-actions/:id/execute` | carry out a stored preview if Meta still matches it (owner) |
+| `POST /api/band/meta-actions/:id/cancel` | drop a preview (owner) |
+| `GET /api/band/pixel[?refresh=1]` | the pixel as last read (or read afresh) and every club with a show coming up (owner) |
+| `PUT /api/band/pixel/venue` | what a club said `{venue, status?, contact_email?, platform?, note?}` (owner) |
+| `GET /api/band/pixel/email?venue=` | the request to the club, composed for the owner's mail app (owner) |
 | `POST /api/integrations/agent/ping` | connectivity test: opens the session, asks the agent its version |
 | `GET /api/settings/agent` | the stored connection details, minus the secrets (owner) |
 | `POST /api/settings/agent` | save them (owner) |
