@@ -214,6 +214,18 @@ export function deleteTask(id: string): void {
   if (!info.changes) throw new TaskError('המשימה לא נמצאה', 404);
 }
 
+/**
+ * Clears a show's task list to start it again — every task, or only the ones still open. The owner
+ * stays: who runs the show's promotion does not change because its to-do list did.
+ */
+export function deleteShowTasks(eventId: string, options: { openOnly?: boolean } = {}): { deleted: number } {
+  requireEvent(eventId);
+  const info = db
+    .prepare(`DELETE FROM campaign_tasks WHERE event_id = ?${options.openOnly ? ' AND done_at IS NULL' : ''}`)
+    .run(eventId);
+  return { deleted: info.changes };
+}
+
 /** Who gets the show's reminders. Null clears it, and the show's tasks then go unsent. */
 export function setTaskOwner(eventId: string, memberKey: string | null): { event_id: string; owner: string | null } {
   requireEvent(eventId);

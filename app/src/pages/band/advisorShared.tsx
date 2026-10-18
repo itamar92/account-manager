@@ -3,7 +3,7 @@ import { Check, Copy } from 'lucide-react';
 
 /** A run the agent is working on — started by this page, or found running when the page loaded. */
 export interface AdvisorJob {
-  kind: 'analysis' | 'draft' | 'chat';
+  kind: 'analysis' | 'draft' | 'chat' | 'review' | 'tickets';
   status: 'running' | 'failed';
   started_at: string;
   error?: string;

@@ -769,12 +769,42 @@ changed; the extract stays the authority on which show a campaign was for and wh
 Reports are stored, so opening the tab paints the last one instead of spending a minute on a page
 load; a run happens only when the owner presses the button. Band members read along.
 
+**Starting over.** «ניקוי הייעוץ» forgets the period's general advice (and «ייעוץ חדש» asks for a
+fresh one); «התחלה מחדש» on a plan forgets every plan and status review of that show — and, if
+ticked, its tasks — so the show starts from nothing. A show's task list can also be cleared from
+the tasks panel. Ticket checks and the club's links are kept: they are facts, not advice.
+
+**Re-advising a running campaign (בדיקת מצב וכרטיסים).** For a show whose campaign is already
+running, the agent gets the plan, the show's tasks and which are done, the campaigns tied to the
+show with their daily spend, what the club's ticket page said, and the previous review, and
+returns where the campaign stands against the plan, one recommended decision with the threshold
+for the next check, the alternatives and when to pick them, and any missing tasks to accept
+(`campaignReview.ts`).
+
+**Ticket status from the club's site.** The ticket check (`ticketCheck.ts`) is the one run that may
+browse: the agent searches for the club's official site and the show's ticket page and reports
+what the page says — available, last tickets, sold out, a count if one is shown, the price — with
+the sentence it read. Its prompt carries only the band's name and the show (venue, date, city),
+never the books, and the agent host runs it with the two web tools and nothing else
+(`AM_AGENT_WEB` in `deploy/claude-agent.sh`). When it cannot find the club or the show it asks; the
+answer — the club's site (kept per venue, `venue_websites`), the show's page
+(`band_events.ticket_url`) or a sentence — feeds the next check. A link the agent found is saved
+only where none was known. The last check of every upcoming show is also in the context of every
+other advisor run.
+
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/band/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
 | `POST /api/band/campaign-analysis?year=&month=` | spend a run: analyse the period afresh (owner) |
 | `GET /api/band/campaign-draft/:eventId` | the last campaign plan drafted for a show |
 | `POST /api/band/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
+| `DELETE /api/band/campaign-analysis?year=&month=` | forget the period's general advice (owner) |
+| `DELETE /api/band/campaign-draft/:eventId[?tasks=1]` | start a show over: its plans and reviews, and its tasks if asked (owner) |
+| `GET /api/band/campaign-review/:eventId` | the last status review, the last ticket check and the ticket links |
+| `POST /api/band/campaign-review` | re-advise a running campaign `{event_id, note?, check_tickets?}` (owner) |
+| `POST /api/band/ticket-check` | read the club's ticket page `{event_id, note?}` (owner) |
+| `PUT /api/band/ticket-links/:eventId` | the club's site and the show's ticket page `{venue_site?, ticket_url?}` (owner) |
+| `DELETE /api/band/campaign-tasks/show/:eventId[?open=1]` | clear a show's tasks, or only the open ones (owner) |
 | `GET /api/band/campaign-chat` | the follow-up thread |
 | `POST /api/band/campaign-chat` | ask a follow-up `{message}` (owner); answers may carry proposed `tasks` |
 | `DELETE /api/band/campaign-chat` | clear the thread (owner) |
