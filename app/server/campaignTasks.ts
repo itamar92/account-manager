@@ -278,7 +278,7 @@ export function reminderEmail(name: string, rows: ReminderRow[], today: string, 
     '',
     ...lines,
     '',
-    base ? `כל המשימות: ${base}/band/campaignAi` : '',
+    base ? `כל המשימות: ${base}/campaigns/tasks` : '',
     `התזכורת תחזור כל ${REMINDER_REPEAT_DAYS} ימים עד שהמשימה תסומן כבוצעה.`,
   ].filter((l, i, all) => l !== '' || all[i - 1] !== '').join('\n');
 
@@ -303,7 +303,7 @@ export function reminderEmail(name: string, rows: ReminderRow[], today: string, 
     <p>היי ${escapeHtml(name)},</p>
     <p>אלה משימות הקמפיין שמחכות לך:</p>
     ${items}
-    ${base ? `<p><a href="${escapeHtml(`${base}/band/campaignAi`)}" style="color:#6b45d6">לכל המשימות באפליקציה</a></p>` : ''}
+    ${base ? `<p><a href="${escapeHtml(`${base}/campaigns/tasks`)}" style="color:#6b45d6">לכל המשימות באפליקציה</a></p>` : ''}
     <p style="color:#888;font-size:12px">התזכורת תחזור כל ${REMINDER_REPEAT_DAYS} ימים עד שהמשימה תסומן כבוצעה.</p>
   </div>`;
 

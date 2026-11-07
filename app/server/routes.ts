@@ -81,8 +81,14 @@ import {
   dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, showSummaries, trackJob,
 } from './campaignAdvisor.js';
 import { reviewCampaign } from './campaignReview.js';
-import { checkTickets, lastTicketCheck, setTicketLinks, ticketLinks } from './ticketCheck.js';
-import { cancelAction, executeAction, listActions, previewAction, PREVIEW_TTL_MINUTES } from './metaActions.js';
+import { checkTickets, lastTicketCheck, recordTickets, setTicketLinks, ticketLinks } from './ticketCheck.js';
+import {
+  budgetToShekels, cancelAction, executeAction, listActions, OBJECTIVES, previewAction, PREVIEW_TTL_MINUTES,
+} from './metaActions.js';
+import {
+  fetchAdVideos, fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchInstagramAccounts, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
+} from './metaClient.js';
+import { imagePath, storeImage } from './metaImages.js';
 import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
 import {
   createTasks, deleteShowTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
@@ -2420,6 +2426,16 @@ router.post('/band/ticket-check', requireOwner, handleAsync(async (req, res) => 
   res.json({ tickets: await trackJob('tickets', { event_id: eventId, message: note }, () => checkTickets(eventId, note)) });
 }));
 
+/**
+ * Tickets sold so far, typed by hand: `{ event_id, sold, capacity?, note? }`. Saved as the show's
+ * newest ticket count and written to its tickets figure in the books.
+ */
+router.post('/band/tickets', requireOwner, handle((req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  res.json({ tickets: recordTickets(eventId, req.body ?? {}) });
+}));
+
 /** The club's site and the show's ticket page, typed by hand. An empty value clears it. */
 router.put('/band/ticket-links/:eventId', requireOwner, handle((req, res) => {
   const body = req.body ?? {};
@@ -2472,6 +2488,61 @@ router.post('/band/meta-actions/:id/execute', requireOwner, handleAsync(async (r
 
 router.post('/band/meta-actions/:id/cancel', requireOwner, handle((req, res) => {
   res.json({ action: cancelAction(req.params.id) });
+}));
+
+// ---- the campaign studio: what a new campaign is built from, and a campaign's ad sets and ads ----
+
+/**
+ * What the create wizard needs before it can offer a single choice: the pages the account may
+ * advertise for, its pixels, and the three goals. Read live, so a page added in Business Settings
+ * shows up without a sync.
+ */
+router.get('/band/meta/setup', requireOwner, handleAsync(async (_req, res) => {
+  if (!isMetaConfigured()) return res.json({ configured: false, pages: [], pixels: [], audiences: [], goals: OBJECTIVES });
+  // An account Meta will not list audiences for (a token without the scope) still gets a cold
+  // campaign; the wizard says why «hot» is not on offer.
+  const [pages, pixels, audiences, instagram, videos] = await Promise.all([
+    fetchPromotePages(),
+    fetchPixels(),
+    fetchCustomAudiences().then((list) => ({ list, error: null as string | null }), (err) => ({ list: [], error: String(err?.message || err) })),
+    // Only the Instagram engagement audience needs it; an account without one still works.
+    fetchInstagramAccounts().catch(() => []),
+    fetchAdVideos().catch(() => []),
+  ]);
+  res.json({
+    configured: true, pages, pixels, instagram_accounts: instagram, videos,
+    audiences: audiences.list, audiences_error: audiences.error, goals: OBJECTIVES,
+  });
+}));
+
+/**
+ * One campaign below the campaign level, read live: its budget and end date, its ad sets and its
+ * ads. Budgets in shekels, the same way every preview states them.
+ */
+router.get('/band/meta/campaigns/:id/structure', requireOwner, handleAsync(async (req, res) => {
+  const id = String(req.params.id);
+  const [campaign, adsets, ads] = await Promise.all([
+    fetchObject(id, 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time'),
+    fetchCampaignAdSets(id),
+    fetchCampaignAds(id),
+  ]);
+  const money = (o: any) => ({ ...o, daily_budget: budgetToShekels(o.daily_budget), lifetime_budget: budgetToShekels(o.lifetime_budget) });
+  res.json({ campaign: money(campaign), adsets: adsets.map(money), ads });
+}));
+
+/**
+ * The image a new ad will carry, kept by the app until the campaign is confirmed — nothing reaches
+ * Meta before the preview has been read (`metaImages.ts`).
+ */
+router.post('/band/meta/images', requireOwner, handle((req, res) => {
+  const image = storeImage(req.body?.data, req.body?.type);
+  res.json({ image: { ...image, url: `/api/band/meta/images/${image.id}` } });
+}));
+
+router.get('/band/meta/images/:id', requireOwner, handle((req, res) => {
+  const found = imagePath(req.params.id);
+  if (!found) return res.status(404).json({ error: 'not found' });
+  res.type(found.type).sendFile(found.file);
 }));
 
 // ---- the pixel, and the clubs whose ticket pages should carry it ----

@@ -9,8 +9,6 @@ import { SummaryTab } from './band/SummaryTab';
 import { SuppliersTab } from './band/SuppliersTab';
 import { SupplierPaymentsTab } from './band/SupplierPaymentsTab';
 import { SupplierNamesTab } from './band/SupplierNamesTab';
-import { AdsTab } from './band/AdsTab';
-import { CampaignAnalysisTab } from './band/CampaignAnalysisTab';
 import { QuotesTab } from './band/QuotesTab';
 import { divisionSplitLabel, useBandMembers } from './band/shared';
 
@@ -22,8 +20,8 @@ import { divisionSplitLabel, useBandMembers } from './band/shared';
  * page per show, reached from `shows`. What is left here is the work that genuinely spans
  * shows: the summary, the supplier ledger, costs belonging to no show, and the ad spend.
  *
- * `campaignAi` sits next to `ads` because it is the same money read a different way: that one
- * says what the campaigns cost, this one says whether it was worth it.
+ * `ads` and `campaignAi` are kept only as addresses: both moved into the campaign studio
+ * (`/campaigns`), and an old link to either is sent there.
  *
  * `quotes` is where a show is sold before it exists. It is the one tab the band edits too.
  */
@@ -123,6 +121,16 @@ export function BandWorkspace() {
     setSearchParams(searchParams, { replace: true });
   }, [isOwner, searchParams]);
 
+  // The two advertising tabs became the campaign studio; their old addresses land in it.
+  useEffect(() => {
+    const keep = searchParams.toString();
+    if (params.tab === 'ads') navigate(`/campaigns/spend${keep ? `?${keep}` : ''}`, { replace: true });
+    if (params.tab === 'campaignAi') {
+      const target = searchParams.get('show') || searchParams.get('plan') ? 'shows' : searchParams.get('panel') === 'chat' ? 'advisor' : '';
+      navigate(`/campaigns${target ? `/${target}` : ''}${keep ? `?${keep}` : ''}`, { replace: true });
+    }
+  }, [params.tab]);
+
   // An unknown tab in the URL is a typo or a stale bookmark, not a blank page.
   useEffect(() => {
     if (params.tab === undefined || isTab(params.tab)) return;
@@ -161,13 +169,6 @@ export function BandWorkspace() {
         <GeneralExpensesTab {...tabProps} expenses={generalExpenses} events={allEvents} period={period} />
       )}
 
-      {tab === 'ads' && (
-        <AdsTab {...tabProps} events={allEvents} period={period} />
-      )}
-
-      {tab === 'campaignAi' && (
-        <CampaignAnalysisTab {...tabProps} events={allEvents} period={period} />
-      )}
 
       <Modal title={eventModal?.id ? 'עריכת הופעה' : 'הופעה חדשה'} open={!!eventModal} onClose={() => setEventModal(null)}>
         {eventModal && (

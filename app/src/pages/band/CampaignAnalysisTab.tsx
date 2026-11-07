@@ -14,9 +14,18 @@ import { JOB_TEXT, useConfirm, ViewTabs, Working, type AdvisorJob } from './advi
 import { ActionsLog } from './MetaActions';
 import { PixelPanel } from './PixelPanel';
 import { ShowHero, ShowStrip, type ShowSummary } from './ShowStrip';
+import { TicketsEditor } from './TicketsEditor';
 
 interface Props extends PeriodTabProps {
   events: any[];
+  /**
+   * Inside the campaign studio the page is two of its sections: `shows` (the strip and the chosen
+   * show's status, plan and tasks) and `advisor` (the period's verdict and the conversation). The
+   * studio draws the title, the tasks, the pixel and the log itself.
+   */
+  only?: 'shows' | 'advisor';
+  onOpenTasks?: () => void;
+  onCreateFromPlan?: (eventId: string) => void;
 }
 
 type JobKind = AdvisorJob['kind'];
@@ -49,7 +58,7 @@ const MONTHS = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 
  * and a run still in progress when the page loaded is waited for rather than started twice. Only
  * the owner can start a run; band members read along.
  */
-export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice, reload }: Props) {
+export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice, reload, only, onOpenTasks, onCreateFromPlan }: Props) {
   const [report, setReport] = useState<any>(null);
   const [agent, setAgent] = useState<any>(null);
   const [shows, setShows] = useState<ShowSummary[] | null>(null);
@@ -60,6 +69,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
   const [brief, setBrief] = useState('');
   const [reviewKey, setReviewKey] = useState(0);
   const { ask, dialog } = useConfirm();
+  const [ticketsOpen, setTicketsOpen] = useState(false);
 
   // Bumped when a change was carried out in Meta, so the log of actions re-reads.
   const [actionsKey, setActionsKey] = useState(0);
@@ -381,6 +391,35 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
   // button that fails when pressed. The tasks and the pixel do not need it, so they stay: the
   // pixel panel reads Meta directly, and asking the clubs to install it can start before the
   // agent is set up.
+  if (agent && !agent.configured && only) {
+    return (
+      <div className="space-y-4">
+        <p className="rounded-2xl bg-surface border border-line px-4 py-3 text-sm text-body leading-relaxed max-w-[75ch]">
+          הסוכן עוד לא מחובר, אז תוכניות, בדיקות מצב ושאלות לא זמינות. הוא רץ על מכונה אחרת דרך SSH:
+          ממלאים שרת, משתמש, מפתח פרטי ומפתח מארח ב<span className="text-ink font-medium">הגדרות ← סוכן AI</span>.
+          יצירה ועריכה של קמפיינים עובדות גם בלעדיו.
+        </p>
+        {only === 'shows' && (
+          <>
+            {/* The shows and their ticket counts need no agent: a count can still be typed in. */}
+            {shows === null
+              ? <div className="h-[9.5rem] rounded-2xl bg-surface border border-line animate-pulse motion-reduce:animate-none" aria-label="טוען הופעות" />
+              : <ShowStrip shows={shows} selected={showId} onSelect={selectShow} lateByShow={lateByShow} />}
+            {show && (
+              <section aria-label={show.label} className="rounded-2xl border border-line bg-surface overflow-hidden">
+                <ShowHero show={show} working={false} onEditTickets={isOwner ? () => setTicketsOpen(true) : undefined} />
+              </section>
+            )}
+            <CampaignTasksPanel events={events} isOwner={isOwner} onError={onError} reloadKey={tasksKey} onChanged={tasksAdded} />
+            {ticketsOpen && show && (
+              <TicketsEditor show={show} onClose={() => setTicketsOpen(false)}
+                onSaved={(message) => { onNotice(message); loadShows(); reload(); }} />
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
   if (agent && !agent.configured) {
     return (
       <div className="space-y-4">
@@ -417,7 +456,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
     <div className="space-y-5">
       {/* ---- title, and the one place that says the agent is busy and with what */}
       <header className="space-y-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        {!only && <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <h1 className="ser text-2xl md:text-3xl">יועץ קמפיינים</h1>
             <p className="mt-1 text-sm md:text-[15px] text-body">
@@ -426,16 +465,17 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           </div>
           {/* The advisor reads whatever the last pull left behind, so a fresh pull sits beside it. */}
           <SyncButton service="meta" onError={onError} onDone={(m) => { onNotice(m); loadShows(); }} reload={reload} />
-        </div>
+        </div>}
         {runningJob && (
-          <div className="sticky top-[65px] z-20 rounded-xl border border-accent/20 bg-accent-soft/95 backdrop-blur px-3.5 py-2.5 space-y-0.5">
+          <div className={clsx('sticky z-20', only ? 'top-0 md:top-4' : 'top-[65px]')}><div className=" rounded-xl border border-accent/20 bg-accent-soft/95 backdrop-blur px-3.5 py-2.5 space-y-0.5">
             <Working text={`הסוכן ${JOB_TEXT[runningJob.kind].doing}${showLabel(runningJob.event_id) ? ` · ${showLabel(runningJob.event_id)}` : ''}`}
               since={runningJob.started_at} />
             <p className="text-xs text-muted">אפשר להמשיך לעבוד בינתיים. הסוכן עונה על בקשה אחת בכל פעם, אז בקשות חדשות יחכו עד שיסיים.</p>
-          </div>
+          </div></div>
         )}
       </header>
 
+      {only !== 'advisor' && <>
       {/* ---- the shows ahead: the one show picker on the page */}
       <section aria-labelledby="shows-heading" className="space-y-2.5">
         <h2 id="shows-heading" className="text-sm font-semibold text-muted">ההופעות הקרובות</h2>
@@ -469,7 +509,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
             })}
           </ul>
           {dueNow.length > 5 && (
-            <button type="button" onClick={() => setParams({ panel: 'tasks' })} className="mt-1 min-h-10 text-sm text-accent-ink hover:underline">
+            <button type="button" onClick={() => (onOpenTasks ? onOpenTasks() : setParams({ panel: 'tasks' }))} className="mt-1 min-h-10 text-sm text-accent-ink hover:underline">
               ועוד {dueNow.length - 5} משימות
             </button>
           )}
@@ -480,7 +520,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
       {show && (
         <section aria-label={show.label} key={show.event_id}
           className="settle-in rounded-2xl border border-line bg-surface overflow-hidden">
-          <ShowHero show={show} working={showWorking} />
+          <ShowHero show={show} working={showWorking} onEditTickets={isOwner ? () => setTicketsOpen(true) : undefined} />
           <ViewTabs label="מה להציג על ההופעה" className="px-2 md:px-3" value={view}
             onChange={(v) => setParams({ view: v })}
             options={[
@@ -529,6 +569,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
                 onTasksAdded={tasksAdded}
                 onReset={resetShow}
                 onError={onError}
+                onCreateCampaign={onCreateFromPlan ? () => onCreateFromPlan(showId) : undefined}
               />
             )}
             {view === 'tasks' && (
@@ -541,19 +582,22 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
       {shows && shows.length > 0 && !show && showId && (
         <p className="text-sm text-body">ההופעה שבכתובת כבר לא ברשימת ההופעות הקרובות. בחרו הופעה מהרשימה.</p>
       )}
+      </>}
 
       {/* ---- the whole account: the period's verdict, the conversation, every task, pixel and log */}
-      <section aria-labelledby="overview-heading" className="rounded-2xl border border-line bg-surface overflow-hidden">
+      {only !== 'shows' && <section aria-labelledby="overview-heading" className="rounded-2xl border border-line bg-surface overflow-hidden">
         <div className="px-4 md:px-6 pt-4">
-          <h2 id="overview-heading" className="ser text-lg">כל הקמפיינים</h2>
+          <h2 id="overview-heading" className="ser text-lg">{only ? `התקופה: ${periodLabel}` : 'כל הקמפיינים'}</h2>
         </div>
         <ViewTabs label="מבט על כל הקמפיינים" className="px-2 md:px-3 mt-1" value={panel}
           onChange={(p) => setParams({ panel: p === 'analysis' ? null : p })}
           options={[
             { value: 'analysis', label: 'סיכום תקופה' },
             { value: 'chat', label: 'שאלות לסוכן', badge: messages.length > 0 && <span className="num text-[11px] text-muted">{messages.length}</span> },
-            { value: 'tasks', label: 'כל המשימות', badge: tasksBadge(openTasks.length, dueNow.filter((t: any) => t.due_date < today).length) },
-            { value: 'meta', label: 'פיקסל ושינויים ב-Meta' },
+            ...(only ? [] : [
+              { value: 'tasks' as Panel, label: 'כל המשימות', badge: tasksBadge(openTasks.length, dueNow.filter((t: any) => t.due_date < today).length) },
+              { value: 'meta' as Panel, label: 'פיקסל ושינויים ב-Meta' },
+            ]),
           ]} />
         <div key={panel} className="settle-in p-4 md:p-6">
           {panel === 'analysis' && (
@@ -598,7 +642,11 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
             </div>
           )}
         </div>
-      </section>
+      </section>}
+      {ticketsOpen && show && (
+        <TicketsEditor show={show} onClose={() => setTicketsOpen(false)}
+          onSaved={(message) => { onNotice(message); loadShows(); setReviewKey((k) => k + 1); reload(); }} />
+      )}
       {dialog}
     </div>
   );

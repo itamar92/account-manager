@@ -1,19 +1,23 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, ArrowLeft, CheckCircle2, ExternalLink, Eye, XCircle, Zap } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ExternalLink, Eye, XCircle, Zap } from 'lucide-react';
 import { get, post } from '../../api';
 import { Button, Modal, Tag } from '../../ui';
 import { clsx } from 'clsx';
 import { InlineError, when } from './advisorShared';
+import { ChangeLine } from '../campaigns/studioShared';
 
 /** An action as an advisor answer carries it — see server/metaActions.ts. */
 export interface ProposedAction {
-  type: 'pause' | 'activate' | 'set_daily_budget' | 'set_end_date' | 'create_pixel';
+  type: 'pause' | 'activate' | 'set_daily_budget' | 'set_end_date' | 'create_pixel' | 'rename' | 'archive' | 'create_campaign' | 'create_audience';
   level: 'campaign' | 'adset' | 'ad' | null;
   id: string | null;
   name: string | null;
   daily_budget: number | null;
   end_date: string | null;
   pixel_name?: string | null;
+  new_name?: string | null;
+  spec?: Record<string, unknown> | null;
+  audience?: Record<string, unknown> | null;
   reason: string | null;
 }
 
@@ -28,6 +32,10 @@ export function actionLabel(action: ProposedAction): string {
     case 'set_daily_budget': return `תקציב יומי ₪${action.daily_budget} ל${what}`;
     case 'set_end_date': return `תאריך סיום ${action.end_date} ל${what}`;
     case 'create_pixel': return 'יצירת פיקסל Meta לחשבון';
+    case 'rename': return `שינוי שם ל${what} ל«${action.new_name}»`;
+    case 'archive': return `העברה לארכיון של ${what}`;
+    case 'create_campaign': return `קמפיין חדש «${action.name}»`;
+    case 'create_audience': return `קהל שמור חדש «${action.name}»`;
   }
 }
 
@@ -82,13 +90,8 @@ export function ActionPreviewModal({ preview, onClose, onDone }: {
 
         <ul className="divide-y divide-line rounded-xl border border-line">
           {preview.changes.map((change: any, i: number) => (
-            <li key={i} className="px-3 py-2.5 text-sm">
-              <div className="text-xs text-faint mb-1">{change.label}</div>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-muted line-through decoration-faint">{change.from}</span>
-                <ArrowLeft className="w-4 h-4 text-faint" aria-label="יהפוך ל" />
-                <span className="font-bold text-ink">{change.to}</span>
-              </div>
+            <li key={i} className="px-3 py-2.5">
+              <ChangeLine label={change.label} from={change.from} to={change.to} size="sm" />
             </li>
           ))}
         </ul>
@@ -162,7 +165,7 @@ export function ActionPreviewModal({ preview, onClose, onDone }: {
  */
 export function ActionButtons({ actions, source, sourceId, eventId, isOwner, onDone, title, prominent }: {
   actions: ProposedAction[] | undefined;
-  source: 'review' | 'analysis' | 'chat' | 'pixel';
+  source: 'review' | 'analysis' | 'chat' | 'pixel' | 'studio';
   sourceId?: string;
   eventId?: string;
   isOwner: boolean;

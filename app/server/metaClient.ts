@@ -312,3 +312,107 @@ export async function fetchPixelStats(pixelId: string, aggregation: 'event' | 'h
 export async function graphWrite<T = any>(path: string, params: Record<string, string>): Promise<T> {
   return graph<T>(path, params, true);
 }
+
+// ---------------------------------------------------------------- the campaign studio's reads
+
+export interface MetaPage {
+  id: string;
+  name: string | null;
+}
+
+/**
+ * The Facebook pages this ad account may run ads for — an ad has to be published by one. The
+ * account's own list rather than the token's, since a system user may see pages the account
+ * cannot promote.
+ */
+export async function fetchPromotePages(): Promise<MetaPage[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/promote_pages`, { fields: 'id,name' });
+  return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), name: text(row.name) }));
+}
+
+/** A campaign's ad sets, read live: the sync keeps campaigns only. */
+export async function fetchCampaignAdSets(campaignId: string): Promise<any[]> {
+  if (!/^\d+$/.test(campaignId)) throw new MetaError(`מזהה Meta לא תקין: ${campaignId}`, 400);
+  return graphPaged<any>(`${campaignId}/adsets`, {
+    fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,start_time,end_time,optimization_goal,targeting{age_min,age_max,geo_locations}',
+  });
+}
+
+/** A campaign's ads, with enough of the creative to recognise each one. */
+export async function fetchCampaignAds(campaignId: string): Promise<any[]> {
+  if (!/^\d+$/.test(campaignId)) throw new MetaError(`מזהה Meta לא תקין: ${campaignId}`, 400);
+  return graphPaged<any>(`${campaignId}/ads`, {
+    fields: 'id,name,status,effective_status,adset_id,creative{id,title,body,thumbnail_url,image_url}',
+  });
+}
+
+export interface MetaAudience {
+  id: string;
+  name: string | null;
+  subtype: string | null;
+  /** Meta's own range; -1 when it will not say (a very new or very small audience). */
+  size_lower: number | null;
+  size_upper: number | null;
+  /** Meta's delivery status code: 200 is ready to deliver. */
+  ready: boolean;
+  status: string | null;
+}
+
+/**
+ * The ad account's saved custom audiences — website visitors, video viewers, page engagers,
+ * customer lists, lookalikes. What a «hot» campaign targets, and what any campaign may exclude.
+ * Same `ads_read` scope as the campaigns.
+ */
+export async function fetchCustomAudiences(): Promise<MetaAudience[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/customaudiences`, {
+    fields: 'id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,delivery_status',
+  });
+  const size = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    name: text(row.name),
+    subtype: text(row.subtype),
+    size_lower: size(row.approximate_count_lower_bound),
+    size_upper: size(row.approximate_count_upper_bound),
+    ready: row.delivery_status?.code == null || Number(row.delivery_status.code) === 200,
+    status: text(row.delivery_status?.description),
+  }));
+}
+
+export interface MetaInstagramAccount {
+  id: string;
+  username: string | null;
+}
+
+/** The Instagram accounts the ad account may advertise as — the source of an Instagram engagement audience. */
+export async function fetchInstagramAccounts(): Promise<MetaInstagramAccount[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/instagram_accounts`, { fields: 'id,username' });
+  return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), username: text(row.username) }));
+}
+
+export interface MetaVideo {
+  id: string;
+  title: string | null;
+  created_time: string | null;
+  /** Seconds. */
+  length: number | null;
+  picture: string | null;
+}
+
+/**
+ * The videos in the ad account's library — every video that was used in an ad, newest first. What
+ * a video viewers audience is built from. Organic posts that were never advertised are not here.
+ */
+export async function fetchAdVideos(): Promise<MetaVideo[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/advideos`, { fields: 'id,title,created_time,length,picture' });
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    title: text(row.title),
+    created_time: text(row.created_time),
+    length: Number.isFinite(Number(row.length)) ? Math.round(Number(row.length)) : null,
+    picture: text(row.picture),
+  })).sort((a, b) => String(b.created_time ?? '').localeCompare(String(a.created_time ?? '')));
+}

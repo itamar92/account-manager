@@ -661,8 +661,9 @@ Settings, each with an undo.
 ### Meta Ads → what a show's promotion cost
 
 Ad spend per show, pulled from the Meta Marketing API. It fills a column the band's books
-already had: **קמפיין** on each show's expense row, typed by hand until now. **הלהקה →
-פרסום** is where the result is read and where the mapping is done.
+already had: **קמפיין** on each show's expense row, typed by hand until now. **מרכז קמפיינים →
+הוצאות וחיובים** is where the result is read, and the mapping is done there or on a campaign's
+panel.
 
 Setup is a system-user token, described in [`.env.example`](../.env.example) — reading your own
 ad account with `ads_read` needs no App Review, so it is about fifteen minutes of Business
@@ -734,7 +735,71 @@ at all rather than putting dollars in a shekel column.
 | `GET /api/band/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
 | `GET /api/band/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
 
-## יועץ קמפיינים — the AI advisor (הלהקה → יועץ קמפיינים)
+## מרכז קמפיינים — the campaign studio (`/campaigns`)
+
+The band's campaigns are run from one place that works as an app of its own: an ink rail on a
+desktop and a bottom tab bar on a phone, outside the books' shell, with «חזרה לספרים» as the way back.
+It replaced the two sidebar entries «קמפיינים» and «יועץ קמפיינים»; `/band/ads` and `/band/campaignAi`
+redirect into it. Sections:
+
+- **החלטות** (the first screen) — everything waiting for a yes, most urgent first: a campaign still
+  spending after its show (pause), a paused campaign whose show is near (activate), the agent's
+  proposed changes, due and overdue tasks, shows within 30 days with no campaign (create, from the
+  plan if there is one), and spend no show claims (map to the suggested show). Above it, the period's
+  spend, active campaigns, cost per ticket and unattributed spend.
+- **קמפיינים** — every campaign with filters (active / paused / unmapped / archive) and a workspace
+  per campaign, read live from Meta: its budget and end date, its ad sets and ads. From there:
+  pause / activate (campaign, ad set or ad), daily budget (campaign or ad set), end date, rename,
+  archive, map and unmap shows, and the daily spend curve.
+- **הופעות ותוכניות**, **יועץ AI**, **משימות**, **הוצאות וחיובים**, **פיקסל, קהלים ויומן** — the advisor's
+  show views, the period's verdict and the chat, the campaign tasks, the spend tables and the pixel
+  panel with the log of changes, as before.
+
+**Every change in Meta is the same preview → confirm** (`metaActions.ts`), whether the agent proposed it
+or the owner typed it: the change is shown as «עכשיו → אחרי» against the target read live, and only a
+confirmed preview is sent. Delete is **archive** (`ARCHIVED`): it stops spending, keeps the history
+and the shows' figures, and cannot be switched back on from the app.
+
+**Creating a campaign (קמפיין חדש).** A four-step wizard — show and goal, audience and budget, the ad,
+review — opened from the rail, from a show with no campaign, or from a plan («יצירת הקמפיין ב-Meta…»,
+which fills budget, dates and copy from it). Goals are sales (`OUTCOME_SALES`, optimising for the
+pixel's Purchase; needs a pixel), traffic to the ticket page (`OUTCOME_TRAFFIC`, landing page views)
+and awareness (`OUTCOME_AWARENESS`, reach). The audience step chooses **קהל קר** (prospecting: Israel
+by age, the creative finds the people) or **קהל חם** (retargeting: one or more of the account's saved
+custom audiences — ticket-page visitors, video viewers, page engagers — read live from
+`/customaudiences`; lookalikes are not offered there, since they are new people). Any campaign can
+exclude saved audiences, and one whose name says it is buyers (רוכשים / purchasers) is excluded by
+default. The preview blocks an audience that is not in the account or a hot campaign with none, and
+warns when an audience is not ready or the hot audiences add up to fewer than 1,000 people. Interests
+and a radius around the venue are set afterwards in Ads Manager.
+
+**Saved audiences can be created from the app** (`create_audience`, studio only, the same preview →
+confirm), inside the wizard's hot step — the new one is ticked on creation — and under «פיקסל, קהלים
+ויומן → קהלים שמורים». Presets: ticket-page visitors (30 days, minus buyers), started checkout and did
+not finish (30 days, minus buyers), Instagram engagers and Facebook page engagers (180 days), and
+ticket buyers (90 days, for exclusion), and video viewers — one or more videos from the ad account's
+library (`/advideos`, i.e. videos that were used in ads or uploaded there; organic posts are not in it)
+watched to a chosen depth: 3 seconds, 25%, 50% (default), 75% or to the end (`event_sources: video`,
+`video_watched` … `video_completed`, up to 365 days). Website audiences are built from the pixel's events
+(`rule` with `event_sources: pixel`, up to 180 days) and fill only from sites that run the pixel;
+Instagram (`ig_business`, `ig_business_profile_all`) and page (`page`, `page_engaged`) audiences go back
+up to 365 days. Every audience is created with `prefill`, so it is built from the days that already
+passed; Meta takes up to about half an hour, and until then the size is unknown. The image is kept by the app (`metaImages.ts`, in the data directory)
+until the confirm, so nothing reaches the ad account before the preview has been read. Confirming
+uploads the image and creates, in order, the campaign (**paused**), one ad set (daily budget, start,
+end of the end date in Israel time), the creative and the ad; the ad set and ad are created active
+inside the paused campaign, so switching the campaign on is the single change that starts spending,
+and it is offered right after. A failure half-way names what was already created. The new campaign
+is written to the synced list and mapped to its show at once.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/band/meta/setup` | the pages the account may advertise for, its pixels, its saved audiences, the goals |
+| `GET /api/band/meta/campaigns/:id/structure` | one campaign live: budget, ad sets, ads |
+| `POST /api/band/meta/images` | keep a new ad's image (`{data}` as a data: URL, JPG/PNG ≤ 8MB) |
+| `POST /api/band/meta-actions/preview` | `action.type` is also `rename` (`new_name`), `archive`, and `create_campaign` (`spec`, studio only) |
+
+## יועץ קמפיינים — the AI advisor (מרכז קמפיינים → יועץ AI)
 
 The פרסום tab says what a show's promotion **cost**. This one asks whether it was worth it:
 a verdict on the period, findings tied to specific shows and campaigns, ranked suggestions, a
@@ -783,6 +848,13 @@ returns where the campaign stands against the plan, one recommended decision wit
 for the next check, the alternatives and when to pick them, and any missing tasks to accept
 (`campaignReview.ts`).
 
+**Tickets typed by hand (`recordTickets`, `POST /api/band/tickets`).** The show header's «עדכון ידני» —
+and a line in the studio's decision feed for a show within two weeks whose last count is a week old
+or missing — takes tickets sold so far and, optionally, the hall's capacity and where the number came
+from. It is saved as the show's newest ticket count (a `tickets` report marked `source: manual`), so
+the cards, the status review and the advisor read it the same way as a check of the club's site, and
+it is written to the show's tickets figure in the books, which cost per ticket divides by.
+
 **Ticket status from the club's site.** The ticket check (`ticketCheck.ts`) is the one run that may
 browse: the agent searches for the club's official site and the show's ticket page and reports
 what the page says — available, last tickets, sold out, a count if one is shown, the price — with
@@ -817,8 +889,8 @@ Business Settings → Users → System users → the app's system user (with the
 access*) → Generate token for the same Meta app with `ads_management` and `ads_read`, replace
 `META_ACCESS_TOKEN` in `deploy/.env` and restart. If Meta refuses to create a pixel with it, create
 one in Events Manager instead — the panel reads whichever pixel the account has. Every preview and its outcome is kept (`meta_actions`)
-and listed under «פעולות ב-Meta». New campaigns, audiences and creative stay instructions: they
-need choices — images, a page, targeting — that a preview cannot show honestly in one line.
+and listed under «פיקסל, קהלים ויומן». The agent never proposes a new campaign: those are built by
+the owner in the studio's wizard (below), which goes through the same two steps.
 
 **The pixel and the clubs (`metaPixel.ts`, «פיקסל ומעקב מכירות»).** Tickets are sold on the
 club's site, so Meta only learns of a purchase if the club's ticketing system runs the band's

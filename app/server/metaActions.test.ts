@@ -11,6 +11,7 @@ const objects: Record<string, any> = {};
 const writes: Array<{ path: string; params: Record<string, string> }> = [];
 let pixels: any[] = [];
 let pixelStats: Record<string, any> = {};
+let failAds = false;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url!, 'http://stub');
@@ -27,12 +28,26 @@ const server = http.createServer((req, res) => {
       delete params.access_token;
       writes.push({ path: parts.join('/'), params });
       if (parts[1] === 'adspixels') return send({ id: '777000111' });
+      if (parts[1] === 'adimages') return send({ images: { 'ad.png': { hash: 'hash-abc', url: 'https://img.example/ad.png' } } });
+      const created: Record<string, string> = { campaigns: '130000000001', adsets: '130000000002', adcreatives: '130000000003', ads: '130000000004', customaudiences: '160000000099' };
+      if (parts[0]?.startsWith('act_') && created[parts[1]]) {
+        if (parts[1] === 'ads' && failAds) return send({ error: { message: 'Invalid creative', code: 100 } });
+        return send({ id: created[parts[1]] });
+      }
       Object.assign(objects[parts[0]] ?? {}, params);
       send({ success: true });
     });
     return;
   }
   if (parts[1] === 'adspixels') return send({ data: pixels });
+  if (parts[1] === 'promote_pages') return send({ data: [{ id: '100000000001', name: 'הלהקה' }] });
+  if (parts[1] === 'advideos') return send({ data: [{ id: '180000000001', title: 'קליפ מהחזרה', created_time: '2099-09-01T10:00:00+0000', length: 42 }] });
+  if (parts[1] === 'instagram_accounts') return send({ data: [{ id: '170000000001', username: 'the_band' }] });
+  if (parts[1] === 'customaudiences') return send({ data: [
+    { id: '160000000001', name: 'מבקרי דף הכרטיסים 30 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 3000, approximate_count_upper_bound: 4000, delivery_status: { code: 200 } },
+    { id: '160000000002', name: 'רוכשים 90 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 200, approximate_count_upper_bound: 300, delivery_status: { code: 200 } },
+    { id: '160000000003', name: 'צופי וידאו 50%', subtype: 'ENGAGEMENT', approximate_count_lower_bound: 400, approximate_count_upper_bound: 600, delivery_status: { code: 300, description: 'Audience is too small' } },
+  ] });
   if (parts[1] === 'stats') return send({ data: [{ data: pixelStats[`${parts[0]}:${url.searchParams.get('aggregation')}`] ?? [] }] });
   const obj = objects[parts[0]];
   if (!obj) return send({ error: { message: 'Unsupported get request', code: 100 } });
@@ -236,4 +251,182 @@ test('advisor answers keep their actions, and a plan keeps its tracking block', 
   assert.deepEqual(advisor.cleanTracking({ pixel_ready: true, optimization: 'Purchase' }), {
     pixel_ready: true, optimization: 'Purchase', retargeting: null, club_request: null,
   });
+});
+
+test('rename and archive preview the live name and status, and archiving warns it is final', async () => {
+  objects[PAST_CAMPAIGN].status = 'PAUSED';
+  const rename = await actions.previewAction({ type: 'rename', level: 'campaign', id: PAST_CAMPAIGN, new_name: 'בארבי ינואר — סגור' });
+  assert.deepEqual(rename.changes, [{ label: 'שם', from: 'בארבי ינואר', to: 'בארבי ינואר — סגור' }]);
+  await actions.executeAction(rename.id);
+  assert.deepEqual(writes.at(-1), { path: PAST_CAMPAIGN, params: { name: 'בארבי ינואר — סגור' } });
+  assert.equal((db.prepare('SELECT name FROM meta_campaigns WHERE id = ?').get(PAST_CAMPAIGN) as any).name, 'בארבי ינואר — סגור');
+
+  const archive = await actions.previewAction({ type: 'archive', level: 'campaign', id: PAST_CAMPAIGN });
+  assert.match(archive.warnings.join(' '), /אי אפשר להפעיל אותו שוב/);
+  await actions.executeAction(archive.id);
+  assert.deepEqual(writes.at(-1), { path: PAST_CAMPAIGN, params: { status: 'ARCHIVED' } });
+  assert.equal((db.prepare('SELECT status FROM meta_campaigns WHERE id = ?').get(PAST_CAMPAIGN) as any).status, 'ARCHIVED');
+  const again = await actions.previewAction({ type: 'archive', level: 'campaign', id: PAST_CAMPAIGN });
+  assert.equal(again.can_execute, false);
+});
+
+const SPEC = {
+  event_id: 'show-next', name: 'זאפה הרצליה — כרטיסים', goal: 'traffic', daily_budget: 60,
+  start_date: '2099-10-20', end_date: '2099-11-04', age_min: 24, age_max: 45, page_id: '100000000001',
+  link: 'https://tickets.example-club.co.il/e/42', primary_text: 'ערב אחד בהרצליה', headline: 'כרטיסים אחרונים',
+  description: null, cta: 'BUY_TICKETS',
+};
+
+test('a new campaign is only built from the studio, and its preview sends nothing to Meta', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  assert.equal(actions.cleanActions([{ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }]).length, 0);
+  await assert.rejects(actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }), { status: 400 });
+
+  const before = writes.length;
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.deepEqual(preview.changes.map((c) => c.label), ['קמפיין', 'קבוצת מודעות', 'מודעה']);
+  assert.match(preview.changes[1].to, /16 ימים/);
+  assert.equal(writes.length, before);
+
+  const sales = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, goal: 'sales', image_id: image.id } }, { source: 'studio' });
+  assert.match(sales.blockers.join(' '), /פיקסל/);
+  const lost = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, page_id: '100000000999', image_id: image.id } }, { source: 'studio' });
+  assert.match(lost.blockers.join(' '), /הדף/);
+});
+
+test('confirming builds image, campaign, ad set, creative and ad in order, paused, mapped to the show', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  const before = writes.length;
+  const done = await actions.executeAction(preview.id);
+  assert.equal(done.status, 'done');
+  const sent = writes.slice(before);
+  assert.deepEqual(sent.map((w) => w.path), ['act_1234567/adimages', 'act_1234567/campaigns', 'act_1234567/adsets', 'act_1234567/adcreatives', 'act_1234567/ads']);
+  assert.equal(sent[1].params.status, 'PAUSED');
+  assert.equal(sent[2].params.daily_budget, '6000');
+  assert.equal(sent[2].params.end_time, '2099-11-04T23:59:00+02:00');
+  assert.deepEqual(JSON.parse(sent[2].params.targeting).geo_locations, { countries: ['IL'] });
+  assert.equal(JSON.parse(sent[3].params.object_story_spec).link_data.image_hash, 'hash-abc');
+  assert.equal((db.prepare('SELECT status FROM meta_campaigns WHERE id = ?').get('130000000001') as any).status, 'PAUSED');
+  assert.ok(db.prepare('SELECT 1 FROM meta_campaign_events WHERE campaign_id = ? AND event_id = ?').get('130000000001', 'show-next'));
+});
+
+test('a build that fails half-way says what already exists in the account', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  failAds = true;
+  try {
+    await assert.rejects(actions.executeAction(preview.id), { message: /קמפיין 130000000001/ });
+    const record = actions.getAction(preview.id);
+    assert.equal(record.status, 'failed');
+    assert.equal(record.result.adset_id, '130000000002');
+  } finally { failAds = false; }
+});
+
+test('a hot campaign targets saved audiences and excludes buyers; the preview checks them against the account', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const hot = { ...SPEC, image_id: image.id, temperature: 'hot', audience_ids: ['160000000001'], excluded_audience_ids: ['160000000002'] };
+
+  const empty = await actions.previewAction({ type: 'create_campaign', spec: { ...hot, audience_ids: [] } }, { source: 'studio' });
+  assert.match(empty.blockers.join(' '), /קמפיין חם צריך/);
+  const unknown = await actions.previewAction({ type: 'create_campaign', spec: { ...hot, audience_ids: ['160000000999'] } }, { source: 'studio' });
+  assert.match(unknown.blockers.join(' '), /לא נמצא/);
+  const small = await actions.previewAction({ type: 'create_campaign', spec: { ...hot, audience_ids: ['160000000003'] } }, { source: 'studio' });
+  assert.match(small.warnings.join(' '), /קטנים/);
+  assert.match(small.warnings.join(' '), /עוד לא מוכן/);
+
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: hot }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.match(preview.changes[1].to, /קהל חם: «מבקרי דף הכרטיסים 30 יום»/);
+  assert.equal(preview.changes[2].label, 'לא יוצג ל');
+  const before = writes.length;
+  await actions.executeAction(preview.id);
+  const adset = writes.slice(before).find((w) => w.path.endsWith('/adsets'))!;
+  const targeting = JSON.parse(adset.params.targeting);
+  assert.deepEqual(targeting.custom_audiences, [{ id: '160000000001' }]);
+  assert.deepEqual(targeting.excluded_custom_audiences, [{ id: '160000000002' }]);
+  assert.match(adset.params.name, /קהל חם$/);
+});
+
+test('a cold campaign carries no audiences, and is reminded to exclude buyers', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const cleaned = actions.cleanSpec({ ...SPEC, image_id: image.id, temperature: 'cold', audience_ids: ['160000000001'] })!;
+  assert.deepEqual(cleaned.audience_ids, []);
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  assert.match(preview.changes[1].to, /^קהל קר: ישראל/);
+  assert.match(preview.warnings.join(' '), /בלי החרגות/);
+});
+
+test('a saved audience is built only from the studio, previewed against the account, then created with its rule', async () => {
+  const website = { kind: 'website', name: 'התחילו לקנות · 30 יום', source_id: '555000', days: 30, event: 'InitiateCheckout', exclude_buyers: true };
+  assert.equal(actions.cleanActions([{ type: 'create_audience', audience: website }]).length, 0);
+  assert.equal(actions.cleanAudienceSpec({ ...website, days: 999 })!.days, 180);
+  assert.equal(actions.cleanAudienceSpec({ ...website, event: 'Purchase' })!.exclude_buyers, false);
+
+  const before = writes.length;
+  const preview = await actions.previewAction({ type: 'create_audience', audience: website }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.match(preview.changes[0].to, /התחילו לקנות.*בלי מי שקנה.*30 ימים/);
+  assert.match(preview.warnings.join(' '), /דף הכרטיסים של המועדון/);
+  assert.equal(writes.length, before);
+
+  const done = await actions.executeAction(preview.id);
+  assert.equal(done.result.audience_id, '160000000099');
+  const sent = writes.at(-1)!;
+  assert.equal(sent.path, 'act_1234567/customaudiences');
+  assert.equal(sent.params.prefill, 'true');
+  const rule = JSON.parse(sent.params.rule);
+  assert.deepEqual(rule.inclusions.rules[0].event_sources, [{ id: '555000', type: 'pixel' }]);
+  assert.equal(rule.inclusions.rules[0].retention_seconds, 30 * 86400);
+  assert.equal(rule.inclusions.rules[0].filter.filters[0].value, 'InitiateCheckout');
+  assert.equal(rule.exclusions.rules[0].filter.filters[0].value, 'Purchase');
+});
+
+test('Instagram and page audiences check their source, and a name already taken is said', async () => {
+  const ig = await actions.previewAction({ type: 'create_audience', audience: { kind: 'instagram', name: 'מבקרי דף הכרטיסים 30 יום', source_id: '170000000001', days: 180 } }, { source: 'studio' });
+  assert.equal(ig.can_execute, true);
+  assert.match(ig.warnings.join(' '), /כבר יש בחשבון קהל בשם/);
+  assert.deepEqual(actions.audienceRule(ig.action.audience!).inclusions, {
+    operator: 'or',
+    rules: [{ event_sources: [{ id: '170000000001', type: 'ig_business' }], retention_seconds: 180 * 86400, filter: { operator: 'and', filters: [{ field: 'event', operator: 'eq', value: 'ig_business_profile_all' }] } }],
+  });
+  const wrong = await actions.previewAction({ type: 'create_audience', audience: { kind: 'page', name: 'דף', source_id: '100000000999', days: 180 } }, { source: 'studio' });
+  assert.match(wrong.blockers.join(' '), /לא שייך לחשבון/);
+});
+
+test('a video viewers audience is built from the chosen videos and how far they were watched', async () => {
+  const spec = actions.cleanAudienceSpec({ kind: 'video', name: 'צפו בחצי מהקליפ', video_ids: ['180000000001', 'nope'], video_event: 'video_view_50_percent', days: 400 })!;
+  assert.deepEqual(spec.video_ids, ['180000000001']);
+  assert.equal(spec.days, 365);
+  assert.equal(actions.cleanAudienceSpec({ kind: 'video', name: 'בלי וידאו', video_ids: [] }), null);
+
+  const preview = await actions.previewAction({ type: 'create_audience', audience: spec }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.match(preview.changes[0].to, /צפו בחצי בוידאו «קליפ מהחזרה»/);
+  await actions.executeAction(preview.id);
+  const rule = JSON.parse(writes.at(-1)!.params.rule);
+  assert.deepEqual(rule.inclusions.rules[0].event_sources, [{ id: '180000000001', type: 'video' }]);
+  assert.equal(rule.inclusions.rules[0].filter.filters[0].value, 'video_view_50_percent');
+
+  const unknown = await actions.previewAction({ type: 'create_audience', audience: { ...spec, video_ids: ['180000000999'] } }, { source: 'studio' });
+  assert.match(unknown.blockers.join(' '), /לא נמצא/);
+});
+
+test('tickets typed by hand become the show\'s newest count and its figure in the books', async () => {
+  const { recordTickets } = await import('./ticketCheck.js');
+  assert.throws(() => recordTickets('show-next', { sold: 'many' }), { status: 400 });
+  assert.throws(() => recordTickets('show-next', { sold: 500, capacity: 300 }), { status: 400 });
+  const saved = recordTickets('show-next', { sold: 270, capacity: 300, note: 'לפי דוח המועדון' });
+  assert.equal((saved.response as any).tickets_left, 30);
+  assert.equal((saved.response as any).availability, 'few_left');
+  assert.equal((db.prepare('SELECT tickets FROM band_events WHERE id = ?').get('show-next') as any).tickets, 270);
+  const status = advisor.lastTicketStatus('show-next')!;
+  assert.equal(status.tickets_sold, 270);
+  assert.match(status.summary!, /עודכן ידנית/);
 });

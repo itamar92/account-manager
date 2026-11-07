@@ -39,6 +39,8 @@ backfillSupplierAliases();
 seedBuiltinTemplates();
 
 const app = express();
+// A new ad's image comes up as base64 inside JSON, so that one route takes a larger body.
+app.use('/api/band/meta/images', express.json({ limit: '12mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use(loadUser);
 

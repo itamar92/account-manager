@@ -515,7 +515,7 @@ export interface ShowSummary {
   capacity: number | null;
   plan: { report_id: string; created_at: string; budget_total: number | null; start: string | null; end: string | null } | null;
   review: { status: string | null; headline: string | null; decision: string | null; created_at: string } | null;
-  tickets: { availability: string | null; sold: number | null; left: number | null; capacity: number | null; created_at: string } | null;
+  tickets: { availability: string | null; sold: number | null; left: number | null; capacity: number | null; created_at: string; source: 'manual' | 'site' } | null;
   spend: number | null;
   pixel_status: string | null;
 }
@@ -564,7 +564,7 @@ export function showSummaries(spendByEvent: Map<string, { spend: number }>): Sho
       } : null,
       tickets: tickets && t?.found !== false ? {
         availability: t?.availability ?? null, sold: num(t?.tickets_sold), left: num(t?.tickets_left),
-        capacity: num(t?.capacity), created_at: tickets.created_at,
+        capacity: num(t?.capacity), created_at: tickets.created_at, source: t?.source === 'manual' ? 'manual' : 'site',
       } : null,
       spend: spendByEvent.get(row.id)?.spend ?? null,
       pixel_status: row.pixel_status ?? null,
