@@ -81,12 +81,12 @@ import {
   dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, showSummaries, trackJob,
 } from './campaignAdvisor.js';
 import { reviewCampaign } from './campaignReview.js';
-import { checkTickets, lastTicketCheck, setTicketLinks, ticketLinks } from './ticketCheck.js';
+import { checkTickets, lastTicketCheck, recordTickets, setTicketLinks, ticketLinks } from './ticketCheck.js';
 import {
   budgetToShekels, cancelAction, executeAction, listActions, OBJECTIVES, previewAction, PREVIEW_TTL_MINUTES,
 } from './metaActions.js';
 import {
-  fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchInstagramAccounts, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
+  fetchAdVideos, fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchInstagramAccounts, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
 } from './metaClient.js';
 import { imagePath, storeImage } from './metaImages.js';
 import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
@@ -2426,6 +2426,16 @@ router.post('/band/ticket-check', requireOwner, handleAsync(async (req, res) => 
   res.json({ tickets: await trackJob('tickets', { event_id: eventId, message: note }, () => checkTickets(eventId, note)) });
 }));
 
+/**
+ * Tickets sold so far, typed by hand: `{ event_id, sold, capacity?, note? }`. Saved as the show's
+ * newest ticket count and written to its tickets figure in the books.
+ */
+router.post('/band/tickets', requireOwner, handle((req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  res.json({ tickets: recordTickets(eventId, req.body ?? {}) });
+}));
+
 /** The club's site and the show's ticket page, typed by hand. An empty value clears it. */
 router.put('/band/ticket-links/:eventId', requireOwner, handle((req, res) => {
   const body = req.body ?? {};
@@ -2491,15 +2501,16 @@ router.get('/band/meta/setup', requireOwner, handleAsync(async (_req, res) => {
   if (!isMetaConfigured()) return res.json({ configured: false, pages: [], pixels: [], audiences: [], goals: OBJECTIVES });
   // An account Meta will not list audiences for (a token without the scope) still gets a cold
   // campaign; the wizard says why «hot» is not on offer.
-  const [pages, pixels, audiences, instagram] = await Promise.all([
+  const [pages, pixels, audiences, instagram, videos] = await Promise.all([
     fetchPromotePages(),
     fetchPixels(),
     fetchCustomAudiences().then((list) => ({ list, error: null as string | null }), (err) => ({ list: [], error: String(err?.message || err) })),
     // Only the Instagram engagement audience needs it; an account without one still works.
     fetchInstagramAccounts().catch(() => []),
+    fetchAdVideos().catch(() => []),
   ]);
   res.json({
-    configured: true, pages, pixels, instagram_accounts: instagram,
+    configured: true, pages, pixels, instagram_accounts: instagram, videos,
     audiences: audiences.list, audiences_error: audiences.error, goals: OBJECTIVES,
   });
 }));

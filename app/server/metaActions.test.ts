@@ -41,6 +41,7 @@ const server = http.createServer((req, res) => {
   }
   if (parts[1] === 'adspixels') return send({ data: pixels });
   if (parts[1] === 'promote_pages') return send({ data: [{ id: '100000000001', name: 'הלהקה' }] });
+  if (parts[1] === 'advideos') return send({ data: [{ id: '180000000001', title: 'קליפ מהחזרה', created_time: '2099-09-01T10:00:00+0000', length: 42 }] });
   if (parts[1] === 'instagram_accounts') return send({ data: [{ id: '170000000001', username: 'the_band' }] });
   if (parts[1] === 'customaudiences') return send({ data: [
     { id: '160000000001', name: 'מבקרי דף הכרטיסים 30 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 3000, approximate_count_upper_bound: 4000, delivery_status: { code: 200 } },
@@ -397,4 +398,35 @@ test('Instagram and page audiences check their source, and a name already taken 
   });
   const wrong = await actions.previewAction({ type: 'create_audience', audience: { kind: 'page', name: 'דף', source_id: '100000000999', days: 180 } }, { source: 'studio' });
   assert.match(wrong.blockers.join(' '), /לא שייך לחשבון/);
+});
+
+test('a video viewers audience is built from the chosen videos and how far they were watched', async () => {
+  const spec = actions.cleanAudienceSpec({ kind: 'video', name: 'צפו בחצי מהקליפ', video_ids: ['180000000001', 'nope'], video_event: 'video_view_50_percent', days: 400 })!;
+  assert.deepEqual(spec.video_ids, ['180000000001']);
+  assert.equal(spec.days, 365);
+  assert.equal(actions.cleanAudienceSpec({ kind: 'video', name: 'בלי וידאו', video_ids: [] }), null);
+
+  const preview = await actions.previewAction({ type: 'create_audience', audience: spec }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.match(preview.changes[0].to, /צפו בחצי בוידאו «קליפ מהחזרה»/);
+  await actions.executeAction(preview.id);
+  const rule = JSON.parse(writes.at(-1)!.params.rule);
+  assert.deepEqual(rule.inclusions.rules[0].event_sources, [{ id: '180000000001', type: 'video' }]);
+  assert.equal(rule.inclusions.rules[0].filter.filters[0].value, 'video_view_50_percent');
+
+  const unknown = await actions.previewAction({ type: 'create_audience', audience: { ...spec, video_ids: ['180000000999'] } }, { source: 'studio' });
+  assert.match(unknown.blockers.join(' '), /לא נמצא/);
+});
+
+test('tickets typed by hand become the show\'s newest count and its figure in the books', async () => {
+  const { recordTickets } = await import('./ticketCheck.js');
+  assert.throws(() => recordTickets('show-next', { sold: 'many' }), { status: 400 });
+  assert.throws(() => recordTickets('show-next', { sold: 500, capacity: 300 }), { status: 400 });
+  const saved = recordTickets('show-next', { sold: 270, capacity: 300, note: 'לפי דוח המועדון' });
+  assert.equal((saved.response as any).tickets_left, 30);
+  assert.equal((saved.response as any).availability, 'few_left');
+  assert.equal((db.prepare('SELECT tickets FROM band_events WHERE id = ?').get('show-next') as any).tickets, 270);
+  const status = advisor.lastTicketStatus('show-next')!;
+  assert.equal(status.tickets_sold, 270);
+  assert.match(status.summary!, /עודכן ידנית/);
 });

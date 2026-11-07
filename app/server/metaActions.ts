@@ -26,7 +26,7 @@ import {
 } from './metaClient.js';
 import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
-import { fetchCustomAudiences, fetchInstagramAccounts, fetchPromotePages, type MetaAudience } from './metaClient.js';
+import { fetchAdVideos, fetchCustomAudiences, fetchInstagramAccounts, fetchPromotePages, type MetaAudience } from './metaClient.js';
 import { imageBase64, imagePath } from './metaImages.js';
 import { applyCampaignSpend } from './metaSync.js';
 
@@ -71,13 +71,22 @@ export interface ProposedAction {
  *    (ViewContent, InitiateCheckout, Purchase); `exclude_buyers` takes Purchase out of the rest.
  *  - `instagram` — everyone who engaged with the band's Instagram profile.
  *  - `page` — everyone who engaged with the band's Facebook page.
+ *  - `video` — everyone who watched one of the chosen videos, to a depth (3 seconds … the end).
  */
-export const AUDIENCE_KINDS = ['website', 'instagram', 'page'] as const;
+export const AUDIENCE_KINDS = ['website', 'instagram', 'page', 'video'] as const;
 export type AudienceKind = (typeof AUDIENCE_KINDS)[number];
 export const WEBSITE_EVENTS = ['all', 'ViewContent', 'InitiateCheckout', 'Purchase'] as const;
 export type WebsiteEvent = (typeof WEBSITE_EVENTS)[number];
 /** Meta's ceilings on how far back each kind of audience can look. */
-const MAX_DAYS: Record<AudienceKind, number> = { website: 180, instagram: 365, page: 365 };
+const MAX_DAYS: Record<AudienceKind, number> = { website: 180, instagram: 365, page: 365, video: 365 };
+/** How far into a video someone has to get to count, as Meta's engagement events name it. */
+export const VIDEO_EVENTS = ['video_watched', 'video_view_25_percent', 'video_view_50_percent', 'video_view_75_percent', 'video_completed'] as const;
+export type VideoEvent = (typeof VIDEO_EVENTS)[number];
+const VIDEO_EVENT_LABELS: Record<VideoEvent, string> = {
+  video_watched: 'צפו 3 שניות לפחות', video_view_25_percent: 'צפו ברבע', video_view_50_percent: 'צפו בחצי',
+  video_view_75_percent: 'צפו ב-75%', video_completed: 'צפו עד הסוף',
+};
+const MAX_VIDEOS = 20;
 const EVENT_LABELS: Record<WebsiteEvent, string> = {
   all: 'כל מי שביקר', ViewContent: 'צפו בדף ההופעה', InitiateCheckout: 'התחילו לקנות', Purchase: 'קנו כרטיס',
 };
@@ -90,13 +99,18 @@ export interface AudienceSpec {
   days: number;
   event: WebsiteEvent;
   exclude_buyers: boolean;
+  /** For `video`: the videos, and how far into one of them counts. */
+  video_ids: string[];
+  video_event: VideoEvent;
 }
 
 export function cleanAudienceSpec(raw: any): AudienceSpec | null {
   if (!raw || typeof raw !== 'object') return null;
   const kind = (AUDIENCE_KINDS as readonly string[]).includes(raw.kind) ? (raw.kind as AudienceKind) : null;
   const name = text(raw.name, 200);
-  const source = raw.source_id != null ? String(raw.source_id).trim() : '';
+  const videos = [...new Set((Array.isArray(raw.video_ids) ? raw.video_ids : []).map(String).filter((id: string) => META_ID.test(id)))].slice(0, MAX_VIDEOS) as string[];
+  // A video audience is built from its videos; the others from one pixel, account or page.
+  const source = kind === 'video' ? videos[0] ?? '' : raw.source_id != null ? String(raw.source_id).trim() : '';
   if (!kind || !name || !META_ID.test(source)) return null;
   const event: WebsiteEvent = kind === 'website' && (WEBSITE_EVENTS as readonly string[]).includes(raw.event) ? raw.event : 'all';
   return {
@@ -106,6 +120,8 @@ export function cleanAudienceSpec(raw: any): AudienceSpec | null {
     days: clamp(Math.round(Number(raw.days) || 30), 1, MAX_DAYS[kind]),
     event,
     exclude_buyers: kind === 'website' && event !== 'Purchase' && raw.exclude_buyers === true,
+    video_ids: kind === 'video' ? videos : [],
+    video_event: (VIDEO_EVENTS as readonly string[]).includes(raw.video_event) ? raw.video_event : 'video_view_50_percent',
   };
 }
 
@@ -122,6 +138,18 @@ export function audienceRule(spec: AudienceSpec): Record<string, unknown> {
       ...(spec.exclude_buyers ? {
         exclusions: { operator: 'or', rules: [{ ...source, filter: { operator: 'and', filters: [{ field: 'event', operator: 'eq', value: 'Purchase' }] } }] },
       } : {}),
+    };
+  }
+  if (spec.kind === 'video') {
+    return {
+      inclusions: {
+        operator: 'or',
+        rules: [{
+          event_sources: spec.video_ids.map((id) => ({ id, type: 'video' })),
+          retention_seconds,
+          filter: { operator: 'and', filters: [{ field: 'event', operator: 'eq', value: spec.video_event }] },
+        }],
+      },
     };
   }
   const type = spec.kind === 'instagram' ? 'ig_business' : 'page';
@@ -491,6 +519,7 @@ async function readLive(action: ProposedAction): Promise<any> {
     const [sources, audiences] = await Promise.all([
       kind === 'website' ? fetchPixels() : kind === 'instagram'
         ? fetchInstagramAccounts().then((l) => l.map((a) => ({ id: a.id, name: a.username ? `@${a.username}` : null })))
+        : kind === 'video' ? fetchAdVideos().then((l) => l.map((v) => ({ id: v.id, name: v.title })))
         : fetchPromotePages(),
       fetchCustomAudiences(),
     ]);
@@ -660,7 +689,7 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
 
 const day = (date: string) => Date.parse(`${date}T12:00:00Z`);
 
-const SOURCE_LABELS: Record<AudienceKind, string> = { website: 'הפיקסל', instagram: 'חשבון האינסטגרם', page: 'דף הפייסבוק' };
+const SOURCE_LABELS: Record<AudienceKind, string> = { website: 'הפיקסל', instagram: 'חשבון האינסטגרם', page: 'דף הפייסבוק', video: 'הוידאו' };
 
 /** The preview of a new saved audience: where it comes from, how far back, and what it will not be yet. */
 function describeAudience(action: ProposedAction, live: any): Omit<ActionPreview, 'id' | 'status' | 'created_at' | 'expires_at'> {
@@ -669,11 +698,18 @@ function describeAudience(action: ProposedAction, live: any): Omit<ActionPreview
   const blockers: string[] = [];
   const sources: Array<{ id: string; name: string | null }> = live.source_list ?? [];
   const source = sources.find((x) => x.id === spec.source_id);
-  if (!source) blockers.push(`${SOURCE_LABELS[spec.kind]} שנבחר לא שייך לחשבון המודעות — בחרו מהרשימה.`);
+  if (spec.kind === 'video') {
+    const missing = spec.video_ids.filter((id) => !sources.some((x) => x.id === id));
+    if (missing.length) blockers.push(`${missing.length === 1 ? 'וידאו אחד שנבחר לא נמצא' : `${missing.length} סרטונים שנבחרו לא נמצאו`} בספריית הוידאו של חשבון המודעות — בחרו מהרשימה.`);
+  } else if (!source) blockers.push(`${SOURCE_LABELS[spec.kind]} שנבחר לא שייך לחשבון המודעות — בחרו מהרשימה.`);
   if ((live.names ?? []).includes(spec.name)) warnings.push(`כבר יש בחשבון קהל בשם «${spec.name}» — כדאי שם אחר, כדי לא להתבלבל ביניהם.`);
 
   const what = spec.kind === 'website'
     ? `${EVENT_LABELS[spec.event]} בדפים שהפיקסל «${source?.name ?? spec.source_id}» מותקן בהם${spec.exclude_buyers ? ', בלי מי שקנה' : ''}`
+    : spec.kind === 'video'
+      ? `${VIDEO_EVENT_LABELS[spec.video_event]} ב${spec.video_ids.length === 1
+        ? `וידאו «${sources.find((x) => x.id === spec.video_ids[0])?.name ?? spec.video_ids[0]}»`
+        : `אחד מ-${spec.video_ids.length} סרטונים`}`
     : spec.kind === 'instagram'
       ? `כל מי שהתעניין בחשבון ${source?.name ?? spec.source_id} (צפה, הגיב, שלח הודעה, שמר)`
       : `כל מי שהתעניין בדף «${source?.name ?? spec.source_id}» (לייק, תגובה, שיתוף, הודעה)`;

@@ -777,7 +777,10 @@ and a radius around the venue are set afterwards in Ads Manager.
 confirm), inside the wizard's hot step — the new one is ticked on creation — and under «פיקסל, קהלים
 ויומן → קהלים שמורים». Presets: ticket-page visitors (30 days, minus buyers), started checkout and did
 not finish (30 days, minus buyers), Instagram engagers and Facebook page engagers (180 days), and
-ticket buyers (90 days, for exclusion). Website audiences are built from the pixel's events
+ticket buyers (90 days, for exclusion), and video viewers — one or more videos from the ad account's
+library (`/advideos`, i.e. videos that were used in ads or uploaded there; organic posts are not in it)
+watched to a chosen depth: 3 seconds, 25%, 50% (default), 75% or to the end (`event_sources: video`,
+`video_watched` … `video_completed`, up to 365 days). Website audiences are built from the pixel's events
 (`rule` with `event_sources: pixel`, up to 180 days) and fill only from sites that run the pixel;
 Instagram (`ig_business`, `ig_business_profile_all`) and page (`page`, `page_engaged`) audiences go back
 up to 365 days. Every audience is created with `prefill`, so it is built from the days that already
@@ -844,6 +847,13 @@ show with their daily spend, what the club's ticket page said, and the previous 
 returns where the campaign stands against the plan, one recommended decision with the threshold
 for the next check, the alternatives and when to pick them, and any missing tasks to accept
 (`campaignReview.ts`).
+
+**Tickets typed by hand (`recordTickets`, `POST /api/band/tickets`).** The show header's «עדכון ידני» —
+and a line in the studio's decision feed for a show within two weeks whose last count is a week old
+or missing — takes tickets sold so far and, optionally, the hall's capacity and where the number came
+from. It is saved as the show's newest ticket count (a `tickets` report marked `source: manual`), so
+the cards, the status review and the advisor read it the same way as a check of the club's site, and
+it is written to the show's tickets figure in the books, which cost per ticket divides by.
 
 **Ticket status from the club's site.** The ticket check (`ticketCheck.ts`) is the one run that may
 browse: the agent searches for the club's official site and the show's ticket page and reports

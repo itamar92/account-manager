@@ -60,7 +60,16 @@ export function AudienceList({ audiences, selected = [], disabledIds = [], disab
   );
 }
 
-type Kind = 'website' | 'instagram' | 'page';
+type Kind = 'website' | 'instagram' | 'page' | 'video';
+type VideoEvent = 'video_watched' | 'video_view_25_percent' | 'video_view_50_percent' | 'video_view_75_percent' | 'video_completed';
+
+const VIDEO_DEPTHS: Array<{ value: VideoEvent; label: string }> = [
+  { value: 'video_watched', label: '3 שניות לפחות' },
+  { value: 'video_view_25_percent', label: 'רבע מהוידאו' },
+  { value: 'video_view_50_percent', label: 'חצי מהוידאו' },
+  { value: 'video_view_75_percent', label: '75% מהוידאו' },
+  { value: 'video_completed', label: 'עד הסוף' },
+];
 type Event = 'all' | 'ViewContent' | 'InitiateCheckout' | 'Purchase';
 
 interface Preset {
@@ -80,29 +89,35 @@ export const PRESETS: Preset[] = [
   { id: 'visitors', title: 'מבקרי דף הכרטיסים', sub: 'כל מי שהגיע לדף הכרטיסים, בלי מי שכבר קנה.', kind: 'website', event: 'all', days: 30, exclude_buyers: true },
   { id: 'checkout', title: 'התחילו לקנות ולא סיימו', sub: 'הכי קרובים לרכישה — קהל קטן וחם מאוד.', kind: 'website', event: 'InitiateCheckout', days: 30, exclude_buyers: true },
   { id: 'instagram', title: 'התעניינו באינסטגרם', sub: 'צפו בפרופיל, הגיבו, שמרו או שלחו הודעה.', kind: 'instagram', event: 'all', days: 180, exclude_buyers: false },
+  { id: 'video', title: 'צפו בוידאו', sub: 'מי שצפה בחצי לפחות מאחד הסרטונים שתבחרו — קהל גדול וחם.', kind: 'video', event: 'all', days: 180, exclude_buyers: false },
   { id: 'page', title: 'התעניינו בדף הפייסבוק', sub: 'לייק, תגובה, שיתוף או הודעה לדף.', kind: 'page', event: 'all', days: 180, exclude_buyers: false },
   { id: 'buyers', title: 'רוכשי כרטיסים', sub: 'להחרגה: כדי לא לשלם על להראות את המודעה למי שכבר קנה.', kind: 'website', event: 'Purchase', days: 90, exclude_buyers: false, forExclusion: true },
 ];
 
-const SOURCE_LABEL: Record<Kind, string> = { website: 'פיקסל', instagram: 'חשבון אינסטגרם', page: 'דף פייסבוק' };
-const MAX_DAYS: Record<Kind, number> = { website: 180, instagram: 365, page: 365 };
+const SOURCE_LABEL: Record<Kind, string> = { website: 'פיקסל', instagram: 'חשבון אינסטגרם', page: 'דף פייסבוק', video: 'וידאו' };
+const MAX_DAYS: Record<Kind, number> = { website: 180, instagram: 365, page: 365, video: 365 };
 
 export interface AudienceSetup {
   pixels: any[];
   pages: any[];
   instagram_accounts?: any[];
+  videos?: any[];
 }
 
 const sourcesFor = (setup: AudienceSetup, kind: Kind) =>
   kind === 'website' ? setup.pixels.map((p) => ({ id: p.id, label: p.name ?? p.id }))
     : kind === 'instagram' ? (setup.instagram_accounts ?? []).map((a) => ({ id: a.id, label: a.username ? `@${a.username}` : a.id }))
+    : kind === 'video' ? (setup.videos ?? []).map((v) => ({ id: v.id, label: v.title ?? `וידאו ${v.id}` }))
     : setup.pages.map((p) => ({ id: p.id, label: p.name ?? p.id }));
 
 const NO_SOURCE: Record<Kind, string> = {
   website: 'אין פיקסל בחשבון — יוצרים אחד במסך «פיקסל, קהלים ויומן».',
   instagram: 'אין חשבון אינסטגרם מחובר לחשבון המודעות.',
   page: 'אין דף פייסבוק זמין לחשבון המודעות.',
+  video: 'אין סרטונים בספריית הוידאו של חשבון המודעות. סרטון נכנס אליה כשמשתמשים בו במודעה, או כשמעלים אותו ב-Ads Manager.',
 };
+
+const minutes = (sec: number | null) => (sec == null ? '' : sec < 60 ? `${sec} שנ׳` : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`);
 
 /**
  * יצירת קהל — one of the presets, adjusted if needed, created in Meta behind the same preview and
@@ -121,6 +136,8 @@ export function AudienceCreator({ setup, isOwner, onCreated, only, className }: 
   const [name, setName] = useState('');
   const [days, setDays] = useState('30');
   const [source, setSource] = useState('');
+  const [videoIds, setVideoIds] = useState<string[]>([]);
+  const [depth, setDepth] = useState<VideoEvent>('video_view_50_percent');
   const preview = usePreview((action) => {
     onCreated(action?.result?.audience_id ?? null, !!preset?.forExclusion);
     setPreset(null);
@@ -134,17 +151,23 @@ export function AudienceCreator({ setup, isOwner, onCreated, only, className }: 
     setName(`${p.title} · ${p.days} יום`);
     setDays(String(p.days));
     setSource(sources[0]?.id ?? '');
+    // The newest video is the one a show's campaign usually ran.
+    setVideoIds(p.kind === 'video' && sources[0] ? [sources[0].id] : []);
+    setDepth('video_view_50_percent');
   };
   const sources = preset ? sourcesFor(setup, preset.kind) : [];
   const n = Number(days);
-  const ready = preset && name.trim() && source && n >= 1 && n <= MAX_DAYS[preset.kind];
+  const ready = preset && name.trim() && (preset.kind === 'video' ? videoIds.length > 0 : source) && n >= 1 && n <= MAX_DAYS[preset.kind];
 
   const open = () => {
     if (!preset || !ready) return;
     preview.open({
       type: 'create_audience',
       name: name.trim(),
-      audience: { kind: preset.kind, name: name.trim(), source_id: source, days: n, event: preset.event, exclude_buyers: preset.exclude_buyers },
+      audience: {
+        kind: preset.kind, name: name.trim(), source_id: source, days: n, event: preset.event, exclude_buyers: preset.exclude_buyers,
+        ...(preset.kind === 'video' ? { video_ids: videoIds, video_event: depth } : {}),
+      },
       reason: preset.sub,
     } as any, 'audience');
   };
@@ -181,7 +204,40 @@ export function AudienceCreator({ setup, isOwner, onCreated, only, className }: 
                 onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))} />
             </label>
           </div>
-          {sources.length > 1 && (
+          {preset.kind === 'video' && (
+            <>
+              <label className="block">
+                <span className="block text-xs text-muted mb-1">כמה צריך לצפות כדי להיכלל</span>
+                <select className={clsx(fieldClass, 'bg-surface')} value={depth} onChange={(e) => setDepth(e.target.value as VideoEvent)}>
+                  {VIDEO_DEPTHS.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+                </select>
+              </label>
+              <fieldset>
+                <legend className="text-xs text-muted mb-1">סרטונים (אחד או יותר)</legend>
+                <ul className="rounded-xl border border-line bg-surface divide-y divide-line max-h-64 overflow-y-auto">
+                  {(setup.videos ?? []).map((v) => (
+                    <li key={v.id}>
+                      <label className="flex items-center gap-3 px-3 min-h-12 py-2 cursor-pointer hover:bg-soft">
+                        <input type="checkbox" className="accent-accent w-[18px] h-[18px] shrink-0" checked={videoIds.includes(v.id)}
+                          onChange={() => setVideoIds((l) => (l.includes(v.id) ? l.filter((x) => x !== v.id) : [...l, v.id]))} />
+                        {v.picture
+                          ? <img src={v.picture} alt="" className="w-14 h-10 rounded-md object-cover bg-soft shrink-0" loading="lazy" />
+                          : <span className="w-14 h-10 rounded-md bg-soft shrink-0" aria-hidden />}
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm text-ink truncate">{v.title ?? `וידאו ${v.id}`}</span>
+                          <span className="block text-xs text-muted num">
+                            {[v.created_time ? new Date(v.created_time).toLocaleDateString('he-IL') : null, minutes(v.length)].filter(Boolean).join(' · ')}
+                          </span>
+                        </span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-xs text-faint mt-1">רק סרטונים שבספריית הוידאו של חשבון המודעות — כאלה ששימשו במודעה או הועלו ב-Ads Manager.</p>
+              </fieldset>
+            </>
+          )}
+          {preset.kind !== 'video' && sources.length > 1 && (
             <label className="block">
               <span className="block text-xs text-muted mb-1">{SOURCE_LABEL[preset.kind]}</span>
               <select className={clsx(fieldClass, 'bg-surface')} value={source} onChange={(e) => setSource(e.target.value)}>

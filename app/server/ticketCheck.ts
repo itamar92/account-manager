@@ -212,3 +212,50 @@ export function lastTicketCheck(eventId: string): StoredReport | null {
   return lastReport('tickets', {}, eventId);
 }
 
+
+// ---------------------------------------------------------------- tickets typed by hand
+
+/**
+ * A ticket count the owner knows — from the club's report, the ticketing system's dashboard, a
+ * phone call — saved the same way a check of the club's site is, so the show's card, the status
+ * review and the advisor all read the newest count, whoever found it. It is also written to the
+ * show's own tickets figure in the books, which is what cost per ticket divides by.
+ */
+export function recordTickets(eventId: string, input: { sold?: unknown; capacity?: unknown; note?: unknown }): StoredReport {
+  const event = showRow(eventId);
+  const whole = (v: unknown) => {
+    if (v === '' || v == null) return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 && n < 1_000_000 ? Math.round(n) : NaN;
+  };
+  const sold = whole(input.sold);
+  const capacity = whole(input.capacity) ?? (event.capacity || null);
+  if (sold == null || Number.isNaN(sold)) throw new AgentError('מספר הכרטיסים שנמכרו צריך להיות מספר שלם', 400);
+  if (Number.isNaN(capacity as number)) throw new AgentError('מספר המקומות צריך להיות מספר שלם', 400);
+  if (capacity != null && sold > capacity) throw new AgentError(`נמכרו ${sold} מתוך ${capacity} מקומות? בדקו את המספרים.`, 400);
+  const note = typeof input.note === 'string' && input.note.trim() ? input.note.trim().slice(0, 300) : null;
+  const left = capacity != null ? capacity - sold : null;
+
+  db.prepare('UPDATE band_events SET tickets = ? WHERE id = ?').run(sold, eventId);
+  if (capacity != null && !event.capacity) db.prepare('UPDATE band_events SET capacity = ? WHERE id = ?').run(capacity, eventId);
+
+  return saveReport({
+    kind: 'tickets', range: {}, eventId,
+    request: { event_id: eventId, source: 'manual', note },
+    response: {
+      found: true,
+      source: 'manual',
+      venue_site: null,
+      show_url: null,
+      availability: left === 0 ? 'sold_out' : left != null && capacity && left / capacity <= 0.1 ? 'few_left' : 'available',
+      tickets_sold: sold,
+      tickets_left: left,
+      capacity,
+      price: null,
+      summary: `עודכן ידנית: ${sold} כרטיסים נמכרו${capacity != null ? ` מתוך ${capacity}` : ''}${note ? ` (${note})` : ''}`,
+      evidence: note,
+      question: null,
+    },
+    durationMs: 0,
+  });
+}

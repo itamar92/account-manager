@@ -392,3 +392,27 @@ export async function fetchInstagramAccounts(): Promise<MetaInstagramAccount[]> 
   const rows = await graphPaged<any>(`${adAccountId()}/instagram_accounts`, { fields: 'id,username' });
   return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), username: text(row.username) }));
 }
+
+export interface MetaVideo {
+  id: string;
+  title: string | null;
+  created_time: string | null;
+  /** Seconds. */
+  length: number | null;
+  picture: string | null;
+}
+
+/**
+ * The videos in the ad account's library — every video that was used in an ad, newest first. What
+ * a video viewers audience is built from. Organic posts that were never advertised are not here.
+ */
+export async function fetchAdVideos(): Promise<MetaVideo[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/advideos`, { fields: 'id,title,created_time,length,picture' });
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    title: text(row.title),
+    created_time: text(row.created_time),
+    length: Number.isFinite(Number(row.length)) ? Math.round(Number(row.length)) : null,
+    picture: text(row.picture),
+  })).sort((a, b) => String(b.created_time ?? '').localeCompare(String(a.created_time ?? '')));
+}

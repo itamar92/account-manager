@@ -1,6 +1,6 @@
 import React from 'react';
 import { clsx } from 'clsx';
-import { CalendarX } from 'lucide-react';
+import { CalendarX, Pencil } from 'lucide-react';
 import { nis } from '../../api';
 import { daysAway, ddmm, Meter, when } from './advisorShared';
 
@@ -14,7 +14,7 @@ export interface ShowSummary {
   capacity: number | null;
   plan: { report_id: string; created_at: string; budget_total: number | null; start: string | null; end: string | null } | null;
   review: { status: string | null; headline: string | null; decision: string | null; created_at: string } | null;
-  tickets: { availability: string | null; sold: number | null; left: number | null; capacity: number | null; created_at: string } | null;
+  tickets: { availability: string | null; sold: number | null; left: number | null; capacity: number | null; created_at: string; source?: 'manual' | 'site' } | null;
   spend: number | null;
   pixel_status: string | null;
 }
@@ -130,7 +130,7 @@ export function ShowStrip({ shows, selected, onSelect, workingOn, lateByShow }: 
                   {capacity ? <Meter value={sold} max={capacity} className="mt-1" /> : null}
                 </>
               ) : (
-                <div className="text-xs text-faint">כרטיסים: עוד לא נבדק</div>
+                <div className="text-xs text-faint">כרטיסים: עוד לא נספרו</div>
               )}
             </div>
 
@@ -149,7 +149,12 @@ export function ShowStrip({ shows, selected, onSelect, workingOn, lateByShow }: 
  * what a campaign for a show exists to move, then what it cost and whether the club can tell Meta
  * who bought. The last review's one-line verdict closes it.
  */
-export function ShowHero({ show, working }: { show: ShowSummary; working: boolean }) {
+export function ShowHero({ show, working, onEditTickets }: {
+  show: ShowSummary;
+  working: boolean;
+  /** Opens the hand-typed ticket count; the owner's only. */
+  onEditTickets?: () => void;
+}) {
   const { weekday } = dateParts(show.date);
   const status = showStatus(show, working);
   const { sold, capacity } = ticketCount(show);
@@ -185,12 +190,22 @@ export function ShowHero({ show, working }: { show: ShowSummary; working: boolea
             {capacity ? <span className="num text-base text-white/60">/ {capacity}</span> : null}
           </dd>
           {sold != null && capacity ? <dd><Meter value={sold} max={capacity} tone="light" className="mt-2" /></dd> : null}
-          <dd className="text-xs text-white/60 mt-1.5">
-            {show.tickets ? `לפי אתר המועדון · נבדק ${when(show.tickets.created_at)}` : 'עוד לא נבדק באתר המועדון'}
+          <dd className="text-xs text-white/60 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>
+              {show.tickets
+                ? `${show.tickets.source === 'manual' ? 'עודכן ידנית' : 'לפי אתר המועדון'} · ${when(show.tickets.created_at)}`
+                : 'עוד לא נספר'}
+            </span>
+            {onEditTickets && (
+              <button type="button" onClick={onEditTickets}
+                className="inline-flex items-center gap-1 rounded-md px-2 min-h-8 text-xs font-semibold text-white bg-white/10 hover:bg-white/18">
+                <Pencil className="w-3 h-3" aria-hidden />עדכון ידני
+              </button>
+            )}
           </dd>
         </div>
         {figure('הוצאה על פרסום', show.spend != null ? nis(show.spend) : '—',
-          show.plan?.budget_total ? `מתוך ${nis(show.plan.budget_total)} בתוכנית` : 'אין קמפיין משויך')}
+          show.plan?.budget_total ? `מתוך ${nis(show.plan.budget_total)} בתוכנית` : show.spend != null ? 'אין תקציב בתוכנית' : 'אין קמפיין משויך')}
         {figure('עלות לכרטיס', perTicket != null ? `₪${perTicket.toLocaleString('he-IL', { maximumFractionDigits: perTicket < 100 ? 1 : 0 })}` : '—', perTicket != null ? 'הוצאה חלקי כרטיסים' : 'חסרים כרטיסים או הוצאה')}
         {figure('פיקסל באתר המועדון', PIXEL_STATUS[show.pixel_status ?? 'none'] ?? '—')}
       </dl>

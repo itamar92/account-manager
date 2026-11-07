@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { CalendarPlus, CheckCircle2, Link2, ListChecks, PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
+import { CalendarPlus, CheckCircle2, Link2, Ticket, ListChecks, PauseCircle, PlayCircle, Sparkles } from 'lucide-react';
 import { clsx } from 'clsx';
 import { get, nis, post, put } from '../../api';
 import { Button } from '../../ui';
 import { daysAway, ddmm, InlineError } from '../band/advisorShared';
 import { actionLabel } from '../band/MetaActions';
 import { ShowStrip, type ShowSummary } from '../band/ShowStrip';
+import { TicketsEditor } from '../band/TicketsEditor';
 import { ChangeLine, SectionHead, israelToday, usePreview } from './studioShared';
 
 type Tone = 'neg' | 'warn' | 'accent' | 'neutral';
@@ -63,6 +64,8 @@ export function DecisionFeed({ isOwner, period, periodLabel, reloadKey, onChange
   const [totals, setTotals] = useState<any>(null);
   const [busy, setBusy] = useState('');
   const [problem, setProblem] = useState('');
+  const [ticketsFor, setTicketsFor] = useState<ShowSummary | null>(null);
+  const [saved, setSaved] = useState('');
   const today = israelToday();
   const qs = period.params().toString();
 
@@ -198,6 +201,23 @@ export function DecisionFeed({ isOwner, period, periodLabel, reloadKey, onChange
     }
   }
 
+  // Shows close enough that the ticket count steers the money, with no recent count to steer by.
+  if (isOwner) {
+    for (const s of shows ?? []) {
+      if (s.days_left < 0 || s.days_left > 14) continue;
+      const age = s.tickets ? Math.round((Date.now() - Date.parse(s.tickets.created_at.replace(' ', 'T') + (/[zZ]|[+-]\d\d:?\d\d$/.test(s.tickets.created_at) ? '' : 'Z'))) / 86_400_000) : null;
+      if (age != null && age < 7) continue;
+      items.push({
+        key: `tickets-${s.event_id}`, tone: 'neutral', icon: Ticket, rank: 7,
+        title: `כמה כרטיסים נמכרו ל${s.label}?`,
+        reason: age == null
+          ? `ההופעה ${daysAway(s.days_left)}, ועוד אין ספירה של כרטיסים. בלי הספירה אי אפשר לדעת אם הקמפיין עובד.`
+          : `הספירה האחרונה (${s.tickets!.sold ?? '—'} כרטיסים) היא מלפני ${age} ימים, וההופעה ${daysAway(s.days_left)}.`,
+        render: () => <Button variant="ghost" onClick={() => setTicketsFor(s)}>עדכון כרטיסים</Button>,
+      });
+    }
+  }
+
   items.sort((a, b) => a.rank - b.rank);
   const loading = campaigns === null || shows === null;
   const active = live.filter((c) => c.status === 'ACTIVE').length;
@@ -228,6 +248,7 @@ export function DecisionFeed({ isOwner, period, periodLabel, reloadKey, onChange
       </dl>
 
       {problem && <InlineError text={problem} onDismiss={() => setProblem('')} />}
+      {saved && <p role="status" className="text-sm text-pos-ink bg-pos-soft rounded-xl px-4 py-2.5">{saved}</p>}
       {preview.problem && <InlineError text={preview.problem.text} onDismiss={preview.clearProblem} />}
 
       {/* ---- the feed */}
@@ -283,6 +304,9 @@ export function DecisionFeed({ isOwner, period, periodLabel, reloadKey, onChange
           : <ShowStrip shows={shows} selected="" onSelect={onOpenShow} lateByShow={lateByShow} />}
       </section>
       {preview.modal}
+      {ticketsFor && (
+        <TicketsEditor show={ticketsFor} onClose={() => setTicketsFor(null)} onSaved={(m) => { setSaved(m); changed(); }} />
+      )}
     </div>
   );
 }

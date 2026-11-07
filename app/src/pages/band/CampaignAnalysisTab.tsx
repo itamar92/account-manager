@@ -14,6 +14,7 @@ import { JOB_TEXT, useConfirm, ViewTabs, Working, type AdvisorJob } from './advi
 import { ActionsLog } from './MetaActions';
 import { PixelPanel } from './PixelPanel';
 import { ShowHero, ShowStrip, type ShowSummary } from './ShowStrip';
+import { TicketsEditor } from './TicketsEditor';
 
 interface Props extends PeriodTabProps {
   events: any[];
@@ -68,6 +69,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
   const [brief, setBrief] = useState('');
   const [reviewKey, setReviewKey] = useState(0);
   const { ask, dialog } = useConfirm();
+  const [ticketsOpen, setTicketsOpen] = useState(false);
 
   // Bumped when a change was carried out in Meta, so the log of actions re-reads.
   const [actionsKey, setActionsKey] = useState(0);
@@ -398,7 +400,22 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           יצירה ועריכה של קמפיינים עובדות גם בלעדיו.
         </p>
         {only === 'shows' && (
-          <CampaignTasksPanel events={events} isOwner={isOwner} onError={onError} reloadKey={tasksKey} onChanged={tasksAdded} />
+          <>
+            {/* The shows and their ticket counts need no agent: a count can still be typed in. */}
+            {shows === null
+              ? <div className="h-[9.5rem] rounded-2xl bg-surface border border-line animate-pulse motion-reduce:animate-none" aria-label="טוען הופעות" />
+              : <ShowStrip shows={shows} selected={showId} onSelect={selectShow} lateByShow={lateByShow} />}
+            {show && (
+              <section aria-label={show.label} className="rounded-2xl border border-line bg-surface overflow-hidden">
+                <ShowHero show={show} working={false} onEditTickets={isOwner ? () => setTicketsOpen(true) : undefined} />
+              </section>
+            )}
+            <CampaignTasksPanel events={events} isOwner={isOwner} onError={onError} reloadKey={tasksKey} onChanged={tasksAdded} />
+            {ticketsOpen && show && (
+              <TicketsEditor show={show} onClose={() => setTicketsOpen(false)}
+                onSaved={(message) => { onNotice(message); loadShows(); reload(); }} />
+            )}
+          </>
         )}
       </div>
     );
@@ -503,7 +520,7 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
       {show && (
         <section aria-label={show.label} key={show.event_id}
           className="settle-in rounded-2xl border border-line bg-surface overflow-hidden">
-          <ShowHero show={show} working={showWorking} />
+          <ShowHero show={show} working={showWorking} onEditTickets={isOwner ? () => setTicketsOpen(true) : undefined} />
           <ViewTabs label="מה להציג על ההופעה" className="px-2 md:px-3" value={view}
             onChange={(v) => setParams({ view: v })}
             options={[
@@ -626,6 +643,10 @@ export function CampaignAnalysisTab({ events, period, isOwner, onError, onNotice
           )}
         </div>
       </section>}
+      {ticketsOpen && show && (
+        <TicketsEditor show={show} onClose={() => setTicketsOpen(false)}
+          onSaved={(message) => { onNotice(message); loadShows(); setReviewKey((k) => k + 1); reload(); }} />
+      )}
       {dialog}
     </div>
   );

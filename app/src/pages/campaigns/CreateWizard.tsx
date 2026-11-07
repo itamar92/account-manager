@@ -92,7 +92,7 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
   const today = israelToday();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>(() => ({ ...blank(today), event_id: seed.event_id ?? '' }));
-  const [setup, setSetup] = useState<{ configured: boolean; pages: any[]; pixels: any[]; instagram_accounts?: any[]; audiences?: any[]; audiences_error?: string | null } | null>(null);
+  const [setup, setSetup] = useState<{ configured: boolean; pages: any[]; pixels: any[]; instagram_accounts?: any[]; videos?: any[]; audiences?: any[]; audiences_error?: string | null } | null>(null);
   const [creatingAudience, setCreatingAudience] = useState(false);
   const [setupError, setSetupError] = useState('');
   const [plan, setPlan] = useState<any>(null);
@@ -271,7 +271,7 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
   const page = setup?.pages.find((p) => p.id === form.page_id);
   // Lookalikes are new people, which is prospecting: they are not offered as a hot audience.
   const hotAudiences = (setup?.audiences ?? []).filter((a: any) => a.subtype !== 'LOOKALIKE');
-  const canBuildAudience = !!setup && (setup.pixels.length > 0 || setup.pages.length > 0 || (setup.instagram_accounts?.length ?? 0) > 0);
+  const canBuildAudience = !!setup && (setup.pixels.length > 0 || setup.pages.length > 0 || (setup.instagram_accounts?.length ?? 0) > 0 || (setup.videos?.length ?? 0) > 0);
   const selectedHot = hotAudiences.filter((a: any) => form.audience_ids.includes(a.id));
   const hotSize = selectedHot.every((a: any) => a.size_upper != null) ? selectedHot.reduce((n: number, a: any) => n + a.size_upper, 0) : null;
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
