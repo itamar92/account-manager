@@ -14,3 +14,8 @@ When the user asks for advice about ad campaigns ("AI campaign", audit, diagnose
 - **taste-skill** (`.claude/skills/taste-skill/`, skill name `design-taste-frontend`) - art direction for public-facing pages (landing, marketing, one-pagers); not for dashboards or app screens. From https://github.com/Leonxlnx/taste-skill (MIT).
 - **apple-design** (`.claude/skills/apple-design/`) - Apple-style fluid motion, gestures, springs, materials and typography for the web. From https://github.com/emilkowalski/skills (MIT).
 To refresh one, copy its folder again from the upstream repo; edit nothing inside so updates stay a plain copy.
+
+# Marketing skills (strategy, copy, SEO, CRO, email, social, launch)
+- **marketingskills** (53 folders in `.claude/skills/`: `ads`, `ad-creative`, `copywriting`, `copy-editing`, `cro`, `seo-audit`, `ai-seo`, `emails`, `social`, `events`, `launch`, `marketing-plan`, `marketing-ideas`, `pricing`, `offers`, `referrals`, `public-relations`, `influencer-marketing`, `community-marketing`, `video`, `sms`, …) - general marketing playbooks. From https://github.com/coreyhaines31/marketingskills (MIT, commit 96798cf).
+- For Meta campaigns for the band's shows, the `adadvisor*` skills above take precedence; use `ads` / `ad-creative` only as a complement, and the same read-only and preview-then-yes rules apply.
+To refresh, copy `skills/*` again from the upstream repo (plus its LICENSE into each folder); edit nothing inside.
