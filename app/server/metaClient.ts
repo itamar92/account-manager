@@ -345,3 +345,39 @@ export async function fetchCampaignAds(campaignId: string): Promise<any[]> {
     fields: 'id,name,status,effective_status,adset_id,creative{id,title,body,thumbnail_url,image_url}',
   });
 }
+
+export interface MetaAudience {
+  id: string;
+  name: string | null;
+  subtype: string | null;
+  /** Meta's own range; -1 when it will not say (a very new or very small audience). */
+  size_lower: number | null;
+  size_upper: number | null;
+  /** Meta's delivery status code: 200 is ready to deliver. */
+  ready: boolean;
+  status: string | null;
+}
+
+/**
+ * The ad account's saved custom audiences — website visitors, video viewers, page engagers,
+ * customer lists, lookalikes. What a «hot» campaign targets, and what any campaign may exclude.
+ * Same `ads_read` scope as the campaigns.
+ */
+export async function fetchCustomAudiences(): Promise<MetaAudience[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/customaudiences`, {
+    fields: 'id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,delivery_status',
+  });
+  const size = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    name: text(row.name),
+    subtype: text(row.subtype),
+    size_lower: size(row.approximate_count_lower_bound),
+    size_upper: size(row.approximate_count_upper_bound),
+    ready: row.delivery_status?.code == null || Number(row.delivery_status.code) === 200,
+    status: text(row.delivery_status?.description),
+  }));
+}

@@ -86,7 +86,7 @@ import {
   budgetToShekels, cancelAction, executeAction, listActions, OBJECTIVES, previewAction, PREVIEW_TTL_MINUTES,
 } from './metaActions.js';
 import {
-  fetchCampaignAds, fetchCampaignAdSets, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
+  fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
 } from './metaClient.js';
 import { imagePath, storeImage } from './metaImages.js';
 import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
@@ -2488,9 +2488,15 @@ router.post('/band/meta-actions/:id/cancel', requireOwner, handle((req, res) => 
  * shows up without a sync.
  */
 router.get('/band/meta/setup', requireOwner, handleAsync(async (_req, res) => {
-  if (!isMetaConfigured()) return res.json({ configured: false, pages: [], pixels: [], goals: OBJECTIVES });
-  const [pages, pixels] = await Promise.all([fetchPromotePages(), fetchPixels()]);
-  res.json({ configured: true, pages, pixels, goals: OBJECTIVES });
+  if (!isMetaConfigured()) return res.json({ configured: false, pages: [], pixels: [], audiences: [], goals: OBJECTIVES });
+  // An account Meta will not list audiences for (a token without the scope) still gets a cold
+  // campaign; the wizard says why «hot» is not on offer.
+  const [pages, pixels, audiences] = await Promise.all([
+    fetchPromotePages(),
+    fetchPixels(),
+    fetchCustomAudiences().then((list) => ({ list, error: null as string | null }), (err) => ({ list: [], error: String(err?.message || err) })),
+  ]);
+  res.json({ configured: true, pages, pixels, audiences: audiences.list, audiences_error: audiences.error, goals: OBJECTIVES });
 }));
 
 /**

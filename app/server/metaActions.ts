@@ -26,7 +26,7 @@ import {
 } from './metaClient.js';
 import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
-import { fetchPromotePages } from './metaClient.js';
+import { fetchCustomAudiences, fetchPromotePages, type MetaAudience } from './metaClient.js';
 import { imageBase64, imagePath } from './metaImages.js';
 import { applyCampaignSpend } from './metaSync.js';
 
@@ -70,6 +70,17 @@ export const OBJECTIVES = {
 } as const;
 export type Goal = keyof typeof OBJECTIVES;
 
+/**
+ * Who the ad set reaches. Cold is prospecting — people who do not know the band, found by the
+ * area, the ages and the creative. Hot is retargeting — saved audiences of people who already
+ * showed interest (visited the ticket page, watched a video, engaged with the page).
+ */
+export const TEMPERATURES = { cold: 'קהל קר', hot: 'קהל חם' } as const;
+export type Temperature = keyof typeof TEMPERATURES;
+/** Below this, Meta struggles to deliver a retargeting ad set and the same few people see it over and over. */
+export const MIN_HOT_AUDIENCE = 1_000;
+const MAX_AUDIENCES = 10;
+
 export const CTAS = ['BUY_TICKETS', 'LEARN_MORE', 'BOOK_NOW', 'GET_OFFER'] as const;
 const CTA_LABELS: Record<string, string> = {
   BUY_TICKETS: 'לרכישת כרטיסים', LEARN_MORE: 'מידע נוסף', BOOK_NOW: 'להזמנה', GET_OFFER: 'לקבלת ההצעה',
@@ -85,6 +96,11 @@ export interface CampaignSpec {
   end_date: string;
   age_min: number;
   age_max: number;
+  temperature: Temperature;
+  /** Saved audiences the ad set targets — required for hot, none for cold. */
+  audience_ids: string[];
+  /** Saved audiences it never shows to, e.g. people who already bought. */
+  excluded_audience_ids: string[];
   page_id: string;
   pixel_id: string | null;
   link: string;
@@ -195,6 +211,10 @@ export function cleanSpec(raw: any): CampaignSpec | null {
   if (!goal || !name || !Number.isFinite(budget) || budget <= 0 || !start || !end) return null;
   if (!/^\d{5,30}$/.test(page) || !link || !/^https?:\/\//i.test(link) || !primary || !headline || !image) return null;
   const pixel = raw.pixel_id != null && META_ID.test(String(raw.pixel_id)) ? String(raw.pixel_id) : null;
+  const ids = (v: unknown) => [...new Set((Array.isArray(v) ? v : []).map(String).filter((id) => META_ID.test(id)))].slice(0, MAX_AUDIENCES);
+  const temperature: Temperature = raw.temperature === 'hot' ? 'hot' : 'cold';
+  const include = temperature === 'hot' ? ids(raw.audience_ids) : [];
+  const exclude = ids(raw.excluded_audience_ids).filter((id) => !include.includes(id));
   const ageMin = clamp(Math.round(Number(raw.age_min) || 18), 18, 65);
   const ageMax = clamp(Math.round(Number(raw.age_max) || 65), ageMin, 65);
   return {
@@ -206,6 +226,9 @@ export function cleanSpec(raw: any): CampaignSpec | null {
     end_date: end,
     age_min: ageMin,
     age_max: ageMax,
+    temperature,
+    audience_ids: include,
+    excluded_audience_ids: exclude,
     page_id: page,
     pixel_id: pixel,
     link,
@@ -369,7 +392,7 @@ function adsManagerUrl(level: ActionLevel, id: string): string {
 /** The fields whose change between preview and confirm means the preview is no longer true. */
 function fingerprint(action: ProposedAction, live: any): Record<string, unknown> {
   if (action.type === 'create_pixel') return { pixels: live.pixels };
-  if (action.type === 'create_campaign') return { pages: live.pages, pixels: live.pixels, image: live.image };
+  if (action.type === 'create_campaign') return { pages: live.pages, pixels: live.pixels, image: live.image, audiences: live.audiences };
   return {
     name: live.name ?? null,
     status: live.status ?? null,
@@ -386,10 +409,16 @@ async function readLive(action: ProposedAction): Promise<any> {
     return { pixels: pixels.map((p) => p.id), list: pixels };
   }
   if (action.type === 'create_campaign') {
-    const [pages, pixels] = await Promise.all([fetchPromotePages(), fetchPixels()]);
+    const spec = action.spec;
+    const wantsAudiences = !!spec && (spec.audience_ids.length > 0 || spec.excluded_audience_ids.length > 0);
+    const [pages, pixels, audiences] = await Promise.all([
+      fetchPromotePages(), fetchPixels(), wantsAudiences ? fetchCustomAudiences() : Promise.resolve([] as MetaAudience[]),
+    ]);
     return {
       pages: pages.map((p) => p.id),
       pixels: pixels.map((p) => p.id),
+      audiences: audiences.map((a) => `${a.id}:${a.ready ? 1 : 0}`),
+      audience_list: audiences,
       image: imagePath(action.spec?.image_id) ? action.spec!.image_id : null,
       page_list: pages,
       pixel_list: pixels,
@@ -560,6 +589,26 @@ function describeCreate(action: ProposedAction, live: any, today: string): Omit<
   }
   if (spec.start_date < today) warnings.push('תאריך ההתחלה כבר עבר — הקמפיין יתחיל מהרגע שיופעל.');
 
+  // The audiences, each checked against the account as it is now.
+  const audiences: MetaAudience[] = live.audience_list ?? [];
+  const named = (id: string) => audiences.find((a) => a.id === id);
+  const label = (id: string) => `«${named(id)?.name ?? id}»`;
+  for (const id of [...spec.audience_ids, ...spec.excluded_audience_ids]) {
+    const a = named(id);
+    if (!a) blockers.push(`הקהל ${id} לא נמצא בחשבון המודעות — בחרו מהרשימה.`);
+    else if (!a.ready) warnings.push(`הקהל ${label(id)} עוד לא מוכן אצל Meta (${a.status ?? 'בעיבוד'}) — ייתכן שהמודעה לא תופץ עד שיתמלא.`);
+  }
+  if (spec.temperature === 'hot') {
+    if (!spec.audience_ids.length) blockers.push('קמפיין חם צריך לפחות קהל שמור אחד — מבקרי דף הכרטיסים, צופי וידאו או מי שהתעניין בדף.');
+    const known = spec.audience_ids.map(named).filter(Boolean) as MetaAudience[];
+    const upper = known.reduce((sum, a) => sum + (a.size_upper ?? 0), 0);
+    if (known.length === spec.audience_ids.length && known.every((a) => a.size_upper != null) && upper < MIN_HOT_AUDIENCE) {
+      warnings.push(`הקהלים שנבחרו קטנים (עד ${upper.toLocaleString('he-IL')} איש יחד). מתחת ל-${MIN_HOT_AUDIENCE.toLocaleString('he-IL')} Meta מתקשה להפיץ, ואותם אנשים יראו את המודעה שוב ושוב — כדאי תקציב יומי נמוך, או להוסיף קהל.`);
+    }
+  } else if (!spec.excluded_audience_ids.length) {
+    warnings.push('קמפיין קר בלי החרגות: גם מי שכבר קנה כרטיס עלול לראות אותו. אם יש בחשבון קהל של רוכשים, כדאי להחריג אותו.');
+  }
+
   let shows: ActionPreview['shows'] = [];
   if (spec.event_id) {
     const e = db.prepare('SELECT id, venue, date FROM band_events WHERE id = ?').get(spec.event_id) as any;
@@ -583,9 +632,14 @@ function describeCreate(action: ProposedAction, live: any, today: string): Omit<
     {
       label: 'קבוצת מודעות',
       from: 'אין',
-      to: `ישראל, גילאי ${spec.age_min}–${spec.age_max}${spec.age_max === 65 ? '+' : ''} · ${shekels(spec.daily_budget)}`
+      to: `${TEMPERATURES[spec.temperature]}: `
+        + (spec.temperature === 'hot' ? `${spec.audience_ids.map(label).join(', ')} · ` : '')
+        + `ישראל, גילאי ${spec.age_min}–${spec.age_max}${spec.age_max === 65 ? '+' : ''} · ${shekels(spec.daily_budget)}`
         + ` · ${spec.start_date} עד ${spec.end_date}${total != null ? ` (${days} ימים, עד ₪${total.toLocaleString('he-IL')})` : ''}`,
     },
+    ...(spec.excluded_audience_ids.length
+      ? [{ label: 'לא יוצג ל', from: 'אין החרגות', to: spec.excluded_audience_ids.map(label).join(', ') }]
+      : []),
     { label: 'מודעה', from: 'אין', to: `«${spec.headline}» · ${CTA_LABELS[spec.cta]} · ${page?.name ?? spec.page_id}` },
   ];
   warnings.push('הקמפיין נוצר מושהה, וקבוצת המודעות והמודעה מוכנות בתוכו. שום כסף לא יוצא עד שמפעילים את הקמפיין, והמודעה עוברת קודם בדיקה של Meta.');
@@ -628,7 +682,7 @@ async function createCampaign(spec: CampaignSpec): Promise<Record<string, string
     made.campaign_id = String(campaign.id);
 
     const adset = await graphWrite<any>(`${account}/adsets`, {
-      name: `${spec.name} — קהל`,
+      name: `${spec.name} — ${TEMPERATURES[spec.temperature]}`,
       campaign_id: made.campaign_id,
       daily_budget: String(shekelsToBudget(spec.daily_budget)),
       billing_event: 'IMPRESSIONS',
@@ -640,6 +694,8 @@ async function createCampaign(spec: CampaignSpec): Promise<Record<string, string
         geo_locations: { countries: ['IL'] },
         age_min: spec.age_min,
         age_max: spec.age_max,
+        ...(spec.audience_ids.length ? { custom_audiences: spec.audience_ids.map((id) => ({ id })) } : {}),
+        ...(spec.excluded_audience_ids.length ? { excluded_custom_audiences: spec.excluded_audience_ids.map((id) => ({ id })) } : {}),
         targeting_automation: { advantage_audience: 0 },
       }),
       ...(spec.goal === 'awareness' ? {} : { destination_type: 'WEBSITE' }),

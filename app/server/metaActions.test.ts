@@ -41,6 +41,11 @@ const server = http.createServer((req, res) => {
   }
   if (parts[1] === 'adspixels') return send({ data: pixels });
   if (parts[1] === 'promote_pages') return send({ data: [{ id: '100000000001', name: 'הלהקה' }] });
+  if (parts[1] === 'customaudiences') return send({ data: [
+    { id: '160000000001', name: 'מבקרי דף הכרטיסים 30 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 3000, approximate_count_upper_bound: 4000, delivery_status: { code: 200 } },
+    { id: '160000000002', name: 'רוכשים 90 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 200, approximate_count_upper_bound: 300, delivery_status: { code: 200 } },
+    { id: '160000000003', name: 'צופי וידאו 50%', subtype: 'ENGAGEMENT', approximate_count_lower_bound: 400, approximate_count_upper_bound: 600, delivery_status: { code: 300, description: 'Audience is too small' } },
+  ] });
   if (parts[1] === 'stats') return send({ data: [{ data: pixelStats[`${parts[0]}:${url.searchParams.get('aggregation')}`] ?? [] }] });
   const obj = objects[parts[0]];
   if (!obj) return send({ error: { message: 'Unsupported get request', code: 100 } });
@@ -318,4 +323,40 @@ test('a build that fails half-way says what already exists in the account', asyn
     assert.equal(record.status, 'failed');
     assert.equal(record.result.adset_id, '130000000002');
   } finally { failAds = false; }
+});
+
+test('a hot campaign targets saved audiences and excludes buyers; the preview checks them against the account', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const hot = { ...SPEC, image_id: image.id, temperature: 'hot', audience_ids: ['160000000001'], excluded_audience_ids: ['160000000002'] };
+
+  const empty = await actions.previewAction({ type: 'create_campaign', spec: { ...hot, audience_ids: [] } }, { source: 'studio' });
+  assert.match(empty.blockers.join(' '), /קמפיין חם צריך/);
+  const unknown = await actions.previewAction({ type: 'create_campaign', spec: { ...hot, audience_ids: ['160000000999'] } }, { source: 'studio' });
+  assert.match(unknown.blockers.join(' '), /לא נמצא/);
+  const small = await actions.previewAction({ type: 'create_campaign', spec: { ...hot, audience_ids: ['160000000003'] } }, { source: 'studio' });
+  assert.match(small.warnings.join(' '), /קטנים/);
+  assert.match(small.warnings.join(' '), /עוד לא מוכן/);
+
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: hot }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.match(preview.changes[1].to, /קהל חם: «מבקרי דף הכרטיסים 30 יום»/);
+  assert.equal(preview.changes[2].label, 'לא יוצג ל');
+  const before = writes.length;
+  await actions.executeAction(preview.id);
+  const adset = writes.slice(before).find((w) => w.path.endsWith('/adsets'))!;
+  const targeting = JSON.parse(adset.params.targeting);
+  assert.deepEqual(targeting.custom_audiences, [{ id: '160000000001' }]);
+  assert.deepEqual(targeting.excluded_custom_audiences, [{ id: '160000000002' }]);
+  assert.match(adset.params.name, /קהל חם$/);
+});
+
+test('a cold campaign carries no audiences, and is reminded to exclude buyers', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const cleaned = actions.cleanSpec({ ...SPEC, image_id: image.id, temperature: 'cold', audience_ids: ['160000000001'] })!;
+  assert.deepEqual(cleaned.audience_ids, []);
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  assert.match(preview.changes[1].to, /^קהל קר: ישראל/);
+  assert.match(preview.warnings.join(' '), /בלי החרגות/);
 });

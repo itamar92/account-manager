@@ -764,8 +764,14 @@ and the shows' figures, and cannot be switched back on from the app.
 review — opened from the rail, from a show with no campaign, or from a plan («יצירת הקמפיין ב-Meta…»,
 which fills budget, dates and copy from it). Goals are sales (`OUTCOME_SALES`, optimising for the
 pixel's Purchase; needs a pixel), traffic to the ticket page (`OUTCOME_TRAFFIC`, landing page views)
-and awareness (`OUTCOME_AWARENESS`, reach). The audience is Israel by age; finer audiences are set
-afterwards in Ads Manager. The image is kept by the app (`metaImages.ts`, in the data directory)
+and awareness (`OUTCOME_AWARENESS`, reach). The audience step chooses **קהל קר** (prospecting: Israel
+by age, the creative finds the people) or **קהל חם** (retargeting: one or more of the account's saved
+custom audiences — ticket-page visitors, video viewers, page engagers — read live from
+`/customaudiences`; lookalikes are not offered there, since they are new people). Any campaign can
+exclude saved audiences, and one whose name says it is buyers (רוכשים / purchasers) is excluded by
+default. The preview blocks an audience that is not in the account or a hot campaign with none, and
+warns when an audience is not ready or the hot audiences add up to fewer than 1,000 people. Interests
+and a radius around the venue are set afterwards in Ads Manager. The image is kept by the app (`metaImages.ts`, in the data directory)
 until the confirm, so nothing reaches the ad account before the preview has been read. Confirming
 uploads the image and creates, in order, the campaign (**paused**), one ad set (daily budget, start,
 end of the end date in Israel time), the creative and the ad; the ad set and ad are created active
@@ -775,7 +781,7 @@ is written to the synced list and mapped to its show at once.
 
 | Method & path | Purpose |
 |---|---|
-| `GET /api/band/meta/setup` | the pages the account may advertise for, its pixels, the goals |
+| `GET /api/band/meta/setup` | the pages the account may advertise for, its pixels, its saved audiences, the goals |
 | `GET /api/band/meta/campaigns/:id/structure` | one campaign live: budget, ad sets, ads |
 | `POST /api/band/meta/images` | keep a new ad's image (`{data}` as a data: URL, JPG/PNG ≤ 8MB) |
 | `POST /api/band/meta-actions/preview` | `action.type` is also `rename` (`new_name`), `archive`, and `create_campaign` (`spec`, studio only) |
