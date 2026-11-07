@@ -5,6 +5,7 @@ import { get, post } from '../../api';
 import { Button, fieldClass } from '../../ui';
 import { ddmm } from '../band/advisorShared';
 import { ChangeLine, israelToday, usePreview } from './studioShared';
+import { AudienceCreator, AudienceList } from './AudienceCreator';
 
 /** What the wizard is opened with: a show, and whether to fill it from that show's AI plan. */
 export interface WizardSeed {
@@ -20,11 +21,6 @@ const TEMPERATURES: Array<{ value: Temperature; title: string; sub: string }> = 
   { value: 'hot', title: 'קהל חם', sub: 'מי שכבר הראה עניין: ביקר בדף הכרטיסים, צפה בוידאו, התעניין בדף. קהל קטן וזול יותר לכרטיס, בדרך כלל בשבוע-עשרה ימים שלפני ההופעה.' },
 ];
 
-/** Meta's audience kinds, as the wizard names them. */
-const SUBTYPES: Record<string, string> = {
-  WEBSITE: 'מבקרי אתר', ENGAGEMENT: 'מעורבות', VIDEO: 'צפיות בוידאו', IG_BUSINESS: 'אינסטגרם', PAGE: 'דף פייסבוק',
-  CUSTOM: 'רשימת לקוחות', LOOKALIKE: 'דומים', OFFLINE_CONVERSION: 'רכישות מחוץ לאתר',
-};
 /**
  * An audience whose name says it is people who already bought — excluded from a new campaign by
  * default. A lookalike «of buyers» is new people, so it never matches.
@@ -32,11 +28,6 @@ const SUBTYPES: Record<string, string> = {
 const BUYERS = /רכיש|רוכש|קנו|קונים|purchas|buyer/i;
 const MIN_HOT = 1000;
 
-const audienceSize = (a: any) => {
-  if (a.size_upper == null) return 'גודל לא ידוע';
-  const fmt = (n: number) => n.toLocaleString('he-IL');
-  return a.size_lower != null && a.size_lower !== a.size_upper ? `${fmt(a.size_lower)}–${fmt(a.size_upper)} איש` : `${fmt(a.size_upper)} איש`;
-};
 
 const GOALS: Array<{ value: Goal; title: string; sub: string }> = [
   { value: 'sales', title: 'מכירת כרטיסים', sub: 'Meta מחפשת את מי שיקנה, לפי אירועי הרכישה בפיקסל של המועדון. צריך פיקסל שמותקן בדף הכרטיסים.' },
@@ -101,7 +92,8 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
   const today = israelToday();
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<Form>(() => ({ ...blank(today), event_id: seed.event_id ?? '' }));
-  const [setup, setSetup] = useState<{ configured: boolean; pages: any[]; pixels: any[]; audiences?: any[]; audiences_error?: string | null } | null>(null);
+  const [setup, setSetup] = useState<{ configured: boolean; pages: any[]; pixels: any[]; instagram_accounts?: any[]; audiences?: any[]; audiences_error?: string | null } | null>(null);
+  const [creatingAudience, setCreatingAudience] = useState(false);
   const [setupError, setSetupError] = useState('');
   const [plan, setPlan] = useState<any>(null);
   const [planApplied, setPlanApplied] = useState(false);
@@ -120,9 +112,17 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
   const upcoming = events.filter((e) => e.date >= today).sort((a, b) => a.date.localeCompare(b.date));
   const show = events.find((e) => e.id === form.event_id) ?? null;
 
-  useEffect(() => {
+  /** Reads the account again; after a new audience, ticks it in the list it was made for. */
+  const loadSetup = (justMade?: { id: string; exclude: boolean }) => {
     get('/band/meta/setup').then((d) => {
       setSetup(d);
+      if (justMade) {
+        setForm((f) => (justMade.exclude
+          ? { ...f, excluded_audience_ids: [...new Set([...f.excluded_audience_ids, justMade.id])] }
+          : { ...f, temperature: 'hot', audience_ids: [...new Set([...f.audience_ids, justMade.id])] }));
+        setPreview(null);
+        return;
+      }
       setForm((f) => ({
         ...f,
         page_id: f.page_id || d.pages[0]?.id || '',
@@ -133,7 +133,8 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
           : (d.audiences ?? []).filter((a: any) => a.subtype !== 'LOOKALIKE' && BUYERS.test(a.name ?? '')).map((a: any) => a.id),
       }));
     }).catch((e) => setSetupError(e.message));
-  }, []);
+  };
+  useEffect(() => loadSetup(), []);
 
   // A show brings its date and ticket page, and its plan if one was made.
   useEffect(() => {
@@ -270,6 +271,7 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
   const page = setup?.pages.find((p) => p.id === form.page_id);
   // Lookalikes are new people, which is prospecting: they are not offered as a hot audience.
   const hotAudiences = (setup?.audiences ?? []).filter((a: any) => a.subtype !== 'LOOKALIKE');
+  const canBuildAudience = !!setup && (setup.pixels.length > 0 || setup.pages.length > 0 || (setup.instagram_accounts?.length ?? 0) > 0);
   const selectedHot = hotAudiences.filter((a: any) => form.audience_ids.includes(a.id));
   const hotSize = selectedHot.every((a: any) => a.size_upper != null) ? selectedHot.reduce((n: number, a: any) => n + a.size_upper, 0) : null;
   const toggle = (list: string[], id: string) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
@@ -355,7 +357,7 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
                             disabled={disabled} onChange={() => set({ goal: g.value })} />
                           <span>
                             <span className="block text-[15px] font-semibold text-ink">{g.title}</span>
-                            <span className="block text-sm text-body leading-relaxed">{disabled ? 'אין פיקסל בחשבון המודעות — אפשר ליצור אחד במסך «פיקסל ויומן».' : g.sub}</span>
+                            <span className="block text-sm text-body leading-relaxed">{disabled ? 'אין פיקסל בחשבון המודעות — אפשר ליצור אחד במסך «פיקסל, קהלים ויומן».' : g.sub}</span>
                           </span>
                         </label>
                       );
@@ -387,7 +389,8 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
                   <legend className="text-[13px] font-semibold text-ink-2 mb-2">למי המודעה מיועדת</legend>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {TEMPERATURES.map((t) => {
-                      const disabled = t.value === 'hot' && setup != null && hotAudiences.length === 0;
+                      // Hot needs an audience — one that exists, or a source to build one from here.
+                      const disabled = t.value === 'hot' && setup != null && hotAudiences.length === 0 && !canBuildAudience;
                       return (
                         <label key={t.value} className={clsx('flex gap-3 rounded-xl border px-4 py-3 cursor-pointer transition-colors',
                           form.temperature === t.value ? 'border-accent bg-accent-soft/60' : 'border-line bg-surface hover:bg-soft',
@@ -400,7 +403,7 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
                               {disabled
                                 ? (setup?.audiences_error
                                   ? `לא הצלחנו לקרוא את הקהלים מ-Meta: ${setup.audiences_error}`
-                                  : 'אין בחשבון קהלים שמורים. יוצרים אותם ב-Ads Manager ← קהלים (למשל מבקרי דף הכרטיסים ב-30 יום, או מי שצפה בוידאו), והם יופיעו כאן.')
+                                  : 'אין בחשבון קהלים שמורים, ואין ממה לבנות אחד: צריך פיקסל, דף פייסבוק או חשבון אינסטגרם מחוברים לחשבון המודעות.')
                                 : t.sub}
                             </span>
                           </span>
@@ -414,9 +417,21 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
                   <fieldset className="space-y-2">
                     <legend className="text-[13px] font-semibold text-ink-2">הקהלים החמים</legend>
                     <p className="text-xs text-faint">המודעה תוצג רק למי שנמצא באחד מהקהלים שתסמנו.</p>
-                    <AudienceList audiences={hotAudiences} selected={form.audience_ids}
-                      disabledIds={form.excluded_audience_ids} disabledNote="מוחרג למטה"
-                      onToggle={(id) => set({ audience_ids: toggle(form.audience_ids, id) })} />
+                    {hotAudiences.length > 0 && (
+                      <AudienceList audiences={hotAudiences} selected={form.audience_ids}
+                        disabledIds={form.excluded_audience_ids} disabledNote="מוחרג למטה"
+                        onToggle={(id) => set({ audience_ids: toggle(form.audience_ids, id) })} />
+                    )}
+                    {setup && (hotAudiences.length === 0 || creatingAudience) ? (
+                      <div className="rounded-xl border border-line bg-surface p-3.5 space-y-2">
+                        <p className="text-sm font-semibold text-ink">{hotAudiences.length === 0 ? 'אין עדיין קהלים חמים — אפשר ליצור אחד כאן' : 'קהל חם חדש'}</p>
+                        <AudienceCreator setup={setup} isOwner only="target"
+                          onCreated={(id) => { setCreatingAudience(false); if (id) loadSetup({ id, exclude: false }); else loadSetup(); }} />
+                      </div>
+                    ) : setup && canBuildAudience && (
+                      <button type="button" onClick={() => setCreatingAudience(true)}
+                        className="inline-flex items-center gap-1.5 min-h-10 text-sm font-semibold text-accent-ink hover:underline">+ יצירת קהל חם חדש</button>
+                    )}
                     {selectedHot.length > 0 && hotSize != null && hotSize < MIN_HOT && (
                       <p className="flex items-start gap-1.5 text-sm text-warn-ink"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" aria-hidden />
                         יחד עד {hotSize.toLocaleString('he-IL')} איש. מתחת ל-{MIN_HOT.toLocaleString('he-IL')} Meta מתקשה להפיץ, ואותם אנשים יראו את המודעה שוב ושוב. כדאי תקציב יומי נמוך, או להוסיף קהל.
@@ -428,7 +443,7 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
                   </fieldset>
                 )}
 
-                {(setup?.audiences?.length ?? 0) > 0 && (
+                {setup && ((setup.audiences?.length ?? 0) > 0 || setup.pixels.length > 0) && (
                   <details className="group rounded-xl border border-line bg-surface" open={form.excluded_audience_ids.length > 0 || undefined}>
                     <summary className="flex items-center justify-between gap-2 px-4 min-h-12 cursor-pointer text-sm">
                       <span className="font-semibold text-ink-2">לא להציג ל…</span>
@@ -439,6 +454,13 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
                       <AudienceList audiences={setup?.audiences ?? []} selected={form.excluded_audience_ids}
                         disabledIds={form.temperature === 'hot' ? form.audience_ids : []} disabledNote="נבחר כקהל חם"
                         onToggle={(id) => set({ excluded_audience_ids: toggle(form.excluded_audience_ids, id) })} />
+                      {setup && !(setup.audiences ?? []).some((a: any) => a.subtype !== 'LOOKALIKE' && BUYERS.test(a.name ?? '')) && (
+                        <div className="pt-1 space-y-1.5">
+                          <p className="px-1 text-xs text-muted">אין בחשבון קהל של רוכשים. אפשר ליצור אותו מהפיקסל:</p>
+                          <AudienceCreator setup={setup} isOwner only="exclude"
+                            onCreated={(id) => (id ? loadSetup({ id, exclude: true }) : loadSetup())} />
+                        </div>
+                      )}
                     </div>
                   </details>
                 )}
@@ -634,39 +656,6 @@ export function CreateWizard({ seed, events, onClose, onCreated }: {
       )}
       {activation.modal}
     </div>
-  );
-}
-
-/** Saved audiences as a checklist: name, kind, size, and whether Meta can use it yet. */
-function AudienceList({ audiences, selected, disabledIds, disabledNote, onToggle }: {
-  audiences: any[];
-  selected: string[];
-  disabledIds: string[];
-  disabledNote: string;
-  onToggle: (id: string) => void;
-}) {
-  if (!audiences.length) return <p className="text-sm text-body">אין קהלים מתאימים בחשבון.</p>;
-  return (
-    <ul className="rounded-xl border border-line bg-surface divide-y divide-line max-h-72 overflow-y-auto">
-      {audiences.map((a) => {
-        const disabled = disabledIds.includes(a.id);
-        return (
-          <li key={a.id}>
-            <label className={clsx('flex items-center gap-3 px-3.5 min-h-12 py-2', disabled ? 'opacity-55 cursor-not-allowed' : 'cursor-pointer hover:bg-soft')}>
-              <input type="checkbox" className="accent-accent w-[18px] h-[18px] shrink-0" checked={selected.includes(a.id)}
-                disabled={disabled} onChange={() => onToggle(a.id)} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm text-ink truncate">{a.name ?? a.id}</span>
-                <span className="block text-xs text-muted">
-                  {[SUBTYPES[a.subtype] ?? a.subtype, audienceSize(a), disabled ? disabledNote : null].filter(Boolean).join(' · ')}
-                </span>
-              </span>
-              {!a.ready && <span className="shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[11px] font-semibold text-warn-ink">לא מוכן</span>}
-            </label>
-          </li>
-        );
-      })}
-    </ul>
   );
 }
 

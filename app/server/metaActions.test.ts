@@ -29,7 +29,7 @@ const server = http.createServer((req, res) => {
       writes.push({ path: parts.join('/'), params });
       if (parts[1] === 'adspixels') return send({ id: '777000111' });
       if (parts[1] === 'adimages') return send({ images: { 'ad.png': { hash: 'hash-abc', url: 'https://img.example/ad.png' } } });
-      const created: Record<string, string> = { campaigns: '130000000001', adsets: '130000000002', adcreatives: '130000000003', ads: '130000000004' };
+      const created: Record<string, string> = { campaigns: '130000000001', adsets: '130000000002', adcreatives: '130000000003', ads: '130000000004', customaudiences: '160000000099' };
       if (parts[0]?.startsWith('act_') && created[parts[1]]) {
         if (parts[1] === 'ads' && failAds) return send({ error: { message: 'Invalid creative', code: 100 } });
         return send({ id: created[parts[1]] });
@@ -41,6 +41,7 @@ const server = http.createServer((req, res) => {
   }
   if (parts[1] === 'adspixels') return send({ data: pixels });
   if (parts[1] === 'promote_pages') return send({ data: [{ id: '100000000001', name: 'הלהקה' }] });
+  if (parts[1] === 'instagram_accounts') return send({ data: [{ id: '170000000001', username: 'the_band' }] });
   if (parts[1] === 'customaudiences') return send({ data: [
     { id: '160000000001', name: 'מבקרי דף הכרטיסים 30 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 3000, approximate_count_upper_bound: 4000, delivery_status: { code: 200 } },
     { id: '160000000002', name: 'רוכשים 90 יום', subtype: 'WEBSITE', approximate_count_lower_bound: 200, approximate_count_upper_bound: 300, delivery_status: { code: 200 } },
@@ -359,4 +360,41 @@ test('a cold campaign carries no audiences, and is reminded to exclude buyers', 
   const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
   assert.match(preview.changes[1].to, /^קהל קר: ישראל/);
   assert.match(preview.warnings.join(' '), /בלי החרגות/);
+});
+
+test('a saved audience is built only from the studio, previewed against the account, then created with its rule', async () => {
+  const website = { kind: 'website', name: 'התחילו לקנות · 30 יום', source_id: '555000', days: 30, event: 'InitiateCheckout', exclude_buyers: true };
+  assert.equal(actions.cleanActions([{ type: 'create_audience', audience: website }]).length, 0);
+  assert.equal(actions.cleanAudienceSpec({ ...website, days: 999 })!.days, 180);
+  assert.equal(actions.cleanAudienceSpec({ ...website, event: 'Purchase' })!.exclude_buyers, false);
+
+  const before = writes.length;
+  const preview = await actions.previewAction({ type: 'create_audience', audience: website }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.match(preview.changes[0].to, /התחילו לקנות.*בלי מי שקנה.*30 ימים/);
+  assert.match(preview.warnings.join(' '), /דף הכרטיסים של המועדון/);
+  assert.equal(writes.length, before);
+
+  const done = await actions.executeAction(preview.id);
+  assert.equal(done.result.audience_id, '160000000099');
+  const sent = writes.at(-1)!;
+  assert.equal(sent.path, 'act_1234567/customaudiences');
+  assert.equal(sent.params.prefill, 'true');
+  const rule = JSON.parse(sent.params.rule);
+  assert.deepEqual(rule.inclusions.rules[0].event_sources, [{ id: '555000', type: 'pixel' }]);
+  assert.equal(rule.inclusions.rules[0].retention_seconds, 30 * 86400);
+  assert.equal(rule.inclusions.rules[0].filter.filters[0].value, 'InitiateCheckout');
+  assert.equal(rule.exclusions.rules[0].filter.filters[0].value, 'Purchase');
+});
+
+test('Instagram and page audiences check their source, and a name already taken is said', async () => {
+  const ig = await actions.previewAction({ type: 'create_audience', audience: { kind: 'instagram', name: 'מבקרי דף הכרטיסים 30 יום', source_id: '170000000001', days: 180 } }, { source: 'studio' });
+  assert.equal(ig.can_execute, true);
+  assert.match(ig.warnings.join(' '), /כבר יש בחשבון קהל בשם/);
+  assert.deepEqual(actions.audienceRule(ig.action.audience!).inclusions, {
+    operator: 'or',
+    rules: [{ event_sources: [{ id: '170000000001', type: 'ig_business' }], retention_seconds: 180 * 86400, filter: { operator: 'and', filters: [{ field: 'event', operator: 'eq', value: 'ig_business_profile_all' }] } }],
+  });
+  const wrong = await actions.previewAction({ type: 'create_audience', audience: { kind: 'page', name: 'דף', source_id: '100000000999', days: 180 } }, { source: 'studio' });
+  assert.match(wrong.blockers.join(' '), /לא שייך לחשבון/);
 });

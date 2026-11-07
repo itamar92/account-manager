@@ -8,7 +8,7 @@ import { ChangeLine } from '../campaigns/studioShared';
 
 /** An action as an advisor answer carries it — see server/metaActions.ts. */
 export interface ProposedAction {
-  type: 'pause' | 'activate' | 'set_daily_budget' | 'set_end_date' | 'create_pixel' | 'rename' | 'archive' | 'create_campaign';
+  type: 'pause' | 'activate' | 'set_daily_budget' | 'set_end_date' | 'create_pixel' | 'rename' | 'archive' | 'create_campaign' | 'create_audience';
   level: 'campaign' | 'adset' | 'ad' | null;
   id: string | null;
   name: string | null;
@@ -17,6 +17,7 @@ export interface ProposedAction {
   pixel_name?: string | null;
   new_name?: string | null;
   spec?: Record<string, unknown> | null;
+  audience?: Record<string, unknown> | null;
   reason: string | null;
 }
 
@@ -34,6 +35,7 @@ export function actionLabel(action: ProposedAction): string {
     case 'rename': return `שינוי שם ל${what} ל«${action.new_name}»`;
     case 'archive': return `העברה לארכיון של ${what}`;
     case 'create_campaign': return `קמפיין חדש «${action.name}»`;
+    case 'create_audience': return `קהל שמור חדש «${action.name}»`;
   }
 }
 

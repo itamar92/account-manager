@@ -17,6 +17,7 @@ import { CampaignsSection } from './CampaignsSection';
 import { CreateWizard, type WizardSeed } from './CreateWizard';
 import { DecisionFeed } from './DecisionFeed';
 import { SectionHead } from './studioShared';
+import { AudiencesPanel } from './AudienceCreator';
 
 type Section = 'decide' | 'campaigns' | 'shows' | 'advisor' | 'tasks' | 'spend' | 'tracking';
 
@@ -27,7 +28,7 @@ const SECTIONS: Array<{ id: Section; label: string; short?: string; icon: React.
   { id: 'advisor', label: 'יועץ AI', short: 'יועץ', icon: Sparkles, mobile: true },
   { id: 'tasks', label: 'משימות', icon: ListChecks },
   { id: 'spend', label: 'הוצאות וחיובים', icon: Receipt },
-  { id: 'tracking', label: 'פיקסל ויומן שינויים', icon: Radar },
+  { id: 'tracking', label: 'פיקסל, קהלים ויומן', icon: Radar },
 ];
 
 const isSection = (v: string | undefined): v is Section => SECTIONS.some((s) => s.id === v);
@@ -199,7 +200,12 @@ export function CampaignStudio() {
             )}
             {section === 'tracking' && (
               <div className="space-y-8">
-                <SectionHead title="פיקסל ויומן שינויים" sub="האם דפי הכרטיסים של המועדונים מדווחים מכירות, וכל מה שהאפליקציה שינתה ב-Meta." />
+                <SectionHead title="פיקסל, קהלים ויומן" sub="האם דפי הכרטיסים של המועדונים מדווחים מכירות, הקהלים השמורים, וכל מה שהאפליקציה שינתה ב-Meta." />
+                <section aria-labelledby="audiences-heading" className="rounded-2xl bg-surface border border-line p-4 md:p-6">
+                  <h2 id="audiences-heading" className="text-[17px] font-bold text-ink mb-1">קהלים שמורים</h2>
+                  <p className="text-sm text-body mb-3">הקהלים שקמפיין חם פונה אליהם, ומי שמחריגים מכל קמפיין. קהל חדש נבנה מהימים שכבר עברו, ומתמלא תוך כחצי שעה.</p>
+                  <AudiencesPanel isOwner={isOwner} reloadKey={reloadKey} onChanged={changed} />
+                </section>
                 <section aria-labelledby="pixel-heading" className="rounded-2xl bg-surface border border-line p-4 md:p-6">
                   <h2 id="pixel-heading" className="text-[17px] font-bold text-ink mb-3">פיקסל ומעקב מכירות</h2>
                   <PixelPanel isOwner={isOwner} onError={showError} onChanged={changed} />

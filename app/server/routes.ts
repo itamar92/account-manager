@@ -86,7 +86,7 @@ import {
   budgetToShekels, cancelAction, executeAction, listActions, OBJECTIVES, previewAction, PREVIEW_TTL_MINUTES,
 } from './metaActions.js';
 import {
-  fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
+  fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchInstagramAccounts, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
 } from './metaClient.js';
 import { imagePath, storeImage } from './metaImages.js';
 import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
@@ -2491,12 +2491,17 @@ router.get('/band/meta/setup', requireOwner, handleAsync(async (_req, res) => {
   if (!isMetaConfigured()) return res.json({ configured: false, pages: [], pixels: [], audiences: [], goals: OBJECTIVES });
   // An account Meta will not list audiences for (a token without the scope) still gets a cold
   // campaign; the wizard says why «hot» is not on offer.
-  const [pages, pixels, audiences] = await Promise.all([
+  const [pages, pixels, audiences, instagram] = await Promise.all([
     fetchPromotePages(),
     fetchPixels(),
     fetchCustomAudiences().then((list) => ({ list, error: null as string | null }), (err) => ({ list: [], error: String(err?.message || err) })),
+    // Only the Instagram engagement audience needs it; an account without one still works.
+    fetchInstagramAccounts().catch(() => []),
   ]);
-  res.json({ configured: true, pages, pixels, audiences: audiences.list, audiences_error: audiences.error, goals: OBJECTIVES });
+  res.json({
+    configured: true, pages, pixels, instagram_accounts: instagram,
+    audiences: audiences.list, audiences_error: audiences.error, goals: OBJECTIVES,
+  });
 }));
 
 /**

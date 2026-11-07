@@ -751,7 +751,7 @@ redirect into it. Sections:
   per campaign, read live from Meta: its budget and end date, its ad sets and ads. From there:
   pause / activate (campaign, ad set or ad), daily budget (campaign or ad set), end date, rename,
   archive, map and unmap shows, and the daily spend curve.
-- **הופעות ותוכניות**, **יועץ AI**, **משימות**, **הוצאות וחיובים**, **פיקסל ויומן שינויים** — the advisor's
+- **הופעות ותוכניות**, **יועץ AI**, **משימות**, **הוצאות וחיובים**, **פיקסל, קהלים ויומן** — the advisor's
   show views, the period's verdict and the chat, the campaign tasks, the spend tables and the pixel
   panel with the log of changes, as before.
 
@@ -771,7 +771,17 @@ custom audiences — ticket-page visitors, video viewers, page engagers — read
 exclude saved audiences, and one whose name says it is buyers (רוכשים / purchasers) is excluded by
 default. The preview blocks an audience that is not in the account or a hot campaign with none, and
 warns when an audience is not ready or the hot audiences add up to fewer than 1,000 people. Interests
-and a radius around the venue are set afterwards in Ads Manager. The image is kept by the app (`metaImages.ts`, in the data directory)
+and a radius around the venue are set afterwards in Ads Manager.
+
+**Saved audiences can be created from the app** (`create_audience`, studio only, the same preview →
+confirm), inside the wizard's hot step — the new one is ticked on creation — and under «פיקסל, קהלים
+ויומן → קהלים שמורים». Presets: ticket-page visitors (30 days, minus buyers), started checkout and did
+not finish (30 days, minus buyers), Instagram engagers and Facebook page engagers (180 days), and
+ticket buyers (90 days, for exclusion). Website audiences are built from the pixel's events
+(`rule` with `event_sources: pixel`, up to 180 days) and fill only from sites that run the pixel;
+Instagram (`ig_business`, `ig_business_profile_all`) and page (`page`, `page_engaged`) audiences go back
+up to 365 days. Every audience is created with `prefill`, so it is built from the days that already
+passed; Meta takes up to about half an hour, and until then the size is unknown. The image is kept by the app (`metaImages.ts`, in the data directory)
 until the confirm, so nothing reaches the ad account before the preview has been read. Confirming
 uploads the image and creates, in order, the campaign (**paused**), one ad set (daily budget, start,
 end of the end date in Israel time), the creative and the ad; the ad set and ad are created active
@@ -869,7 +879,7 @@ Business Settings → Users → System users → the app's system user (with the
 access*) → Generate token for the same Meta app with `ads_management` and `ads_read`, replace
 `META_ACCESS_TOKEN` in `deploy/.env` and restart. If Meta refuses to create a pixel with it, create
 one in Events Manager instead — the panel reads whichever pixel the account has. Every preview and its outcome is kept (`meta_actions`)
-and listed under «פיקסל ויומן שינויים». The agent never proposes a new campaign: those are built by
+and listed under «פיקסל, קהלים ויומן». The agent never proposes a new campaign: those are built by
 the owner in the studio's wizard (below), which goes through the same two steps.
 
 **The pixel and the clubs (`metaPixel.ts`, «פיקסל ומעקב מכירות»).** Tickets are sold on the

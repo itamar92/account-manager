@@ -381,3 +381,14 @@ export async function fetchCustomAudiences(): Promise<MetaAudience[]> {
     status: text(row.delivery_status?.description),
   }));
 }
+
+export interface MetaInstagramAccount {
+  id: string;
+  username: string | null;
+}
+
+/** The Instagram accounts the ad account may advertise as — the source of an Instagram engagement audience. */
+export async function fetchInstagramAccounts(): Promise<MetaInstagramAccount[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/instagram_accounts`, { fields: 'id,username' });
+  return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), username: text(row.username) }));
+}

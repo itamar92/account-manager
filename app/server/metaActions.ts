@@ -26,19 +26,20 @@ import {
 } from './metaClient.js';
 import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
-import { fetchCustomAudiences, fetchPromotePages, type MetaAudience } from './metaClient.js';
+import { fetchCustomAudiences, fetchInstagramAccounts, fetchPromotePages, type MetaAudience } from './metaClient.js';
 import { imageBase64, imagePath } from './metaImages.js';
 import { applyCampaignSpend } from './metaSync.js';
 
 export const ACTION_TYPES = [
   'pause', 'activate', 'set_daily_budget', 'set_end_date', 'create_pixel', 'rename', 'archive', 'create_campaign',
+  'create_audience',
 ] as const;
 /**
  * What only a person can start from the campaign studio. The agent may suggest a rename or an
  * archive like any other click, but a whole new campaign is built in the wizard, never handed
  * over in an answer.
  */
-const MANUAL_ONLY: ReadonlySet<string> = new Set(['create_campaign']);
+const MANUAL_ONLY: ReadonlySet<string> = new Set(['create_campaign', 'create_audience']);
 export type ActionType = (typeof ACTION_TYPES)[number];
 export const ACTION_LEVELS = ['campaign', 'adset', 'ad'] as const;
 export type ActionLevel = (typeof ACTION_LEVELS)[number];
@@ -59,7 +60,78 @@ export interface ProposedAction {
   new_name?: string | null;
   /** Everything a new campaign is built from, for create_campaign. */
   spec?: CampaignSpec | null;
+  /** Everything a new saved audience is built from, for create_audience. */
+  audience?: AudienceSpec | null;
   reason: string | null;
+}
+
+/**
+ * A saved («hot») audience, built from one source:
+ *  - `website` — people the pixel saw on a ticket page: everyone, or those who reached an event
+ *    (ViewContent, InitiateCheckout, Purchase); `exclude_buyers` takes Purchase out of the rest.
+ *  - `instagram` — everyone who engaged with the band's Instagram profile.
+ *  - `page` — everyone who engaged with the band's Facebook page.
+ */
+export const AUDIENCE_KINDS = ['website', 'instagram', 'page'] as const;
+export type AudienceKind = (typeof AUDIENCE_KINDS)[number];
+export const WEBSITE_EVENTS = ['all', 'ViewContent', 'InitiateCheckout', 'Purchase'] as const;
+export type WebsiteEvent = (typeof WEBSITE_EVENTS)[number];
+/** Meta's ceilings on how far back each kind of audience can look. */
+const MAX_DAYS: Record<AudienceKind, number> = { website: 180, instagram: 365, page: 365 };
+const EVENT_LABELS: Record<WebsiteEvent, string> = {
+  all: 'כל מי שביקר', ViewContent: 'צפו בדף ההופעה', InitiateCheckout: 'התחילו לקנות', Purchase: 'קנו כרטיס',
+};
+
+export interface AudienceSpec {
+  kind: AudienceKind;
+  name: string;
+  /** The pixel, Instagram account or page the audience is built from. */
+  source_id: string;
+  days: number;
+  event: WebsiteEvent;
+  exclude_buyers: boolean;
+}
+
+export function cleanAudienceSpec(raw: any): AudienceSpec | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const kind = (AUDIENCE_KINDS as readonly string[]).includes(raw.kind) ? (raw.kind as AudienceKind) : null;
+  const name = text(raw.name, 200);
+  const source = raw.source_id != null ? String(raw.source_id).trim() : '';
+  if (!kind || !name || !META_ID.test(source)) return null;
+  const event: WebsiteEvent = kind === 'website' && (WEBSITE_EVENTS as readonly string[]).includes(raw.event) ? raw.event : 'all';
+  return {
+    kind,
+    name,
+    source_id: source,
+    days: clamp(Math.round(Number(raw.days) || 30), 1, MAX_DAYS[kind]),
+    event,
+    exclude_buyers: kind === 'website' && event !== 'Purchase' && raw.exclude_buyers === true,
+  };
+}
+
+/** The audience's rule, in the shape Meta's `customaudiences` endpoint takes. */
+export function audienceRule(spec: AudienceSpec): Record<string, unknown> {
+  const retention_seconds = spec.days * 86_400;
+  if (spec.kind === 'website') {
+    const source = { event_sources: [{ id: spec.source_id, type: 'pixel' }], retention_seconds };
+    const filter = spec.event === 'all'
+      ? { operator: 'and', filters: [{ field: 'url', operator: 'i_contains', value: '' }] }
+      : { operator: 'and', filters: [{ field: 'event', operator: 'eq', value: spec.event }] };
+    return {
+      inclusions: { operator: 'or', rules: [{ ...source, filter }] },
+      ...(spec.exclude_buyers ? {
+        exclusions: { operator: 'or', rules: [{ ...source, filter: { operator: 'and', filters: [{ field: 'event', operator: 'eq', value: 'Purchase' }] } }] },
+      } : {}),
+    };
+  }
+  const type = spec.kind === 'instagram' ? 'ig_business' : 'page';
+  const value = spec.kind === 'instagram' ? 'ig_business_profile_all' : 'page_engaged';
+  return {
+    inclusions: {
+      operator: 'or',
+      rules: [{ event_sources: [{ id: spec.source_id, type }], retention_seconds, filter: { operator: 'and', filters: [{ field: 'event', operator: 'eq', value }] } }],
+    },
+  };
 }
 
 /** The three goals the wizard offers, and what each means in Meta's terms. */
@@ -151,6 +223,11 @@ export function cleanActions(list: unknown, options: { manual?: boolean } = {}):
     };
     if (type === 'create_pixel') {
       action.pixel_name = text(raw?.pixel_name, 100);
+    } else if (type === 'create_audience') {
+      const audience = cleanAudienceSpec(raw?.audience);
+      if (!audience) continue;
+      action.audience = audience;
+      action.name = audience.name;
     } else if (type === 'create_campaign') {
       const spec = cleanSpec(raw?.spec);
       if (!spec) continue;
@@ -393,6 +470,7 @@ function adsManagerUrl(level: ActionLevel, id: string): string {
 function fingerprint(action: ProposedAction, live: any): Record<string, unknown> {
   if (action.type === 'create_pixel') return { pixels: live.pixels };
   if (action.type === 'create_campaign') return { pages: live.pages, pixels: live.pixels, image: live.image, audiences: live.audiences };
+  if (action.type === 'create_audience') return { sources: live.sources, names: live.names };
   return {
     name: live.name ?? null,
     status: live.status ?? null,
@@ -407,6 +485,21 @@ async function readLive(action: ProposedAction): Promise<any> {
   if (action.type === 'create_pixel') {
     const pixels = await fetchPixels();
     return { pixels: pixels.map((p) => p.id), list: pixels };
+  }
+  if (action.type === 'create_audience') {
+    const kind = action.audience!.kind;
+    const [sources, audiences] = await Promise.all([
+      kind === 'website' ? fetchPixels() : kind === 'instagram'
+        ? fetchInstagramAccounts().then((l) => l.map((a) => ({ id: a.id, name: a.username ? `@${a.username}` : null })))
+        : fetchPromotePages(),
+      fetchCustomAudiences(),
+    ]);
+    return {
+      sources: sources.map((x: any) => x.id),
+      names: audiences.map((a) => a.name ?? ''),
+      source_list: sources,
+      audience_list: audiences,
+    };
   }
   if (action.type === 'create_campaign') {
     const spec = action.spec;
@@ -457,6 +550,7 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
   }
 
   if (action.type === 'create_campaign') return describeCreate(action, live, today);
+  if (action.type === 'create_audience') return describeAudience(action, live);
 
   const level = action.level!;
   const account = adAccountId().replace(/^act_/, '');
@@ -565,6 +659,40 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
 }
 
 const day = (date: string) => Date.parse(`${date}T12:00:00Z`);
+
+const SOURCE_LABELS: Record<AudienceKind, string> = { website: 'הפיקסל', instagram: 'חשבון האינסטגרם', page: 'דף הפייסבוק' };
+
+/** The preview of a new saved audience: where it comes from, how far back, and what it will not be yet. */
+function describeAudience(action: ProposedAction, live: any): Omit<ActionPreview, 'id' | 'status' | 'created_at' | 'expires_at'> {
+  const spec = action.audience!;
+  const warnings: string[] = [];
+  const blockers: string[] = [];
+  const sources: Array<{ id: string; name: string | null }> = live.source_list ?? [];
+  const source = sources.find((x) => x.id === spec.source_id);
+  if (!source) blockers.push(`${SOURCE_LABELS[spec.kind]} שנבחר לא שייך לחשבון המודעות — בחרו מהרשימה.`);
+  if ((live.names ?? []).includes(spec.name)) warnings.push(`כבר יש בחשבון קהל בשם «${spec.name}» — כדאי שם אחר, כדי לא להתבלבל ביניהם.`);
+
+  const what = spec.kind === 'website'
+    ? `${EVENT_LABELS[spec.event]} בדפים שהפיקסל «${source?.name ?? spec.source_id}» מותקן בהם${spec.exclude_buyers ? ', בלי מי שקנה' : ''}`
+    : spec.kind === 'instagram'
+      ? `כל מי שהתעניין בחשבון ${source?.name ?? spec.source_id} (צפה, הגיב, שלח הודעה, שמר)`
+      : `כל מי שהתעניין בדף «${source?.name ?? spec.source_id}» (לייק, תגובה, שיתוף, הודעה)`;
+  if (spec.kind === 'website') {
+    warnings.push('קהל מהפיקסל מתמלא רק מאתרים שהפיקסל מותקן בהם — אם דף הכרטיסים של המועדון לא מריץ אותו, הקהל יישאר ריק. אפשר לבדוק במסך «פיקסל, קהלים ויומן».');
+  }
+  warnings.push(`Meta בונה את הקהל מהימים שכבר עברו, וזה לוקח עד כחצי שעה. עד אז הגודל לא ידוע, ומתחת ל-${MIN_HOT_AUDIENCE.toLocaleString('he-IL')} איש קמפיין חם מתקשה להפיץ.`);
+
+  return {
+    action,
+    title: `קהל שמור חדש «${spec.name}»`,
+    target: { level: null, id: null, name: spec.name, status: null, effective_status: null, ads_manager_url: 'https://adsmanager.facebook.com/adsmanager/audiences' },
+    shows: [],
+    changes: [{ label: 'קהל שמור', from: 'אין', to: `«${spec.name}» · ${what} · ${spec.days} ימים אחורה` }],
+    warnings,
+    blockers,
+    can_execute: blockers.length === 0,
+  };
+}
 
 /** The preview of a whole new campaign: three objects, each laid out as «none → what it will be». */
 function describeCreate(action: ProposedAction, live: any, today: string): Omit<ActionPreview, 'id' | 'status' | 'created_at' | 'expires_at'> {
@@ -891,6 +1019,18 @@ export async function executeAction(id: string): Promise<ActionRecord> {
       case 'create_campaign':
         result = await createCampaign(action.spec!);
         break;
+      case 'create_audience': {
+        const spec = action.audience!;
+        const made = await graphWrite<any>(`${adAccountId()}/customaudiences`, {
+          name: spec.name,
+          rule: JSON.stringify(audienceRule(spec)),
+          // Fill it from the days that already passed, not only from now on.
+          prefill: 'true',
+          description: 'נוצר במרכז הקמפיינים',
+        });
+        result = { audience_id: String(made.id) };
+        break;
+      }
     }
     finish(id, 'done', { result });
     // The campaign list reads the synced status; a pause made here should not wait for the next pull.
