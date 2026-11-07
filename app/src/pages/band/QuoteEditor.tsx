@@ -180,8 +180,8 @@ export function QuoteEditor() {
   const calendarSaved = (d: { quote: Quote; items: QuoteItem[]; show: QuoteShow | null; calendar_matched: boolean }) => {
     accept(d);
     setNotice(d.calendar_matched
-      ? (d.show ? 'האירוע נשמר ביומן, וההופעה עודכנה ממנו.' : 'האירוע נשמר ביומן.')
-      : 'האירוע נשמר ביומן, אבל כלל היומן להופעות לא מזהה אותו כהופעה — לכן לא נוצרה הופעה. הוסיפו לכותרת את מילת המפתח.');
+      ? (d.show ? 'האירוע נמצא ביומן, וההופעה עודכנה ממנו.' : 'האירוע נמצא ביומן.')
+      : 'האירוע נמצא ביומן, אבל כלל היומן להופעות לא מזהה אותו כהופעה — לכן לא נוצרה הופעה. הוסיפו לכותרת את מילת המפתח ב־Google ובדקו שוב.');
   };
 
   const regenerateLink = () => run(async () => {

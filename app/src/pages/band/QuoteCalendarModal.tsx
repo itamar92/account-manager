@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, CalendarPlus } from 'lucide-react';
-import { get, post, put } from '../../api';
+import { AlertTriangle, CalendarPlus, ExternalLink, RefreshCw } from 'lucide-react';
+import { get, post } from '../../api';
 import { Button, Input, Modal } from '../../ui';
 import { quoteDate, type CalendarDraft, type Quote, type QuoteItem, type QuoteShow } from './quotes';
 
-type Saved = { quote: Quote; items: QuoteItem[]; show: QuoteShow | null; calendar_matched: boolean };
+type Saved = { quote: Quote; items: QuoteItem[]; show: QuoteShow | null; calendar_found: boolean; calendar_matched: boolean };
 
 const terms = (value: string | null | undefined) =>
   (value ?? '').split(',').map((t) => t.trim().toLowerCase()).filter(Boolean);
@@ -14,7 +14,9 @@ const terms = (value: string | null | undefined) =>
  * when they sign. The calendar sync makes the show out of it, as out of any event on that
  * calendar — which is why the dialog warns when the title would not be read as a show.
  *
- * Everyone ticked gets Google's own invitation: the members by default, a supplier when chosen.
+ * The app does not write to Google. The dialog opens Google Calendar's «new event» page filled
+ * in — everyone ticked as a guest, the members by default — and the event is saved there, where
+ * Google offers to email the invitations. «בדיקה ביומן» then finds it and ties it to the quote.
  */
 export function QuoteCalendarModal({ open, onClose, quote, onSaved }: {
   open: boolean;
@@ -31,11 +33,14 @@ export function QuoteCalendarModal({ open, onClose, quote, onSaved }: {
   const [extra, setExtra] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  /** The Google page has been opened; what is left is saving it there and checking back. */
+  const [opened, setOpened] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setDraft(null);
     setError('');
+    setOpened(false);
     get<CalendarDraft>(`/band/quotes/${quote.id}/calendar`).then((d) => {
       setDraft(d);
       setTitle(d.form.title);
@@ -69,28 +74,53 @@ export function QuoteCalendarModal({ open, onClose, quote, onSaved }: {
     setChosen(next);
   };
 
+  const ready = !!draft?.configured && !!draft?.rule;
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!draft) return;
-    setBusy(true);
     setError('');
     const attendees = [...chosen, ...extra.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean)];
     const body = { title, location, start_time: start || null, end_time: end || null, attendees };
+    // Opened now, while the click still counts, so the browser does not block it as a pop-up.
+    const tab = window.open('', '_blank');
+    setBusy(true);
     try {
-      const saved = draft.event
-        ? await put<Saved>(`/band/quotes/${quote.id}/calendar`, body)
-        : await post<Saved>(`/band/quotes/${quote.id}/calendar`, body);
+      const { url } = await post<{ url: string }>(`/band/quotes/${quote.id}/calendar/link`, body);
+      if (tab) { tab.opener = null; tab.location.href = url; } else window.location.href = url;
+      setOpened(true);
+    } catch (err: any) {
+      tab?.close();
+      setError(err.message);
+    } finally { setBusy(false); }
+  };
+
+  const check = async () => {
+    setBusy(true);
+    setError('');
+    try {
+      const saved = await post<Saved>(`/band/quotes/${quote.id}/calendar/refresh`);
+      if (!saved.calendar_found) {
+        setError(draft?.event
+          ? 'האירוע של ההצעה לא נמצא ביומן — אולי נמחק. פתחו את החלון מחדש כדי ליצור חדש.'
+          : 'עדיין לא מצאנו את האירוע ביומן. ודאו שלחצתם «שמירה» ב־Google, על היומן של הלהקה, ושהשורה am-quote בתיאור לא נמחקה.');
+        return;
+      }
       onSaved(saved);
       onClose();
     } catch (err: any) { setError(err.message); }
     finally { setBusy(false); }
   };
 
-  const blocked = draft && (!draft.configured
-    ? 'היומן לא מחובר לאפליקציה, ולכן אי אפשר ליצור ממנה אירוע. את ההופעה יוצרים ביומן, כמו תמיד.'
-    : !draft.rule
-      ? 'אין כלל יומן פעיל להופעות הלהקה — הוסיפו אחד בהגדרות → יומן.'
-      : !draft.date ? 'חסר תאריך אירוע בהצעה — הוסיפו אותו ושמרו.' : '');
+  const blocked = draft && (!draft.date ? 'חסר תאריך אירוע בהצעה — הוסיפו אותו ושמרו.' : '');
+
+  const checkButton = ready && (
+    <Button variant="ghost" className="w-full" disabled={busy} onClick={check}>
+      <span className="flex items-center justify-center gap-1.5">
+        <RefreshCw size={15} /> {busy ? 'בודק ביומן…' : 'בדיקה ביומן'}
+      </span>
+    </Button>
+  );
 
   return (
     <Modal title={draft?.event ? 'האירוע ביומן' : 'שריון ביומן'} open={open} onClose={onClose} size="lg">
@@ -98,13 +128,42 @@ export function QuoteCalendarModal({ open, onClose, quote, onSaved }: {
         error ? <p className="text-sm text-neg">{error}</p> : <p className="text-sm text-faint py-6 text-center">טוען…</p>
       ) : blocked ? (
         <p className="text-sm text-body">{blocked}</p>
+      ) : draft.event ? (
+        <div className="space-y-4">
+          <div className="text-sm">
+            <div className="font-medium">{draft.event.title || 'אירוע ביומן'}</div>
+            <div className="text-[12.5px] text-faint num">{quoteDate(draft.date)}</div>
+          </div>
+          <p className="text-[13.5px] text-body">
+            {draft.signed && draft.event.is_option
+              ? <>הלקוח חתם. פתחו את האירוע ב־Google, מחקו את «אופציה» מהכותרת ושמרו — Google ישאל אם לעדכן את המוזמנים. אחר כך לחצו «בדיקה ביומן», וההופעה תתעדכן.</>
+              : <>את האירוע עורכים ב־Google Calendar. אחרי השמירה שם, «בדיקה ביומן» מעדכנת את ההצעה ואת ההופעה.</>}
+          </p>
+          {draft.event.link && (
+            <a href={draft.event.link} target="_blank" rel="noopener noreferrer"
+              className="flex items-center justify-center gap-1.5 w-full rounded-xl bg-accent text-white py-2.5 text-sm font-medium hover:opacity-90">
+              <ExternalLink size={15} /> פתיחת האירוע ב־Google Calendar
+            </a>
+          )}
+          {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+          {checkButton}
+        </div>
+      ) : opened ? (
+        <div className="space-y-4">
+          <ol className="text-[13.5px] text-body space-y-2 list-decimal ps-5">
+            <li>בלשונית שנפתחה, בדקו שנבחר היומן של הלהקה{draft.calendar_id && draft.calendar_id !== 'primary' ? <> (<span dir="ltr">{draft.calendar_id}</span>)</> : ''} ולחצו «שמירה».</li>
+            <li>Google ישאל אם לשלוח הזמנות למוזמנים — בחרו «שליחה».</li>
+            <li>{ready ? 'חזרו לכאן ולחצו «בדיקה ביומן» — ההצעה תקושר לאירוע וההופעה תיווצר ממנו.' : 'היומן לא מחובר לאפליקציה, לכן ההצעה לא תקושר לאירוע אוטומטית. ההופעה תיווצר מהיומן כמו תמיד.'}</li>
+          </ol>
+          <p className="text-[12px] text-faint">שמרו פעם אחת בלבד — כל שמירה נוספת יוצרת אירוע נוסף ביומן.</p>
+          {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
+          {checkButton}
+          <button type="button" className="block mx-auto text-[12.5px] text-accent hover:underline" onClick={() => setOpened(false)}>
+            חזרה לטופס
+          </button>
+        </div>
       ) : (
         <form onSubmit={submit} className="space-y-4">
-          {draft.signed && draft.event?.is_option && (
-            <p className="text-[13.5px] bg-pos-soft text-ink-2 rounded-xl px-4 py-2.5">
-              הלקוח חתם — הורדנו את «אופציה» מהכותרת. השמירה מעדכנת את האירוע ומודיעה למוזמנים.
-            </p>
-          )}
           {draft.gone && (
             <p className="text-[13.5px] bg-warn-soft text-ink-2 rounded-xl px-4 py-2.5">
               האירוע הקודם של ההצעה נמחק מהיומן. אפשר ליצור חדש.
@@ -168,12 +227,17 @@ export function QuoteCalendarModal({ open, onClose, quote, onSaved }: {
           <Button type="submit" className="w-full" disabled={busy || !title.trim()}>
             <span className="flex items-center justify-center gap-1.5">
               <CalendarPlus size={16} />
-              {busy ? 'שומר ביומן…' : draft.event ? 'עדכון האירוע' : 'יצירת האירוע ושליחת הזמנות'}
+              {busy ? 'פותח…' : 'פתיחת האירוע ב־Google Calendar'}
             </span>
           </Button>
           <p className="text-[12px] text-faint text-center -mt-2">
-            Google שולח {draft.event ? 'עדכון' : 'הזמנה'} במייל לכל המסומנים{draft.event ? '' : ', וההופעה נוצרת מהאירוע'}.
+            נפתח טופס אירוע מלא ב־Google. שומרים אותו שם, ו־Google שולח את ההזמנות.
           </p>
+          {ready && (
+            <button type="button" className="block mx-auto text-[12.5px] text-accent hover:underline" disabled={busy} onClick={check}>
+              כבר שמרתי את האירוע — בדיקה ביומן
+            </button>
+          )}
         </form>
       )}
     </Modal>

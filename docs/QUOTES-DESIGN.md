@@ -264,14 +264,13 @@ draft ──send──▶ sent ──first public view──▶ viewed ──sig
 **Holding the date** («שריון ביומן כאופציה»):
 - Offered when a quote is created («הצעה חדשה» has the option ticked when the calendar is connected), and from the quote's «יומן והופעה» card at any time.
 - The dialog starts with the title as the band writes them, «אופציה - הופעה הלהקה אירוע חברה קיסריה»: the event type (or the client), then the place. Everything is editable: the title, a start and end time (none = all-day), and the location.
-- **Who is invited:** every member with an email, ticked by default; any supplier, by role, unticked; and any other addresses. Google sends the invitations itself (`sendUpdates=all`). A supplier invited this way is staffed on the show automatically, since staffing already matches guests' emails.
-- The event goes on the calendar of the enabled band rule. The dialog warns when the title would not be read as a show: a missing keyword (`הופעה` by default), or an ignore word.
-- Once Google answers, that one event is run through the sync (`syncOneBandEvent`: the rule, `cleanTitle`, `applyBandEvent`), so the show appears at once rather than at the next sync. Only the band rule's half runs; a quote never touches the owner's personal works.
+- **Who is invited:** every member with an email, ticked by default; any supplier, by role, unticked; and any other addresses. A supplier invited this way is staffed on the show automatically, since staffing already matches guests' emails.
+- **The app does not write to Google.** The dialog opens Google Calendar's own «new event» page (`calendar.google.com/calendar/render?action=TEMPLATE`, built by `eventTemplateUrl`) filled in with the title, date, time, place, guests, and a description ending in the quote's mark, `am-quote:<quote id>`. The event is saved there, on the band rule's calendar, and Google asks there whether to email the guests. So the Google token needs only `calendar.readonly`, and the OAuth app needs no verification for a write scope.
+- The dialog warns when the title would not be read as a show: a missing keyword (`הופעה` by default), or an ignore word.
+- **Tying it back:** «בדיקה ביומן» (`refreshQuoteEvent`) reads the band calendar around the quote's date, finds the event carrying the quote's mark (`claimQuoteEvents`, `server/quoteEventMark.ts`), and runs that one event through the sync (`syncOneBandEvent`: the rule, `cleanTitle`, `applyBandEvent`), so the show appears at once. The full sync claims marked events the same way. A second event saved from the same link does not take over from the first; one replacing a deleted event does. Only the band rule's half runs; a quote never touches the owner's personal works.
 - The quote keeps `calendar_id`, `calendar_event_id`, `calendar_event_title` and `calendar_event_link`.
 
-**After the client signs**, the card says the event is still «אופציה», and the dialog opens with the prefix already taken off. Saving rewrites the event (a guest who already answered keeps the answer), the sync renames the show from it, and the follow-up clears.
-
-**Write access:** reading the calendar needs `calendar.readonly`; writing these events also needs `calendar.events`. A token issued read-only gets a message saying so, and `deploy/README.md` says how to issue a new one.
+**After the client signs**, the card says the event is still «אופציה». The dialog links to the event in Google, where the prefix is taken off by hand; «בדיקה ביומן» then reads it again, the sync renames the show from it, and the follow-up clears.
 
 ## Signing and the show
 

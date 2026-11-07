@@ -12,35 +12,27 @@ import path from 'path';
  */
 const events = new Map<string, any>();
 const requests: Array<{ method: string; path: string; query: Record<string, string>; body: any }> = [];
-let readOnly = false;
 
 const fake = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (c) => { raw += c; });
   req.on('end', () => {
     const url = new URL(req.url!, 'http://fake');
-    // The token request is a form, everything else JSON.
-    const body = raw && String(req.headers['content-type']).includes('json') ? JSON.parse(raw) : null;
-    requests.push({ method: req.method!, path: url.pathname, query: Object.fromEntries(url.searchParams), body });
+    requests.push({ method: req.method!, path: url.pathname, query: Object.fromEntries(url.searchParams), body: null });
     const send = (status: number, payload: unknown) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(payload));
     };
     if (url.pathname === '/token') return send(200, { access_token: 'token', expires_in: 3600 });
-    if (readOnly && req.method !== 'GET') return send(403, { error: { message: 'Request had insufficient authentication scopes.' } });
+    // The token may only read: the app must never try anything else.
+    if (req.method !== 'GET') return send(403, { error: { message: 'Request had insufficient authentication scopes.' } });
     const m = url.pathname.match(/^\/calendars\/([^/]+)\/events(?:\/([^/]+))?$/);
     if (!m) return send(404, {});
     const id = m[2] && decodeURIComponent(m[2]);
-    if (req.method === 'POST' && !id) {
-      const event = { ...body, id: `evt${events.size + 1}`, status: 'confirmed', htmlLink: `https://calendar.test/evt${events.size + 1}` };
-      events.set(event.id, event);
-      return send(200, event);
-    }
-    const event = id && events.get(id);
+    if (!id) return send(200, { items: [...events.values()] });
+    const event = events.get(id);
     if (!event) return send(404, { error: { message: 'Not Found' } });
-    if (req.method === 'GET') return send(200, event);
-    if (req.method === 'PATCH') return send(200, Object.assign(event, body));
-    send(405, {});
+    send(200, event);
   });
 });
 await new Promise<void>((resolve) => fake.listen(0, '127.0.0.1', resolve));
@@ -57,6 +49,7 @@ const q = await import('./quotes.js');
 const link = await import('./quoteLink.js');
 const cal = await import('./quoteCalendar.js');
 const shows = await import('./quoteShow.js');
+const sync = await import('./calendarSync.js');
 
 const USER = 'cal-user';
 const PNG = 'data:image/png;base64,' + Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(120, 1)]).toString('base64');
@@ -94,34 +87,82 @@ test('a new event starts as the band writes them, with every member invited', as
   assert.ok(draft.suppliers.some((s) => s.email === 'dani@sound.test' && s.role_name));
 });
 
-test('the option goes on the calendar, invites go out, and the show comes from the calendar', async () => {
-  const id = quoteFor('2032-02-10');
-  const made = await cal.createQuoteEvent(id, {
-    title: 'אופציה - הופעה הלהקה אירוע חברה קיסריה', location: 'אמפי קיסריה',
-    start_time: '20:30', attendees: [...MEMBERS, 'dani@sound.test'],
+/** What Google's «new event» page would save from the link — the person pressing «שמירה». */
+function saveFromLink(link: string, extra: Record<string, unknown> = {}) {
+  const p = new URL(link).searchParams;
+  const [from, to] = p.get('dates')!.split('/');
+  const when = (v: string) => v.includes('T')
+    ? { dateTime: `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}T${v.slice(9, 11)}:${v.slice(11, 13)}:00+02:00` }
+    : { date: `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` };
+  const id = `evt${events.size + 1}`;
+  const event = {
+    id, status: 'confirmed', htmlLink: `https://calendar.test/${id}`,
+    summary: p.get('text'), description: p.get('details'), location: p.get('location') ?? undefined,
+    start: when(from), end: when(to),
+    attendees: (p.get('add') ?? '').split(',').filter(Boolean).map((email) => ({ email, responseStatus: 'needsAction' })),
+    ...extra,
+  };
+  events.set(id, event);
+  return event;
+}
+
+test('the link is Google’s own new-event page, filled in, and nothing is written', () => {
+  const id = quoteFor('2032-02-01');
+  const before = requests.length;
+  const { url } = cal.quoteEventLink(id, {
+    title: 'אופציה - הופעה הלהקה', location: 'אמפי קיסריה', start_time: '20:30',
+    attendees: [...MEMBERS, 'dani@sound.test'],
   });
-  const insert = requests.filter((r) => r.method === 'POST' && r.path.endsWith('/events')).at(-1)!;
-  assert.equal(insert.query.sendUpdates, 'all');
-  assert.equal(insert.path, '/calendars/primary/events');
-  assert.deepEqual(insert.body.attendees.map((a: any) => a.email), [...MEMBERS, 'dani@sound.test']);
-  assert.deepEqual(insert.body.start, { dateTime: '2032-02-10T20:30:00', timeZone: 'Asia/Jerusalem' });
-  assert.deepEqual(insert.body.end, { dateTime: '2032-02-10T22:30:00', timeZone: 'Asia/Jerusalem' });
-  assert.equal(made.calendar_matched, true);
+  const u = new URL(url);
+  assert.equal(u.origin + u.pathname, 'https://calendar.google.com/calendar/render');
+  const p = u.searchParams;
+  assert.equal(p.get('action'), 'TEMPLATE');
+  assert.equal(p.get('text'), 'אופציה - הופעה הלהקה');
+  assert.equal(p.get('dates'), '20320201T203000/20320201T223000');
+  assert.equal(p.get('ctz'), 'Asia/Jerusalem');
+  assert.equal(p.get('location'), 'אמפי קיסריה');
+  assert.equal(p.get('add'), [...MEMBERS, 'dani@sound.test'].join(','));
+  assert.match(p.get('details')!, new RegExp(`am-quote:${id}`));
+  assert.equal(requests.length, before);
+
+  const allDay = new URL(cal.quoteEventLink(id, { title: 'הופעה', attendees: [] }).url).searchParams;
+  assert.equal(allDay.get('dates'), '20320201/20320202');
+  assert.equal(allDay.get('add'), null);
+});
+
+test('once saved in Google, «בדיקה ביומן» ties the event to the quote and the show comes from it', async () => {
+  const id = quoteFor('2032-02-10');
+  const before = await cal.refreshQuoteEvent(id);
+  assert.equal(before.calendar_found, false);
+
+  const { url } = cal.quoteEventLink(id, {
+    title: 'אופציה - הופעה הלהקה אירוע חברה קיסריה', location: 'אמפי קיסריה',
+    start_time: '20:30', attendees: MEMBERS,
+  });
+  const event = saveFromLink(url);
+  const found = await cal.refreshQuoteEvent(id);
+  assert.equal(found.calendar_found, true);
+  assert.equal(found.calendar_matched, true);
+  assert.equal(found.quote.calendar_event_id, event.id);
+  assert.equal(found.quote.calendar_event_link, event.htmlLink);
 
   // The sync's own path: «הופעה» comes out of the name, the option stays in it.
   const show = showOf(id);
   assert.equal(show.venue, 'אופציה - הלהקה אירוע חברה קיסריה');
   assert.equal(show.location, 'אמפי קיסריה');
   assert.equal(show.amount_pre_vat, 0);
-  await assert.rejects(cal.createQuoteEvent(id, { title: 'x', attendees: [] }), (e: any) => e.status === 409);
+
+  // Saved twice by mistake: the second event does not take the quote over.
+  saveFromLink(url);
+  await cal.refreshQuoteEvent(id);
+  assert.equal(q.getQuote(id).quote.calendar_event_id, event.id);
+  assert.ok(requests.every((r) => r.method === 'GET' || r.path === '/token'));
 });
 
-test('once signed, the event drops «אופציה» and the show follows it', async () => {
+test('once signed, «אופציה» is taken off in Google and the show follows it', async () => {
   const id = quoteFor('2032-03-10');
-  await cal.createQuoteEvent(id, { title: 'אופציה - הופעה הלהקה אירוע חברה', attendees: MEMBERS });
-  const eventId = q.getQuote(id).quote.calendar_event_id;
-  // Amir has answered the invitation; changing the title must not lose that.
-  events.get(eventId).attendees[0].responseStatus = 'accepted';
+  const event = saveFromLink(cal.quoteEventLink(id, { title: 'אופציה - הופעה הלהקה אירוע חברה', attendees: MEMBERS }).url);
+  await cal.refreshQuoteEvent(id);
 
   link.sendQuote(id, USER, 'https://example.com');
   const token = (db.prepare('SELECT public_token FROM band_quotes WHERE id = ?').get(id) as any).public_token;
@@ -131,40 +172,48 @@ test('once signed, the event drops «אופציה» and the show follows it', as
 
   const draft = await cal.calendarDraft(id);
   assert.equal(draft.event!.is_option, true);
-  assert.equal(draft.form.title, 'הופעה הלהקה אירוע חברה');
+  assert.equal(draft.event!.link, event.htmlLink);
 
-  await cal.updateQuoteEvent(id, draft.form);
-  const patch = requests.filter((r) => r.method === 'PATCH').at(-1)!;
-  assert.equal(patch.query.sendUpdates, 'all');
-  assert.equal(patch.body.summary, 'הופעה הלהקה אירוע חברה');
-  assert.equal(patch.body.attendees.find((a: any) => a.email === MEMBERS[0]).responseStatus, 'accepted');
+  event.summary = 'הופעה הלהקה אירוע חברה';
+  await cal.refreshQuoteEvent(id);
   assert.equal(showOf(id).venue, 'הלהקה אירוע חברה');
   assert.ok(!shows.quoteFollowUps().stillOption.some((m) => m.id === id));
 });
 
-test('a title the band rule does not recognise makes an event but no show, and says so', async () => {
+test('an event deleted in Google gives way to a new one saved from the link', async () => {
+  const id = quoteFor('2032-03-20');
+  const url = cal.quoteEventLink(id, { title: 'אופציה - הופעה', attendees: [] }).url;
+  const first = saveFromLink(url);
+  await cal.refreshQuoteEvent(id);
+  first.status = 'cancelled';
+  assert.equal(((await cal.calendarDraft(id)) as { gone?: boolean }).gone, true);
+  const second = saveFromLink(url);
+  const again = await cal.refreshQuoteEvent(id);
+  assert.equal(again.quote.calendar_event_id, second.id);
+});
+
+test('the full calendar sync ties a saved event to its quote as well', async () => {
+  const id = quoteFor('2032-07-10');
+  const event = saveFromLink(cal.quoteEventLink(id, { title: 'אופציה - הופעה הלהקה', attendees: [] }).url);
+  await sync.pullShowsFromCalendar();
+  const { quote } = q.getQuote(id);
+  assert.equal(quote.calendar_event_id, event.id);
+  assert.ok(showOf(id));
+});
+
+test('a title the band rule does not recognise is found but makes no show, and says so', async () => {
   const id = quoteFor('2032-04-10');
-  const made = await cal.createQuoteEvent(id, { title: 'אופציה - אינטל', attendees: [] });
+  saveFromLink(cal.quoteEventLink(id, { title: 'אופציה - אינטל', attendees: [] }).url);
+  const made = await cal.refreshQuoteEvent(id);
+  assert.equal(made.calendar_found, true);
   assert.equal(made.calendar_matched, false);
   assert.ok(made.quote.calendar_event_id);
   assert.equal(showOf(id), null);
 });
 
-test('a token that may only read is answered with what to do about it', async () => {
-  readOnly = true;
-  try {
-    await assert.rejects(
-      cal.createQuoteEvent(quoteFor('2032-05-10'), { title: 'אופציה - הופעה', attendees: [] }),
-      (e: any) => e.status === 403 && /calendar\.events/.test(e.message)
-    );
-  } finally { readOnly = false; }
-});
-
-test('bad input is refused before anything reaches Google', async () => {
+test('bad input is refused', () => {
   const id = quoteFor('2032-06-10');
-  const before = requests.length;
-  await assert.rejects(cal.createQuoteEvent(id, { title: ' ', attendees: [] }), (e: any) => e.status === 400);
-  await assert.rejects(cal.createQuoteEvent(id, { title: 'הופעה', start_time: '25:00', attendees: [] }), (e: any) => e.status === 400);
-  await assert.rejects(cal.createQuoteEvent(id, { title: 'הופעה', attendees: ['not-an-email'] }), (e: any) => e.status === 400);
-  assert.ok(requests.slice(before).every((r) => r.method === 'GET' || r.path === '/token'));
+  assert.throws(() => cal.quoteEventLink(id, { title: ' ', attendees: [] }), (e: any) => e.status === 400);
+  assert.throws(() => cal.quoteEventLink(id, { title: 'הופעה', start_time: '25:00', attendees: [] }), (e: any) => e.status === 400);
+  assert.throws(() => cal.quoteEventLink(id, { title: 'הופעה', attendees: ['not-an-email'] }), (e: any) => e.status === 400);
 });

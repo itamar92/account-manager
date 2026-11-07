@@ -82,7 +82,7 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
               </div>
             </div>
             {!stillOption && (
-              <Button variant="ghost" disabled={busy || !calendarReady} onClick={onOpenCalendar}>עריכת האירוע</Button>
+              <Button variant="ghost" disabled={busy} onClick={onOpenCalendar}>עריכת האירוע</Button>
             )}
           </div>
           {stillOption && (
@@ -91,7 +91,7 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
                 <AlertTriangle size={16} className="text-warn-ink shrink-0 mt-0.5" />
                 הלקוח חתם, והאירוע ביומן עדיין מסומן «אופציה».
               </p>
-              <Button disabled={!calendarReady} onClick={onOpenCalendar}>עדכון האירוע והסרת «אופציה»</Button>
+              <Button onClick={onOpenCalendar}>הסרת «אופציה» מהאירוע</Button>
             </div>
           )}
         </div>
@@ -99,13 +99,14 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
         <div className="space-y-2">
           <p className="text-[13px] text-muted">
             {signed
-              ? 'הלקוח חתם, ואין להצעה אירוע ביומן. ההופעה נוצרת מהיומן — צרו את האירוע כאן או ביומן עצמו.'
-              : 'שריון התאריך ביומן כ«אופציה», עם הזמנה ללהקה ולספקים. ההופעה נוצרת מהאירוע, כמו מכל אירוע ביומן.'}
+              ? 'הלקוח חתם, ואין להצעה אירוע ביומן. ההופעה נוצרת מהיומן — פתחו מכאן אירוע מוכן ב־Google Calendar ושמרו אותו שם.'
+              : 'שריון התאריך ביומן כ«אופציה»: נפתח אירוע מוכן ב־Google Calendar, עם הזמנה ללהקה ולספקים, ושומרים אותו שם. ההופעה נוצרת מהאירוע, כמו מכל אירוע ביומן.'}
           </p>
-          {calendarReady
-            ? <Button variant="ghost" disabled={!date} onClick={onOpenCalendar}>{signed ? 'יצירת אירוע ביומן' : 'שריון ביומן כאופציה'}</Button>
-            : <p className="text-[12.5px] text-faint">היומן לא מחובר לאפליקציה — את האירוע יוצרים ישירות ב־Google Calendar.</p>}
-          {!date && calendarReady && <p className="text-[12px] text-faint">צריך קודם תאריך אירוע.</p>}
+          <Button variant="ghost" disabled={!date} onClick={onOpenCalendar}>{signed ? 'יצירת אירוע ביומן' : 'שריון ביומן כאופציה'}</Button>
+          {!date && <p className="text-[12px] text-faint">צריך קודם תאריך אירוע.</p>}
+          {date && !calendarReady && (
+            <p className="text-[12.5px] text-faint">היומן לא מחובר לאפליקציה, ולכן ההצעה לא תקושר לאירוע אוטומטית.</p>
+          )}
         </div>
       )}
 

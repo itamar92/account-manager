@@ -39,7 +39,7 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 | `SEED_OWNER_PASSWORD` | `changeme123` | its initial password (required in production) |
 | `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` | — | Morning API credentials; without them the Morning sync is disabled |
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs `calendar.readonly`, and `calendar.events` too for quotes to create their «אופציה» events — see `deploy/README.md` |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs only `calendar.readonly`: a quote's «אופציה» event is saved in Google from a filled-in link, not written by the app |
 | `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
 | `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token and the ad account; without them the Meta sync is disabled. `ads_read` is enough for the sync; the campaign advisor's actions (pause, daily budget, end date, create a pixel) also need `ads_management` on the same token |
 | `META_API_VERSION` | `v25.0` | Graph API version |
