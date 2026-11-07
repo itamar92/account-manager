@@ -8,6 +8,7 @@ import {
 } from './band.js';
 import { setEventAttendees } from './assignments.js';
 import { linkQuotesByCalendar } from './quoteShow.js';
+import { claimQuoteEvents } from './quoteEventMark.js';
 
 /** Who a synced show's money is received by, by default: the person whose books these are. */
 function ownerName(): string | null {
@@ -352,6 +353,8 @@ export async function pullShowsFromCalendar(
         if (rule.target === 'band') applyBandEvent(event, date, title, tally);
         else applyPersonalWork(event, date, title, rule, tally);
       }
+      // A quote's «אופציה» saved in Google from the quote's link is tied back to the quote here.
+      if (rule.target === 'band') claimQuoteEvents(rule.calendar_id, events ?? []);
     });
     tx();
     results.push(tally);

@@ -3,7 +3,7 @@ import { requireAuth, requireOwner } from './auth.js';
 import { getVatPercent } from './db.js';
 import { regenerateLink, sendQuote } from './quoteLink.js';
 import { linkQuoteToShow, markSignedSeen, settleShowAmount, showsOnDate } from './quoteShow.js';
-import { calendarDraft, calendarReady, createQuoteEvent, updateQuoteEvent } from './quoteCalendar.js';
+import { calendarDraft, calendarReady, quoteEventLink, refreshQuoteEvent } from './quoteCalendar.js';
 import {
   FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
 } from './quoteFiles.js';
@@ -229,19 +229,21 @@ quoteRouter.post('/:id/show-amount', handle((req, res) => {
 
 /**
  * The quote's calendar event. Anyone who edits quotes can hold a date with one, since that is
- * part of making the quote; the event goes on the band rule's calendar, and the calendar sync
- * makes the show from it — the one way a show comes into being.
+ * part of making the quote; the event is saved in Google on the band rule's calendar, and the
+ * calendar sync makes the show from it — the one way a show comes into being.
  */
 quoteRouter.get('/:id/calendar', handleAsync(async (req, res) => {
   res.json(await calendarDraft(req.params.id));
 }));
 
-quoteRouter.post('/:id/calendar', handleAsync(async (req, res) => {
-  res.json(await createQuoteEvent(req.params.id, req.body || {}));
+/** Google Calendar's «new event» page, filled in; the event is saved there, not by the app. */
+quoteRouter.post('/:id/calendar/link', handle((req, res) => {
+  res.json(quoteEventLink(req.params.id, req.body || {}));
 }));
 
-quoteRouter.put('/:id/calendar', handleAsync(async (req, res) => {
-  res.json(await updateQuoteEvent(req.params.id, req.body || {}));
+/** Finds the event saved from that link (or reads the quote's event again) and syncs the show. */
+quoteRouter.post('/:id/calendar/refresh', handleAsync(async (req, res) => {
+  res.json(await refreshQuoteEvent(req.params.id));
 }));
 
 quoteRouter.post('/:id/save-as-template', handle((req, res) => {

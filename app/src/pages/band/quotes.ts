@@ -130,6 +130,8 @@ export interface ShowCandidate extends QuoteShow {
 /** What the calendar dialog opens with — server/quoteCalendar.ts, calendarDraft. */
 export interface CalendarDraft {
   configured: boolean;
+  /** The calendar the band rule reads, which is where the event should be saved. */
+  calendar_id: string | null;
   rule: { name: string; keywords: string; ignore_words: string } | null;
   date: string | null;
   signed: boolean;

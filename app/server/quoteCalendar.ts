@@ -1,12 +1,13 @@
 import { db, getBandName } from './db.js';
 import {
-  CalendarError, getEventById, insertEvent, isCalendarConfigured, patchEvent,
-  type CalendarAttendee, type CalendarEvent,
+  CalendarError, eventDate, eventTemplateUrl, getEventById, isCalendarConfigured, listEvents,
+  type CalendarEvent,
 } from './calendarClient.js';
 import { listRules, type CalendarRule } from './calendarRules.js';
 import { syncOneBandEvent } from './calendarSync.js';
 import { QuoteError, getQuote } from './quotes.js';
 import { OPTION_PREFIX, isOptionTitle, withoutOption } from './quoteShow.js';
+import { claimQuoteEvents, quoteMark } from './quoteEventMark.js';
 
 /**
  * A quote's own calendar event: the date held as «אופציה» while the client decides, and the
@@ -14,8 +15,13 @@ import { OPTION_PREFIX, isOptionTitle, withoutOption } from './quoteShow.js';
  *
  * This is how a quote's show comes into being, and the only way: the event goes on the band
  * rule's calendar, and the sync makes the show out of it exactly as it would out of an event
- * typed into Google by hand. The invitation goes to whoever is ticked — the members by default,
- * and any supplier chosen — from Google itself, so it lands in their calendars.
+ * typed into Google by hand.
+ *
+ * The app never writes to Google. It opens Google Calendar's «new event» page filled in from the
+ * dialog — title, date, time, place, guests, and the quote's mark in the description — and the
+ * event is saved there, where Google offers to email the guests. «בדיקה ביומן» (or the next
+ * sync) finds the event by its mark and ties it to the quote. So the Google token stays
+ * read-only, and no app verification is needed for a write scope.
  */
 
 /** The rule that turns calendar events into shows. Its calendar is where the quote's event goes. */
@@ -81,6 +87,7 @@ export async function calendarDraft(quoteId: string) {
   const configured = isCalendarConfigured();
   const base = {
     configured,
+    calendar_id: rule?.calendar_id ?? null,
     rule: rule && { name: rule.name, keywords: rule.keywords, ignore_words: rule.ignore_words },
     date: quote.event_date as string | null,
     signed: quote.status === 'signed',
@@ -144,71 +151,88 @@ function cleanForm(input: any): CalendarForm {
   return { title, location, start_time, end_time, attendees };
 }
 
+function needsDate(quote: any) {
+  if (quote.status === 'cancelled') throw new QuoteError(409, 'ההצעה בוטלה');
+  if (!quote.event_date) throw new QuoteError(400, 'חסר תאריך אירוע בהצעה');
+}
+
 function needsReady(quote: any): CalendarRule {
   if (!isCalendarConfigured()) throw new QuoteError(503, 'היומן לא מחובר לאפליקציה');
   const rule = bandRule();
   if (!rule) throw new QuoteError(400, 'אין כלל יומן פעיל להופעות הלהקה — הוסיפו אחד בהגדרות → יומן');
-  if (quote.status === 'cancelled') throw new QuoteError(409, 'ההצעה בוטלה');
-  if (!quote.event_date) throw new QuoteError(400, 'חסר תאריך אירוע בהצעה');
+  needsDate(quote);
   return rule;
 }
 
-/** Writes Google's answer onto the quote, then lets the sync make — or update — the show from it. */
-function afterWrite(quoteId: string, rule: CalendarRule, calendarId: string, event: CalendarEvent) {
-  db.prepare(
-    `UPDATE band_quotes SET calendar_id = ?, calendar_event_id = ?, calendar_event_title = ?,
-       calendar_event_link = ? WHERE id = ?`
-  ).run(calendarId, event.id, event.summary ?? null, event.htmlLink ?? null, quoteId);
-  const { matched } = syncOneBandEvent(rule, event);
-  return { ...getQuote(quoteId), calendar_matched: matched };
+/** The description the event is saved with: what it came from, and the mark that finds it again. */
+export function eventDescription(quote: { id: string; quote_number?: string | null; client_name?: string | null }) {
+  const from = `נוצר מהצעת מחיר${quote.quote_number ? ` ${quote.quote_number}` : ''}${quote.client_name ? ` — ${quote.client_name}` : ''}`;
+  return `${from}\n\n${quoteMark(quote.id)}`;
 }
 
-/** The quote's event, created on the band's calendar, with the invitations sent. */
-export async function createQuoteEvent(quoteId: string, input: unknown) {
+/**
+ * The Google Calendar «new event» page, filled in from the dialog. Nothing is saved anywhere
+ * until the event is saved in Google; then «בדיקה ביומן» ties it to the quote.
+ */
+export function quoteEventLink(quoteId: string, input: unknown) {
   const quote = quoteRow(quoteId);
-  const rule = needsReady(quote);
-  if (quote.calendar_event_id) {
-    // An event deleted in Google can be replaced; one still there is updated instead.
-    try {
-      const existing = await getEventById(quote.calendar_id, quote.calendar_event_id);
-      if (existing.status !== 'cancelled') throw new QuoteError(409, 'כבר יש להצעה אירוע ביומן — עדכנו אותו');
-    } catch (err) {
-      if (!(err instanceof CalendarError && err.status === 404)) throw err;
-    }
-  }
+  needsDate(quote);
   const form = cleanForm(input);
-  const event = await insertEvent(rule.calendar_id, {
+  const url = eventTemplateUrl({
     summary: form.title,
-    description: `נוצר מהצעת מחיר ${quote.quote_number}${quote.client_name ? ` — ${quote.client_name}` : ''}`,
+    description: eventDescription(quote),
     location: form.location || null,
     date: quote.event_date,
     startTime: form.start_time,
     endTime: form.end_time,
     attendees: form.attendees,
-  });
-  return afterWrite(quote.id, rule, rule.calendar_id, event);
+  }, bandRule()?.calendar_id);
+  return { url };
+}
+
+/** A day either side of the quote's date: an event that runs past midnight still starts on it. */
+function aroundDate(date: string) {
+  const at = (days: number) => {
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString();
+  };
+  return { timeMin: at(-1), timeMax: at(2) };
 }
 
 /**
- * The event rewritten from the dialog — on signing, to take «אופציה» off its title. A guest who
- * was already on it keeps their answer; a new guest gets the invitation. The date always follows
- * the quote's.
+ * «בדיקה ביומן»: reads the band's calendar for the quote's event — the one it is tied to, or
+ * else the one carrying its mark on its date — ties it to the quote, and lets the sync make or
+ * update the show from it. Afterwards `calendar_found` says whether there was one.
  */
-export async function updateQuoteEvent(quoteId: string, input: unknown) {
+export async function refreshQuoteEvent(quoteId: string) {
   const quote = quoteRow(quoteId);
   const rule = needsReady(quote);
-  if (!quote.calendar_event_id) throw new QuoteError(400, 'אין להצעה אירוע ביומן');
-  const form = cleanForm(input);
-  const current = await getEventById(quote.calendar_id, quote.calendar_event_id);
-  const known = new Map((current.attendees ?? []).filter((a) => a.email).map((a) => [a.email!.toLowerCase(), a]));
-  const attendees: Array<string | CalendarAttendee> = form.attendees.map((email) => known.get(email) ?? email);
-  const event = await patchEvent(quote.calendar_id, quote.calendar_event_id, {
-    summary: form.title,
-    location: form.location || null,
-    date: quote.event_date,
-    startTime: form.start_time,
-    endTime: form.end_time,
-    attendees,
-  });
-  return afterWrite(quote.id, rule, quote.calendar_id, event);
+
+  let event: CalendarEvent | null = null;
+  if (quote.calendar_event_id) {
+    try {
+      const current = await getEventById(quote.calendar_id || rule.calendar_id, quote.calendar_event_id);
+      if (current.status !== 'cancelled') event = current;
+    } catch (err) {
+      if (!(err instanceof CalendarError && err.status === 404)) throw err;
+    }
+  }
+  if (event) {
+    claimQuoteEvents(quote.calendar_id || rule.calendar_id, [event]);
+  } else {
+    const events = await listEvents({ calendarId: rule.calendar_id, ...aroundDate(quote.event_date) });
+    const mine = events.filter((e) => e.status !== 'cancelled' && eventDate(e) === quote.event_date);
+    // The event the quote pointed at is gone: let the marked one take its place.
+    if (quote.calendar_event_id) {
+      db.prepare('UPDATE band_quotes SET calendar_event_id = NULL, calendar_event_title = NULL, calendar_event_link = NULL WHERE id = ?')
+        .run(quote.id);
+    }
+    claimQuoteEvents(rule.calendar_id, mine);
+    const now = quoteRow(quoteId);
+    event = mine.find((e) => e.id === now.calendar_event_id) ?? null;
+  }
+
+  const matched = event ? syncOneBandEvent(rule, event).matched : false;
+  return { ...getQuote(quoteId), calendar_found: !!event, calendar_matched: matched };
 }

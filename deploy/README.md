@@ -387,30 +387,16 @@ If Cloudflare Access is in front (§7), `/mcp` needs the bypass policy described
 Access answers with a 302 to its login page and the server shows as `failed` with an HTML parse
 error rather than a clean 401.
 
-## 4c. Google Calendar: write access for price quotes
+## 4c. Google Calendar and price quotes
 
-The calendar sync only reads. A price quote also **writes**: it holds its date with an
-«אופציה» event on the band's calendar and sends the invitations, and the sync makes the show
-from that event. That needs the refresh token in `.env` to carry the `calendar.events` scope as
-well as `calendar.readonly`. A token issued read-only still syncs, and the quote's dialog answers
-with a message naming `calendar.events`.
+The app only ever reads the calendar, so the refresh token needs just `calendar.readonly`.
+A price quote holds its date with an «אופציה» event, but the app does not write it: «שריון
+ביומן כאופציה» opens Google Calendar's own new-event page filled in (title, date, time, place,
+guests, and a line `am-quote:…` in the description). Save it there, on the calendar the band
+rule reads, and let Google send the invitations. Then «בדיקה ביומן» in the quote — or the next
+calendar sync — finds the event by that line, ties it to the quote and makes the show from it.
 
-To issue one with both:
-
-1. **Google Cloud Console** → the project that holds `GOOGLE_CLIENT_ID` → **OAuth consent screen**
-   → **Data access**: add `.../auth/calendar.readonly` and `.../auth/calendar.events`. If the
-   consent screen is still in **Testing**, Google expires its refresh tokens after 7 days, so
-   publish it.
-2. The same client → **Authorized redirect URIs**: add `https://developers.google.com/oauthplayground`.
-3. **[OAuth 2.0 Playground](https://developers.google.com/oauthplayground)** → the gear → *Use your
-   own OAuth credentials* → the client ID and secret. In step 1, enter
-   `https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events`,
-   authorize with the account whose calendar holds the shows, and in step 2 exchange the code.
-4. Put the new refresh token in `deploy/.env` as `GOOGLE_REFRESH_TOKEN`, then
-   `docker compose up -d` in `deploy/`.
-
-To check it: open a quote → «יומן והופעה» → «שריון ביומן כאופציה». An error naming
-`calendar.events` means the old token is still the one in use.
+Don't delete the `am-quote:` line from the event's description: it is how the quote finds it.
 
 ## 5. Backups
 
