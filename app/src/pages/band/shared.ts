@@ -284,8 +284,6 @@ const RETURN_LABELS: Array<[string, string]> = [
   ['/band/supplierNames', 'שמות בחשבוניות'],
   ['/band/suppliers', 'ספקים וחברים'],
   ['/band/generalExpenses', 'הוצאות כלליות'],
-  ['/band/campaignAi', 'יועץ קמפיינים'],
-  ['/band/ads', 'קמפיינים'],
   ['/band', 'סקירה כספית'],
 ];
 

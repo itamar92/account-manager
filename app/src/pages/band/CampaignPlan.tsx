@@ -41,6 +41,8 @@ interface Props {
   /** Forgets every plan and review of the show, and with `withTasks` its tasks — to start over. */
   onReset: (withTasks: boolean) => Promise<void>;
   onError: (message: string) => void;
+  /** Opens the studio's wizard filled from this plan, where the studio hosts the plan. */
+  onCreateCampaign?: () => void;
 }
 
 /** Days the campaign runs, both ends included — what the daily budget is multiplied by. */
@@ -271,7 +273,10 @@ export function CampaignPlan(props: Props) {
           </p>
           {report.request?.brief && <p className="text-sm text-body mt-0.5">ביקשתם: {report.request.brief}</p>}
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
+          {isOwner && props.onCreateCampaign && (
+            <Button onClick={props.onCreateCampaign} disabled={drafting}>יצירת הקמפיין ב-Meta…</Button>
+          )}
           <Button variant="ghost" onClick={copyAll} className="!px-3 inline-flex items-center gap-1.5">
             {copiedAll ? <Check className="w-4 h-4 text-pos" /> : <Copy className="w-4 h-4" />}
             {copiedAll ? 'הועתק' : 'העתקת הכל'}

@@ -312,3 +312,36 @@ export async function fetchPixelStats(pixelId: string, aggregation: 'event' | 'h
 export async function graphWrite<T = any>(path: string, params: Record<string, string>): Promise<T> {
   return graph<T>(path, params, true);
 }
+
+// ---------------------------------------------------------------- the campaign studio's reads
+
+export interface MetaPage {
+  id: string;
+  name: string | null;
+}
+
+/**
+ * The Facebook pages this ad account may run ads for — an ad has to be published by one. The
+ * account's own list rather than the token's, since a system user may see pages the account
+ * cannot promote.
+ */
+export async function fetchPromotePages(): Promise<MetaPage[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/promote_pages`, { fields: 'id,name' });
+  return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), name: text(row.name) }));
+}
+
+/** A campaign's ad sets, read live: the sync keeps campaigns only. */
+export async function fetchCampaignAdSets(campaignId: string): Promise<any[]> {
+  if (!/^\d+$/.test(campaignId)) throw new MetaError(`מזהה Meta לא תקין: ${campaignId}`, 400);
+  return graphPaged<any>(`${campaignId}/adsets`, {
+    fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,start_time,end_time,optimization_goal,targeting{age_min,age_max,geo_locations}',
+  });
+}
+
+/** A campaign's ads, with enough of the creative to recognise each one. */
+export async function fetchCampaignAds(campaignId: string): Promise<any[]> {
+  if (!/^\d+$/.test(campaignId)) throw new MetaError(`מזהה Meta לא תקין: ${campaignId}`, 400);
+  return graphPaged<any>(`${campaignId}/ads`, {
+    fields: 'id,name,status,effective_status,adset_id,creative{id,title,body,thumbnail_url,image_url}',
+  });
+}

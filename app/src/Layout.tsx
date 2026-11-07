@@ -2,7 +2,7 @@ import React from 'react';
 import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import {
   Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Settings,
-  LogOut, Wallet, Music, Megaphone, Sparkles, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
+  LogOut, Wallet, Music, Megaphone, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
   Calculator, HandCoins, Tags, FileSignature,
 } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -69,8 +69,8 @@ const moonNav: NavGroup[] = [
   {
     head: 'פרסום',
     items: [
-      { to: '/band/ads', label: 'קמפיינים', icon: Megaphone },
-      { to: '/band/campaignAi', label: 'יועץ קמפיינים', icon: Sparkles },
+      // Creating, editing and reading the campaigns, the advisor and the ad spend are one app now.
+      { to: '/campaigns', label: 'מרכז קמפיינים', icon: Megaphone },
     ],
   },
 ];
@@ -100,7 +100,7 @@ const moonMobile: NavItem[] = [
   { to: '/band/summary', label: 'סקירה', icon: Wallet },
   { to: '/band/shows', label: 'הופעות', icon: Music },
   { to: '/band/suppliers', label: 'ספקים', icon: Users },
-  { to: '/band/ads', label: 'פרסום', icon: Megaphone },
+  { to: '/campaigns', label: 'קמפיינים', icon: Megaphone },
 ];
 
 /** Two Hebrew letters is what fits an avatar and still says who is signed in. */

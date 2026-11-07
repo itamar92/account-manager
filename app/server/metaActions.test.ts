@@ -11,6 +11,7 @@ const objects: Record<string, any> = {};
 const writes: Array<{ path: string; params: Record<string, string> }> = [];
 let pixels: any[] = [];
 let pixelStats: Record<string, any> = {};
+let failAds = false;
 
 const server = http.createServer((req, res) => {
   const url = new URL(req.url!, 'http://stub');
@@ -27,12 +28,19 @@ const server = http.createServer((req, res) => {
       delete params.access_token;
       writes.push({ path: parts.join('/'), params });
       if (parts[1] === 'adspixels') return send({ id: '777000111' });
+      if (parts[1] === 'adimages') return send({ images: { 'ad.png': { hash: 'hash-abc', url: 'https://img.example/ad.png' } } });
+      const created: Record<string, string> = { campaigns: '130000000001', adsets: '130000000002', adcreatives: '130000000003', ads: '130000000004' };
+      if (parts[0]?.startsWith('act_') && created[parts[1]]) {
+        if (parts[1] === 'ads' && failAds) return send({ error: { message: 'Invalid creative', code: 100 } });
+        return send({ id: created[parts[1]] });
+      }
       Object.assign(objects[parts[0]] ?? {}, params);
       send({ success: true });
     });
     return;
   }
   if (parts[1] === 'adspixels') return send({ data: pixels });
+  if (parts[1] === 'promote_pages') return send({ data: [{ id: '100000000001', name: 'הלהקה' }] });
   if (parts[1] === 'stats') return send({ data: [{ data: pixelStats[`${parts[0]}:${url.searchParams.get('aggregation')}`] ?? [] }] });
   const obj = objects[parts[0]];
   if (!obj) return send({ error: { message: 'Unsupported get request', code: 100 } });
@@ -236,4 +244,78 @@ test('advisor answers keep their actions, and a plan keeps its tracking block', 
   assert.deepEqual(advisor.cleanTracking({ pixel_ready: true, optimization: 'Purchase' }), {
     pixel_ready: true, optimization: 'Purchase', retargeting: null, club_request: null,
   });
+});
+
+test('rename and archive preview the live name and status, and archiving warns it is final', async () => {
+  objects[PAST_CAMPAIGN].status = 'PAUSED';
+  const rename = await actions.previewAction({ type: 'rename', level: 'campaign', id: PAST_CAMPAIGN, new_name: 'בארבי ינואר — סגור' });
+  assert.deepEqual(rename.changes, [{ label: 'שם', from: 'בארבי ינואר', to: 'בארבי ינואר — סגור' }]);
+  await actions.executeAction(rename.id);
+  assert.deepEqual(writes.at(-1), { path: PAST_CAMPAIGN, params: { name: 'בארבי ינואר — סגור' } });
+  assert.equal((db.prepare('SELECT name FROM meta_campaigns WHERE id = ?').get(PAST_CAMPAIGN) as any).name, 'בארבי ינואר — סגור');
+
+  const archive = await actions.previewAction({ type: 'archive', level: 'campaign', id: PAST_CAMPAIGN });
+  assert.match(archive.warnings.join(' '), /אי אפשר להפעיל אותו שוב/);
+  await actions.executeAction(archive.id);
+  assert.deepEqual(writes.at(-1), { path: PAST_CAMPAIGN, params: { status: 'ARCHIVED' } });
+  assert.equal((db.prepare('SELECT status FROM meta_campaigns WHERE id = ?').get(PAST_CAMPAIGN) as any).status, 'ARCHIVED');
+  const again = await actions.previewAction({ type: 'archive', level: 'campaign', id: PAST_CAMPAIGN });
+  assert.equal(again.can_execute, false);
+});
+
+const SPEC = {
+  event_id: 'show-next', name: 'זאפה הרצליה — כרטיסים', goal: 'traffic', daily_budget: 60,
+  start_date: '2099-10-20', end_date: '2099-11-04', age_min: 24, age_max: 45, page_id: '100000000001',
+  link: 'https://tickets.example-club.co.il/e/42', primary_text: 'ערב אחד בהרצליה', headline: 'כרטיסים אחרונים',
+  description: null, cta: 'BUY_TICKETS',
+};
+
+test('a new campaign is only built from the studio, and its preview sends nothing to Meta', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  assert.equal(actions.cleanActions([{ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }]).length, 0);
+  await assert.rejects(actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }), { status: 400 });
+
+  const before = writes.length;
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  assert.equal(preview.can_execute, true, preview.blockers.join(' '));
+  assert.deepEqual(preview.changes.map((c) => c.label), ['קמפיין', 'קבוצת מודעות', 'מודעה']);
+  assert.match(preview.changes[1].to, /16 ימים/);
+  assert.equal(writes.length, before);
+
+  const sales = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, goal: 'sales', image_id: image.id } }, { source: 'studio' });
+  assert.match(sales.blockers.join(' '), /פיקסל/);
+  const lost = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, page_id: '100000000999', image_id: image.id } }, { source: 'studio' });
+  assert.match(lost.blockers.join(' '), /הדף/);
+});
+
+test('confirming builds image, campaign, ad set, creative and ad in order, paused, mapped to the show', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  const before = writes.length;
+  const done = await actions.executeAction(preview.id);
+  assert.equal(done.status, 'done');
+  const sent = writes.slice(before);
+  assert.deepEqual(sent.map((w) => w.path), ['act_1234567/adimages', 'act_1234567/campaigns', 'act_1234567/adsets', 'act_1234567/adcreatives', 'act_1234567/ads']);
+  assert.equal(sent[1].params.status, 'PAUSED');
+  assert.equal(sent[2].params.daily_budget, '6000');
+  assert.equal(sent[2].params.end_time, '2099-11-04T23:59:00+02:00');
+  assert.deepEqual(JSON.parse(sent[2].params.targeting).geo_locations, { countries: ['IL'] });
+  assert.equal(JSON.parse(sent[3].params.object_story_spec).link_data.image_hash, 'hash-abc');
+  assert.equal((db.prepare('SELECT status FROM meta_campaigns WHERE id = ?').get('130000000001') as any).status, 'PAUSED');
+  assert.ok(db.prepare('SELECT 1 FROM meta_campaign_events WHERE campaign_id = ? AND event_id = ?').get('130000000001', 'show-next'));
+});
+
+test('a build that fails half-way says what already exists in the account', async () => {
+  const { storeImage } = await import('./metaImages.js');
+  const image = storeImage(`data:image/png;base64,${Buffer.from('png-bytes').toString('base64')}`);
+  const preview = await actions.previewAction({ type: 'create_campaign', spec: { ...SPEC, image_id: image.id } }, { source: 'studio' });
+  failAds = true;
+  try {
+    await assert.rejects(actions.executeAction(preview.id), { message: /קמפיין 130000000001/ });
+    const record = actions.getAction(preview.id);
+    assert.equal(record.status, 'failed');
+    assert.equal(record.result.adset_id, '130000000002');
+  } finally { failAds = false; }
 });

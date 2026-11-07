@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import React from 'react';
 import { clsx } from 'clsx';
 import { ChevronDown } from 'lucide-react';
@@ -363,9 +364,14 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
   size?: keyof typeof modalWidths;
 }) {
   if (!open) return null;
-  return (
+  // Rendered on <body>: an ancestor with an entrance animation becomes the containing block of
+  // anything fixed inside it, and the dialog would cover only that part of the screen.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-[rgba(26,22,45,.45)] p-0 md:p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={clsx(
           'bg-surface rounded-t-2xl md:rounded-2xl w-full max-h-[90vh] overflow-y-auto p-5 md:p-6 shadow-[0_28px_60px_rgba(20,24,32,.30)]',
           modalWidths[size]
@@ -376,6 +382,7 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
           <h2 className="ser text-xl">{title}</h2>
           <button
             onClick={onClose}
+            aria-label="סגירה"
             className="bg-soft rounded-lg w-8 h-8 text-ink-2 hover:text-ink leading-none shrink-0"
           >
             ✕
@@ -383,7 +390,8 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 

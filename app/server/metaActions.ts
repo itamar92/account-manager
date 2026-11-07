@@ -26,8 +26,19 @@ import {
 } from './metaClient.js';
 import { eventLabel } from './band.js';
 import { israelDate } from './campaignTasks.js';
+import { fetchPromotePages } from './metaClient.js';
+import { imageBase64, imagePath } from './metaImages.js';
+import { applyCampaignSpend } from './metaSync.js';
 
-export const ACTION_TYPES = ['pause', 'activate', 'set_daily_budget', 'set_end_date', 'create_pixel'] as const;
+export const ACTION_TYPES = [
+  'pause', 'activate', 'set_daily_budget', 'set_end_date', 'create_pixel', 'rename', 'archive', 'create_campaign',
+] as const;
+/**
+ * What only a person can start from the campaign studio. The agent may suggest a rename or an
+ * archive like any other click, but a whole new campaign is built in the wizard, never handed
+ * over in an answer.
+ */
+const MANUAL_ONLY: ReadonlySet<string> = new Set(['create_campaign']);
 export type ActionType = (typeof ACTION_TYPES)[number];
 export const ACTION_LEVELS = ['campaign', 'adset', 'ad'] as const;
 export type ActionLevel = (typeof ACTION_LEVELS)[number];
@@ -44,7 +55,44 @@ export interface ProposedAction {
   /** YYYY-MM-DD, Israel time, for set_end_date. */
   end_date: string | null;
   pixel_name: string | null;
+  /** The new name, for rename. */
+  new_name?: string | null;
+  /** Everything a new campaign is built from, for create_campaign. */
+  spec?: CampaignSpec | null;
   reason: string | null;
+}
+
+/** The three goals the wizard offers, and what each means in Meta's terms. */
+export const OBJECTIVES = {
+  sales: { objective: 'OUTCOME_SALES', optimization_goal: 'OFFSITE_CONVERSIONS', label: 'מכירת כרטיסים (לפי הפיקסל)' },
+  traffic: { objective: 'OUTCOME_TRAFFIC', optimization_goal: 'LANDING_PAGE_VIEWS', label: 'כניסות לדף הכרטיסים' },
+  awareness: { objective: 'OUTCOME_AWARENESS', optimization_goal: 'REACH', label: 'חשיפה — להגיע לכמה שיותר אנשים' },
+} as const;
+export type Goal = keyof typeof OBJECTIVES;
+
+export const CTAS = ['BUY_TICKETS', 'LEARN_MORE', 'BOOK_NOW', 'GET_OFFER'] as const;
+const CTA_LABELS: Record<string, string> = {
+  BUY_TICKETS: 'לרכישת כרטיסים', LEARN_MORE: 'מידע נוסף', BOOK_NOW: 'להזמנה', GET_OFFER: 'לקבלת ההצעה',
+};
+
+/** A campaign + ad set + ad, as the wizard fills it in. Budgets in shekels, dates in Israel time. */
+export interface CampaignSpec {
+  event_id: string | null;
+  name: string;
+  goal: Goal;
+  daily_budget: number;
+  start_date: string;
+  end_date: string;
+  age_min: number;
+  age_max: number;
+  page_id: string;
+  pixel_id: string | null;
+  link: string;
+  primary_text: string;
+  headline: string;
+  description: string | null;
+  cta: (typeof CTAS)[number];
+  image_id: string;
 }
 
 /** More than this in one answer is a plan, not a set of clicks. */
@@ -68,13 +116,13 @@ const text = (v: unknown, max = 300) => (typeof v === 'string' && v.trim() ? v.t
  * budget that is not a positive number or a date that is not a date is dropped here rather than
  * offered as a button that fails.
  */
-export function cleanActions(list: unknown): ProposedAction[] {
+export function cleanActions(list: unknown, options: { manual?: boolean } = {}): ProposedAction[] {
   if (!Array.isArray(list)) return [];
   const seen = new Set<string>();
   const out: ProposedAction[] = [];
   for (const raw of list as any[]) {
     const type = ACTION_TYPES.includes(raw?.type) ? (raw.type as ActionType) : null;
-    if (!type) continue;
+    if (!type || (MANUAL_ONLY.has(type) && !options.manual)) continue;
     const action: ProposedAction = {
       type,
       level: null,
@@ -87,11 +135,21 @@ export function cleanActions(list: unknown): ProposedAction[] {
     };
     if (type === 'create_pixel') {
       action.pixel_name = text(raw?.pixel_name, 100);
+    } else if (type === 'create_campaign') {
+      const spec = cleanSpec(raw?.spec);
+      if (!spec) continue;
+      action.spec = spec;
+      action.name = spec.name;
     } else {
       const level = ACTION_LEVELS.includes(raw?.level) ? (raw.level as ActionLevel) : null;
       const id = typeof raw?.id === 'string' || typeof raw?.id === 'number' ? String(raw.id).trim() : '';
       if (!level || !META_ID.test(id)) continue;
       if ((type === 'set_daily_budget' || type === 'set_end_date') && level === 'ad') continue;
+      if (type === 'rename') {
+        const next = text(raw?.new_name, 200);
+        if (!next) continue;
+        action.new_name = next;
+      }
       action.level = level;
       action.id = id;
       if (type === 'set_daily_budget') {
@@ -114,14 +172,60 @@ export function cleanActions(list: unknown): ProposedAction[] {
   return out;
 }
 
+const ISO_COUNTRY = /^[A-Z]{2}$/;
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+/**
+ * A wizard's form as something that can be previewed, or null when a part Meta needs is missing.
+ * Ranges are clamped rather than refused (an age of 70 is 65+); a missing page, image or link is
+ * refused, because there is no ad without them.
+ */
+export function cleanSpec(raw: any): CampaignSpec | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const goal = (Object.keys(OBJECTIVES) as Goal[]).includes(raw.goal) ? (raw.goal as Goal) : null;
+  const name = text(raw.name, 200);
+  const budget = Number(raw.daily_budget);
+  const start = typeof raw.start_date === 'string' && DATE.test(raw.start_date) ? raw.start_date : null;
+  const end = typeof raw.end_date === 'string' && DATE.test(raw.end_date) ? raw.end_date : null;
+  const page = typeof raw.page_id === 'string' || typeof raw.page_id === 'number' ? String(raw.page_id).trim() : '';
+  const link = text(raw.link, 1000);
+  const primary = text(raw.primary_text, 2000);
+  const headline = text(raw.headline, 255);
+  const image = typeof raw.image_id === 'string' ? raw.image_id : '';
+  if (!goal || !name || !Number.isFinite(budget) || budget <= 0 || !start || !end) return null;
+  if (!/^\d{5,30}$/.test(page) || !link || !/^https?:\/\//i.test(link) || !primary || !headline || !image) return null;
+  const pixel = raw.pixel_id != null && META_ID.test(String(raw.pixel_id)) ? String(raw.pixel_id) : null;
+  const ageMin = clamp(Math.round(Number(raw.age_min) || 18), 18, 65);
+  const ageMax = clamp(Math.round(Number(raw.age_max) || 65), ageMin, 65);
+  return {
+    event_id: text(raw.event_id, 80),
+    name,
+    goal,
+    daily_budget: Math.round(budget * 100) / 100,
+    start_date: start,
+    end_date: end,
+    age_min: ageMin,
+    age_max: ageMax,
+    page_id: page,
+    pixel_id: pixel,
+    link,
+    primary_text: primary,
+    headline,
+    description: text(raw.description, 255),
+    cta: (CTAS as readonly string[]).includes(raw.cta) ? raw.cta : 'BUY_TICKETS',
+    image_id: image,
+  };
+}
+
 /** The `actions` field every advisor answer may carry, as its schema shows it to the agent. */
 export const ACTIONS_SCHEMA = `"actions": [
-    { "type": "pause" | "activate" | "set_daily_budget" | "set_end_date" | "create_pixel",
+    { "type": "pause" | "activate" | "set_daily_budget" | "set_end_date" | "rename" | "archive" | "create_pixel",
       "level": "campaign" | "adset" | "ad" | null,
       "id": "מזהה Meta של הקמפיין / קבוצת המודעות / המודעה" | null,
       "name": "השם כפי שהוא בנתונים" | null,
       "daily_budget": number | null,
       "end_date": "YYYY-MM-DD" | null,
+      "new_name": "שם חדש, ל-rename" | null,
       "reason": "למה, במשפט אחד" }
   ]`;
 
@@ -136,7 +240,9 @@ export const ACTIONS_GUIDE = `
 - daily_budget: התקציב היומי החדש בשקלים (לא התוספת). אם בדקת בכלי Meta שהתקציב מוגדר ברמת קבוצת המודעות —
   level "adset" עם המזהה שלה; אחרת level "campaign". התצוגה המקדימה תגיד אם התקציב מוגדר ברמה האחרת.
 - end_date: היום האחרון שהקמפיין רץ — בדרך כלל יום ההופעה. pause לקמפיין שממשיך להוציא אחרי ההופעה.
-- מה שלא ניתן לבצע כך — מודעה או קהל חדשים, החלפת קריאייטיב, קמפיין חדש — נשאר הוראה בטקסט בלבד.
+- שינוי שם (rename, עם new_name) או העברה לארכיון (archive) לקמפיין שהסתיים ולא יחזור — גם הם פעולות.
+- מה שלא ניתן לבצע כך — מודעה או קהל חדשים, החלפת קריאייטיב, קמפיין חדש — נשאר הוראה בטקסט בלבד
+  (קמפיין חדש הבעלים בונה באשף «קמפיין חדש», ואפשר למלא אותו מהתוכנית).
 - לא יותר משלוש פעולות, ולא פעולה שכבר במצב המבוקש. אם אין — actions ריק.
 `.trim();
 
@@ -263,7 +369,9 @@ function adsManagerUrl(level: ActionLevel, id: string): string {
 /** The fields whose change between preview and confirm means the preview is no longer true. */
 function fingerprint(action: ProposedAction, live: any): Record<string, unknown> {
   if (action.type === 'create_pixel') return { pixels: live.pixels };
+  if (action.type === 'create_campaign') return { pages: live.pages, pixels: live.pixels, image: live.image };
   return {
+    name: live.name ?? null,
     status: live.status ?? null,
     daily_budget: live.daily_budget ?? null,
     lifetime_budget: live.lifetime_budget ?? null,
@@ -276,6 +384,16 @@ async function readLive(action: ProposedAction): Promise<any> {
   if (action.type === 'create_pixel') {
     const pixels = await fetchPixels();
     return { pixels: pixels.map((p) => p.id), list: pixels };
+  }
+  if (action.type === 'create_campaign') {
+    const [pages, pixels] = await Promise.all([fetchPromotePages(), fetchPixels()]);
+    return {
+      pages: pages.map((p) => p.id),
+      pixels: pixels.map((p) => p.id),
+      image: imagePath(action.spec?.image_id) ? action.spec!.image_id : null,
+      page_list: pages,
+      pixel_list: pixels,
+    };
   }
   return fetchObject(action.id!, FIELDS[action.level!]);
 }
@@ -308,6 +426,8 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
       can_execute: blockers.length === 0,
     };
   }
+
+  if (action.type === 'create_campaign') return describeCreate(action, live, today);
 
   const level = action.level!;
   const account = adAccountId().replace(/^act_/, '');
@@ -369,6 +489,20 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
       }
       break;
     }
+    case 'rename': {
+      title = `שינוי שם ל${LEVEL_LABELS[level]} «${name ?? action.id}»`;
+      changes.push({ label: 'שם', from: name ?? '—', to: action.new_name! });
+      if (name === action.new_name) blockers.push('זה כבר השם.');
+      break;
+    }
+    case 'archive': {
+      title = `העברה לארכיון של ${LEVEL_LABELS[level]} «${name ?? action.id}»`;
+      changes.push({ label: 'מצב', from: statusLabel(live.status), to: statusLabel('ARCHIVED') });
+      warnings.push('ארכיון עוצר את ההוצאה, ואי אפשר להפעיל אותו שוב מהאפליקציה. ההוצאות שכבר נרשמו להופעות נשארות.');
+      if (upcoming.length) warnings.push(`ההופעה ${upcoming[0].label} עוד לא הייתה — אם רק רוצים לעצור לרגע, עדיף השהיה.`);
+      if (live.status === 'ACTIVE') warnings.push('הוא פעיל עכשיו ויפסיק להוציא מיד.');
+      break;
+    }
     case 'set_end_date': {
       const current = String(live.end_time ?? live.stop_time ?? '').slice(0, 10) || null;
       title = `תאריך סיום ל${LEVEL_LABELS[level]} «${name ?? action.id}»`;
@@ -399,6 +533,168 @@ export function describe(action: ProposedAction, live: any, today = israelDate()
     blockers,
     can_execute: blockers.length === 0,
   };
+}
+
+const day = (date: string) => Date.parse(`${date}T12:00:00Z`);
+
+/** The preview of a whole new campaign: three objects, each laid out as «none → what it will be». */
+function describeCreate(action: ProposedAction, live: any, today: string): Omit<ActionPreview, 'id' | 'status' | 'created_at' | 'expires_at'> {
+  const spec = action.spec!;
+  const warnings: string[] = [];
+  const blockers: string[] = [];
+  const goal = OBJECTIVES[spec.goal];
+  const pages: Array<{ id: string; name: string | null }> = live.page_list ?? [];
+  const pixels: Array<{ id: string; name: string | null }> = live.pixel_list ?? [];
+  const page = pages.find((p) => p.id === spec.page_id);
+  const days = Math.round((day(spec.end_date) - day(spec.start_date)) / 86_400_000) + 1;
+
+  if (!page) blockers.push('הדף שנבחר לא זמין לחשבון המודעות — בחרו דף מהרשימה.');
+  if (!live.image) blockers.push('התמונה של המודעה לא נמצאה — העלו אותה שוב.');
+  if (spec.end_date < spec.start_date) blockers.push('תאריך הסיום לפני תאריך ההתחלה.');
+  if (spec.end_date < today) blockers.push('תאריך הסיום כבר עבר.');
+  if (spec.daily_budget > MAX_DAILY_BUDGET) blockers.push(`₪${spec.daily_budget} ליום חורג מהתקרה (₪${MAX_DAILY_BUDGET}) — כנראה טעות.`);
+  if (spec.daily_budget < 5) blockers.push('Meta לא מקבלת תקציב יומי נמוך כל כך — לפחות ₪5 ליום.');
+  if (spec.goal === 'sales') {
+    if (!spec.pixel_id) blockers.push('קמפיין מכירות צריך פיקסל — בחרו פיקסל, או מטרה של כניסות לדף הכרטיסים.');
+    else if (!pixels.some((p) => p.id === spec.pixel_id)) blockers.push('הפיקסל שנבחר לא נמצא בחשבון המודעות.');
+  }
+  if (spec.start_date < today) warnings.push('תאריך ההתחלה כבר עבר — הקמפיין יתחיל מהרגע שיופעל.');
+
+  let shows: ActionPreview['shows'] = [];
+  if (spec.event_id) {
+    const e = db.prepare('SELECT id, venue, date FROM band_events WHERE id = ?').get(spec.event_id) as any;
+    if (!e) blockers.push('ההופעה שנבחרה לא נמצאה.');
+    else {
+      shows = [{ event_id: e.id, label: eventLabel(e.venue, e.date), date: e.date }];
+      if (spec.end_date > e.date) warnings.push(`הקמפיין ממשיך אחרי ההופעה (${e.date}) — כל יום אחריה הוא הוצאה בלי הופעה.`);
+      if (e.date < today) warnings.push('ההופעה הזו כבר הייתה.');
+    }
+  } else {
+    warnings.push('הקמפיין לא ישויך לאף הופעה, אז ההוצאה שלו תיספר כפרסום לא משויך עד שתשייכו אותו.');
+  }
+  if (getMetaCurrencyRate() !== 1) {
+    const code = getSetting('meta_account_currency', 'ILS');
+    warnings.push(`החשבון ב-${code}: ₪${spec.daily_budget} ליום יישלחו כ-${(shekelsToBudget(spec.daily_budget) / currencyOffset()).toFixed(2)} ${code} לפי השער השמור.`);
+  }
+
+  const total = days > 0 ? Math.round(spec.daily_budget * days) : null;
+  const changes: ActionChange[] = [
+    { label: 'קמפיין', from: 'אין', to: `«${spec.name}» · ${goal.label} · נוצר מושהה` },
+    {
+      label: 'קבוצת מודעות',
+      from: 'אין',
+      to: `ישראל, גילאי ${spec.age_min}–${spec.age_max}${spec.age_max === 65 ? '+' : ''} · ${shekels(spec.daily_budget)}`
+        + ` · ${spec.start_date} עד ${spec.end_date}${total != null ? ` (${days} ימים, עד ₪${total.toLocaleString('he-IL')})` : ''}`,
+    },
+    { label: 'מודעה', from: 'אין', to: `«${spec.headline}» · ${CTA_LABELS[spec.cta]} · ${page?.name ?? spec.page_id}` },
+  ];
+  warnings.push('הקמפיין נוצר מושהה, וקבוצת המודעות והמודעה מוכנות בתוכו. שום כסף לא יוצא עד שמפעילים את הקמפיין, והמודעה עוברת קודם בדיקה של Meta.');
+
+  return {
+    action,
+    title: `קמפיין חדש «${spec.name}»`,
+    target: { level: 'campaign', id: null, name: spec.name, status: null, effective_status: null, ads_manager_url: null },
+    shows,
+    changes,
+    warnings,
+    blockers,
+    can_execute: blockers.length === 0,
+  };
+}
+
+/**
+ * Builds the confirmed campaign, in Meta's order: the image, the campaign (paused), its ad set,
+ * the creative and the ad. Each id is kept as it comes back, so a failure half-way says exactly
+ * what already exists in the account rather than leaving an orphan nobody knows about.
+ */
+async function createCampaign(spec: CampaignSpec): Promise<Record<string, string>> {
+  const account = adAccountId();
+  const goal = OBJECTIVES[spec.goal];
+  const made: Record<string, string> = {};
+  try {
+    const upload = await graphWrite<any>(`${account}/adimages`, { bytes: imageBase64(spec.image_id) });
+    const image = Object.values(upload?.images ?? {})[0] as any;
+    if (!image?.hash) throw new MetaError('Meta לא החזירה מזהה לתמונה');
+    made.image_hash = String(image.hash);
+
+    const campaign = await graphWrite<any>(`${account}/campaigns`, {
+      name: spec.name,
+      objective: goal.objective,
+      status: 'PAUSED',
+      special_ad_categories: '[]',
+      // The budget lives on the ad set; Meta asks new campaigns to say so explicitly.
+      is_adset_budget_sharing_enabled: 'false',
+    });
+    made.campaign_id = String(campaign.id);
+
+    const adset = await graphWrite<any>(`${account}/adsets`, {
+      name: `${spec.name} — קהל`,
+      campaign_id: made.campaign_id,
+      daily_budget: String(shekelsToBudget(spec.daily_budget)),
+      billing_event: 'IMPRESSIONS',
+      optimization_goal: goal.optimization_goal,
+      bid_strategy: 'LOWEST_COST_WITHOUT_CAP',
+      start_time: `${spec.start_date}T00:00:00${israelEndOfDay(spec.start_date).slice(-6)}`,
+      end_time: israelEndOfDay(spec.end_date),
+      targeting: JSON.stringify({
+        geo_locations: { countries: ['IL'] },
+        age_min: spec.age_min,
+        age_max: spec.age_max,
+        targeting_automation: { advantage_audience: 0 },
+      }),
+      ...(spec.goal === 'awareness' ? {} : { destination_type: 'WEBSITE' }),
+      ...(spec.goal === 'sales' ? { promoted_object: JSON.stringify({ pixel_id: spec.pixel_id, custom_event_type: 'PURCHASE' }) } : {}),
+      status: 'ACTIVE',
+    });
+    made.adset_id = String(adset.id);
+
+    const creative = await graphWrite<any>(`${account}/adcreatives`, {
+      name: `${spec.name} — מודעה`,
+      object_story_spec: JSON.stringify({
+        page_id: spec.page_id,
+        link_data: {
+          link: spec.link,
+          message: spec.primary_text,
+          name: spec.headline,
+          ...(spec.description ? { description: spec.description } : {}),
+          image_hash: made.image_hash,
+          call_to_action: { type: spec.cta, value: { link: spec.link } },
+        },
+      }),
+    });
+    made.creative_id = String(creative.id);
+
+    const ad = await graphWrite<any>(`${account}/ads`, {
+      name: spec.name,
+      adset_id: made.adset_id,
+      creative: JSON.stringify({ creative_id: made.creative_id }),
+      status: 'ACTIVE',
+    });
+    made.ad_id = String(ad.id);
+  } catch (err: any) {
+    const parts = [
+      made.campaign_id && `קמפיין ${made.campaign_id}`,
+      made.adset_id && `קבוצת מודעות ${made.adset_id}`,
+      made.creative_id && `קריאייטיב ${made.creative_id}`,
+    ].filter(Boolean);
+    const partial = parts.length ? ` כבר נוצרו (מושהים): ${parts.join(', ')} — אפשר להשלים או למחוק ב-Ads Manager.` : '';
+    throw Object.assign(new MetaError(`${err?.message || err}.${partial}`, err?.status ?? 502), { created: made });
+  }
+
+  // The studio lists synced campaigns; this one should be there before the next pull, and on its show.
+  db.prepare(
+    `INSERT INTO meta_campaigns (id, account_id, name, status, objective, currency, synced_at)
+     VALUES (?, ?, ?, 'PAUSED', ?, ?, datetime('now'))
+     ON CONFLICT(id) DO UPDATE SET name = excluded.name, status = excluded.status`
+  ).run(made.campaign_id, account, spec.name, goal.objective, getSetting('meta_account_currency', 'ILS'));
+  if (spec.event_id && db.prepare('SELECT id FROM band_events WHERE id = ?').get(spec.event_id)) {
+    db.prepare(
+      `INSERT INTO meta_campaign_events (id, campaign_id, event_id, weight) VALUES (?, ?, ?, 1)
+       ON CONFLICT(campaign_id, event_id) DO NOTHING`
+    ).run(uuid(), made.campaign_id, spec.event_id);
+    applyCampaignSpend();
+  }
+  return made;
 }
 
 // ---------------------------------------------------------------- the two steps
@@ -443,7 +739,8 @@ export async function previewAction(
   raw: unknown,
   origin: { source?: string | null; source_id?: string | null; event_id?: string | null } = {}
 ): Promise<ActionPreview> {
-  const [action] = cleanActions([raw]);
+  // A campaign is built only in the studio's wizard, whose preview says it came from there.
+  const [action] = cleanActions([raw], { manual: origin.source === 'studio' });
   if (!action) throw new AgentError('הפעולה לא מוכרת או חסרים בה פרטים', 400);
   if (!isMetaConfigured()) throw new MetaError('Meta לא מוגדר — אי אפשר לקרוא את המצב הנוכחי לתצוגה מקדימה', 503);
 
@@ -529,15 +826,26 @@ export async function executeAction(id: string): Promise<ActionRecord> {
       case 'create_pixel':
         result = await graphWrite(`${adAccountId()}/adspixels`, { name: action.pixel_name! });
         break;
+      case 'rename':
+        result = await graphWrite(action.id!, { name: action.new_name! });
+        break;
+      case 'archive':
+        result = await graphWrite(action.id!, { status: 'ARCHIVED' });
+        break;
+      case 'create_campaign':
+        result = await createCampaign(action.spec!);
+        break;
     }
     finish(id, 'done', { result });
     // The campaign list reads the synced status; a pause made here should not wait for the next pull.
-    if (action.level === 'campaign' && (action.type === 'pause' || action.type === 'activate')) {
-      db.prepare('UPDATE meta_campaigns SET status = ? WHERE id = ?').run(action.type === 'pause' ? 'PAUSED' : 'ACTIVE', action.id);
+    if (action.level === 'campaign' && action.id) {
+      const status = action.type === 'pause' ? 'PAUSED' : action.type === 'activate' ? 'ACTIVE' : action.type === 'archive' ? 'ARCHIVED' : null;
+      if (status) db.prepare('UPDATE meta_campaigns SET status = ? WHERE id = ?').run(status, action.id);
+      if (action.type === 'rename') db.prepare('UPDATE meta_campaigns SET name = ? WHERE id = ?').run(action.new_name, action.id);
     }
   } catch (err: any) {
     const current = (db.prepare('SELECT status FROM meta_actions WHERE id = ?').get(id) as { status: string }).status;
-    if (current === 'executing') finish(id, 'failed', { error: String(err?.message || err).slice(0, 500) });
+    if (current === 'executing') finish(id, 'failed', { result: err?.created, error: String(err?.message || err).slice(0, 500) });
     throw err;
   }
   return getAction(id);
