@@ -30,6 +30,7 @@ import { missingRoles } from './assignments.js';
 import { roleName } from './supplierRoles.js';
 import { outstandingSql } from './queries.js';
 import { RECEIVABLE_DOC_TYPES_SQL } from './docTypes.js';
+import { SERVICES, healthOf, runHealthChecks } from './syncHealth.js';
 
 // ---------------------------------------------------------------- categories
 
@@ -98,6 +99,16 @@ export const CATEGORIES: Category[] = [
     key: 'show_payment', label: 'הופעה שהכסף עליה לא הגיע',
     description: 'סיכום שבועי ביום ראשון של הופעות שעברו שבועיים ועוד לא שולמו',
     roles: ['owner'], default: true, url: '/band/shows',
+  },
+  {
+    key: 'tax_shortfall', label: 'צפי לחוב מס בדוח השנתי',
+    description: 'פעם בחודש, כשהשנה בדרך ליתרת מס של ₪1,000 ומעלה מעבר למקדמות ולניכויים',
+    roles: ['owner'], default: true, url: '/reports?tab=annual',
+  },
+  {
+    key: 'sync_health', label: 'תקלה בחיבורים',
+    description: 'Morning, יומן גוגל, Meta או הסוכן לא עונים (בדיקה יומית), או שלא סונכרנו זמן רב',
+    roles: ['owner'], default: true, url: '/settings?section=connections',
   },
 ];
 
@@ -492,6 +503,65 @@ function showPayments(today: string): Alert[] {
   }];
 }
 
+/** Below this the projection is rounding, not a reason to call the accountant. Same as the inbox. */
+const SHORTFALL_THRESHOLD = 1000;
+
+/**
+ * The year still running, heading for a balance the advances do not cover. Once a month: the
+ * projection moves with every invoice, and a weekly ping about the same figure would be noise.
+ * Quiet until the declared side of the year has been filled in — see `annualOutlook`.
+ */
+function taxShortfall(today: string): Alert[] {
+  const year = Number(today.slice(0, 4));
+  const outlook = annualOutlook(year);
+  if (!outlook.configured || !outlook.in_progress || outlook.shortfall < SHORTFALL_THRESHOLD) return [];
+  const monthsLeft = 12 - Number(today.slice(5, 7));
+  return [{
+    category: 'tax_shortfall', key: `shortfall:${today.slice(0, 7)}`,
+    title: `${year} בדרך ליתרת מס של ${shekel(outlook.shortfall)}`,
+    body: (outlook.mikdamot_paid > 0
+      ? `מעבר ל-${shekel(outlook.payments)} שכבר נוכו ושולמו, מהם ${shekel(outlook.mikdamot_paid)} מקדמות`
+      : `מעבר ל-${shekel(outlook.payments)} שכבר נוכו ושולמו`)
+      + (monthsLeft > 0 ? ` · ${shekel(outlook.shortfall / monthsLeft)} בחודש יסגרו את הפער עד סוף השנה` : ''),
+    url: `/reports?tab=annual&year=${year}`,
+  }];
+}
+
+const daysSince = (iso: string, today: string) => daysBetween(iso.slice(0, 10), today);
+
+/**
+ * A connection that stopped answering, and a connected one nobody has synced for a while. The
+ * failure repeats every three days until the next sync or probe succeeds; a new failure after a
+ * recovery is a new key, so it is sent at once.
+ */
+function syncHealth(today: string): Alert[] {
+  const alerts: Alert[] = [];
+  for (const def of SERVICES) {
+    const h = healthOf(def);
+    if (!h.configured) continue;
+    if (h.failing_since) {
+      alerts.push({
+        category: 'sync_health', key: `sync-fail:${def.key}:${h.failing_since.slice(0, 10)}`, repeatDays: 3,
+        title: `החיבור ל-${def.label} לא עובד`,
+        body: `${h.last_error ?? ''} · מאז ${ddmm(h.failing_since.slice(0, 10))}`,
+        url: '/settings?section=connections',
+      });
+      continue;
+    }
+    if (!def.staleDays || !h.last_sync) continue;
+    if (def.staleRelevant && !def.staleRelevant()) continue;
+    const age = daysSince(h.last_sync, today);
+    if (age < def.staleDays) continue;
+    alerts.push({
+      category: 'sync_health', key: `sync-stale:${def.key}:${h.last_sync.slice(0, 10)}`, repeatDays: 7,
+      title: `${def.label} לא סונכרן ${age} ימים`,
+      body: 'מה דורש טיפול והדוחות עובדים מנתונים ישנים — כדאי להריץ סנכרון',
+      url: '/settings?section=connections',
+    });
+  }
+  return alerts;
+}
+
 /** Everything one user is owed today, before anything is filtered for having been sent already. */
 export function alertsFor(user: Recipient, today: string = israelDate()): Alert[] {
   const prefs = getPrefs(user.id, user.role);
@@ -512,6 +582,8 @@ export function alertsFor(user: Recipient, today: string = israelDate()): Alert[
     run('overdue_invoices', () => overdueInvoices(today));
     run('quote_signed', () => quotesSigned());
     run('show_payment', () => showPayments(today));
+    run('tax_shortfall', () => taxShortfall(today));
+    run('sync_health', () => syncHealth(today));
   }
   run('campaign_tasks', () => campaignTasks(today, user));
   run('show_staffing', () => showStaffing(today));
@@ -610,10 +682,29 @@ export async function runNotifications(now: Date = new Date()): Promise<RunResul
 
 const TICK_MS = 10 * 60_000;
 
+/** The connection probe runs from this hour, so its result is in hand when sending starts at 9. */
+export const HEALTH_CHECK_HOUR = 8;
+
+/**
+ * The daily connection probe, only while an owner has a device to be told on — the probe calls
+ * out to four services, and with nobody listening there is no reason to.
+ */
+export async function maybeCheckHealth(now: Date = new Date()): Promise<void> {
+  if (israelHour(now) < HEALTH_CHECK_HOUR) return;
+  const listening = db.prepare(
+    `SELECT 1 FROM push_subscriptions s JOIN users u ON u.id = s.user_id WHERE u.role = 'owner' LIMIT 1`
+  ).get();
+  if (!listening) return;
+  const owner = db.prepare("SELECT id FROM users WHERE role = 'owner'").all() as Array<{ id: string }>;
+  if (!owner.some((u) => getPrefs(u.id, 'owner').sync_health)) return;
+  await runHealthChecks(now);
+}
+
 export function startNotificationScheduler(): void {
   vapidKeys();
-  const tick = () => {
-    runNotifications().catch((err) => console.warn('[notifications] run failed:', err?.message));
+  const tick = async () => {
+    await maybeCheckHealth().catch((err) => console.warn('[notifications] health check failed:', err?.message));
+    await runNotifications().catch((err) => console.warn('[notifications] run failed:', err?.message));
   };
   setTimeout(tick, 45_000).unref();
   setInterval(tick, TICK_MS).unref();

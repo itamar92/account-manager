@@ -1024,6 +1024,15 @@ Several of one kind fold into a single notification. Sent between 09:00 and 21:0
 | הצעת מחיר נחתמה | as soon as a quote is signed | owner |
 | צוות חסר | 10 days before a show with a required role unassigned | everyone |
 | כסף מהופעה | Sunday digest of shows 14+ days past with money not received | owner |
+| צפי לחוב מס | monthly, while the running year projects a balance of ₪1,000+ beyond withholding and מקדמות (once the year's declared side is filled in) | owner |
+| תקלה בחיבורים | a connection that fails a sync or the daily probe (every 3 days until it recovers); a connected service not synced for 7 days (Meta: 3, while a campaign is active) | owner |
+
+Syncs run only when somebody presses the button, so a token that expires would otherwise go
+unnoticed until then. `server/syncHealth.ts` keeps one record per service (Morning, Google
+Calendar, Meta, the AI agent): the sync routes record success or failure, and from 08:00 each
+day the scheduler probes every connected service with its client's own `ping` (no data is
+read; a failure is retried once half a minute later before it counts). The probe runs only
+while an owner has a device subscribed with this category on.
 
 The VAPID keys are generated on first use (private half sealed with the app secret) unless
 `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` are set. The inbox count is also shown as the badge on

@@ -96,6 +96,7 @@ import {
 import { mailStatus } from './mailer.js';
 import { quoteRouter } from './quoteRoutes.js';
 import { quoteFollowUps } from './quoteShow.js';
+import { tracked } from './syncHealth.js';
 
 /**
  * The follow-up conversation is a single shared thread rather than one per user: the owner is
@@ -2172,7 +2173,7 @@ router.get('/integrations', requireOwner, handle((_req, res) => {
  */
 router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullFromMorning({ days });
+  const result = await tracked('morning', () => pullFromMorning({ days }));
   const expenses = await pullExpensesFromMorning({ days }).catch((err: any) => ({
     error: err.message || 'משיכת ההוצאות נכשלה',
   }));
@@ -2186,7 +2187,7 @@ router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, 
 /** Pulls expenses only — what the הוצאות page's own sync button asks for. */
 router.post('/integrations/morning/expenses-sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullExpensesFromMorning({ days });
+  const result = await tracked('morning', () => pullExpensesFromMorning({ days }));
   res.json({ result: { ...result, matched: runMatch().linked } });
 }));
 
@@ -2244,7 +2245,7 @@ router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (re
 router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req, res) => {
   const monthsBack = req.body?.months_back != null ? parseInt(req.body.months_back, 10) : undefined;
   const monthsAhead = req.body?.months_ahead != null ? parseInt(req.body.months_ahead, 10) : undefined;
-  res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
+  res.json({ result: await tracked('calendar', () => pullShowsFromCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id })) });
 }));
 
 /** The calendars this account can read, for the rule's calendar picker. */
@@ -2261,7 +2262,7 @@ router.get('/integrations/calendar/calendars', requireOwner, handleAsync(async (
  */
 router.post('/integrations/meta/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullCampaignsFromMeta({ days });
+  const result = await tracked('meta', () => pullCampaignsFromMeta({ days }));
   // The pixel's counts ride along, so the advisor's next run knows which clubs' sites carry it. A
   // failure there is not the sync's: the spend has landed, and the panel shows the pixel's error.
   await refreshPixelSnapshot().catch(() => null);
@@ -2624,7 +2625,7 @@ router.post('/band/campaign-tasks/:id/remind', requireOwner, handleAsync(async (
  * — without spending a real analysis to find out which of those is broken.
  */
 router.post('/integrations/agent/ping', requireOwner, handleAsync(async (_req, res) => {
-  res.json({ result: await agentPing() });
+  res.json({ result: await tracked('agent', () => agentPing()) });
 }));
 
 // ---- calendar rules: which events to draw, for band and for personal ----

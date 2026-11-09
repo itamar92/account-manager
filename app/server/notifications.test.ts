@@ -148,3 +148,64 @@ test('מע"מ: only the latest unticked period alerts, and not once it is long o
   // Far past every deadline with nothing ticked: silence rather than a list of stale periods.
   assert.equal(vat('2026-11-01').length, 0);
 });
+
+test('a failed sync alerts until a sync succeeds, and a stale one reminds', async () => {
+  const health = await import('./syncHealth.js');
+  const morning = health.SERVICES.find((s) => s.key === 'morning')!;
+  const original = morning.configured;
+  morning.configured = () => true;
+  try {
+    const sync = (today: string) => n.alertsFor(OWNER, today).filter((a) => a.category === 'sync_health');
+    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('morning_last_sync', '2026-11-28T10:00:00Z')").run();
+    assert.equal(sync('2026-11-30').length, 0, 'synced two days ago: nothing to say');
+
+    await assert.rejects(health.tracked('morning', async () => { throw new Error('401 token expired'); }));
+    const [fail] = sync('2026-11-30');
+    assert.match(fail.title, /Morning/);
+    assert.match(fail.body, /401 token expired/);
+    assert.equal(fail.url, '/settings?section=connections');
+
+    await health.tracked('morning', async () => 'ok');
+    assert.equal(sync('2026-11-30').length, 0, 'a successful sync clears it');
+    const [stale] = sync('2026-12-06');
+    assert.match(stale.title, /לא סונכרן 8 ימים/);
+  } finally {
+    morning.configured = original;
+  }
+});
+
+test('the daily probe retries once, records a lasting failure, and runs once a day', async () => {
+  const health = await import('./syncHealth.js');
+  let calls = 0;
+  let fail = true;
+  const fake = {
+    key: 'calendar' as const, label: 'Google Calendar', configured: () => true,
+    probe: async () => { calls++; if (fail) throw new Error('invalid_grant'); },
+    lastSyncSetting: null, staleDays: null,
+  };
+  await health.runHealthChecks(at('2026-11-30', 8), [fake], 0);
+  assert.equal(calls, 2, 'tried twice');
+  assert.match(health.healthOf(fake).last_error!, /invalid_grant/);
+  await health.runHealthChecks(at('2026-11-30', 12), [fake], 0);
+  assert.equal(calls, 2, 'not again the same day');
+  fail = false;
+  await health.runHealthChecks(at('2026-12-01', 8), [fake], 0);
+  assert.equal(health.healthOf(fake).failing_since, null, 'recovered the next day');
+});
+
+test('tax shortfall: monthly, only once the year is configured and the gap is real', async () => {
+  const shortfall = (today: string) => n.alertsFor(OWNER, today).filter((a) => a.category === 'tax_shortfall');
+  assert.equal(shortfall('2026-11-30').length, 0, 'no declared side yet: quiet');
+  const { saveProfile } = await import('./annualReport.js');
+  // Enough income on the books that a year with no advances paid owes real tax.
+  db.prepare(
+    `INSERT INTO invoices (id, client_id, number, date, subtotal, vat_amount, total, status, doc_type)
+     VALUES ('inv-big', 'c1', '9001', '2026-06-01', 400000, 72000, 472000, 'paid', 320)`
+  ).run();
+  saveProfile(2026, { mikdamot_paid: 0 });
+  const [alert] = shortfall('2026-11-30');
+  assert.ok(alert, 'a configured year with a gap alerts');
+  assert.equal(alert.key, 'shortfall:2026-11');
+  assert.match(alert.title, /^2026 בדרך ליתרת מס של/);
+  assert.match(alert.body, /בחודש יסגרו את הפער/);
+});

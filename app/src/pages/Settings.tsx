@@ -47,7 +47,11 @@ const amount = (value: unknown) => Math.round(Number(value) || 0).toLocaleString
 export function Settings() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
-  const [sec, setSec] = useState<Section>('general');
+  // A notification about a broken connection links to ?section=connections.
+  const [sec, setSec] = useState<Section>(() => {
+    const wanted = new URLSearchParams(window.location.search).get('section');
+    return SECTIONS.some((s) => s.key === wanted) ? (wanted as Section) : 'general';
+  });
   const [newKey, setNewKey] = useState<any>(null);
   const [keyName, setKeyName] = useState('');
   const [userModal, setUserModal] = useState(false);
