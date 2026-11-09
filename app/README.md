@@ -1002,6 +1002,33 @@ fails, the spend sync still lands and the result carries a warning.
 | `PUT /api/band/campaign-tasks/owner/:eventId` | set the show's owner `{member_key}` (owner) |
 | `POST /api/band/campaign-tasks/:id/remind` | send this task's reminder now (owner) |
 
+## התראות — push notifications to the home-screen app
+
+The bell in the header (every login) turns on push notifications for the device it is tapped
+on, chooses which kinds to receive, and lists what is due right now. On an iPhone, Web Push
+reaches only a site added to the home screen (Safari → Share → «הוסף למסך הבית», iOS 16.4+);
+the panel says so when opened in a Safari tab. Android and desktop browsers work directly.
+
+Nothing is stored as a to-do: every notification is worked out from the books when it is due
+(`server/notifications.ts`), and `notification_log` only records what was sent so a condition
+that holds all week is one notification, or one every few days for the kinds that repeat.
+Several of one kind fold into a single notification. Sent between 09:00 and 21:00 Israel time.
+
+| Kind | When | Who |
+|------|------|-----|
+| סוף חודש | last day of the month, if there are unbilled works | owner |
+| משימות קמפיין | on the due date, again every 2 days while open | owner + the member who owns the show |
+| ספק בלי חשבונית | a payment 7+ days old with no document, weekly | owner |
+| תשלומים לרשויות | מע"מ 5 days / 1 day before and when late (latest unticked period only); annual return 30/7/1 days before; optional מקדמות and monthly ביטוח לאומי | owner |
+| לקוחות באיחור | Sunday digest of overdue client invoices | owner |
+| הצעת מחיר נחתמה | as soon as a quote is signed | owner |
+| צוות חסר | 10 days before a show with a required role unassigned | everyone |
+| כסף מהופעה | Sunday digest of shows 14+ days past with money not received | owner |
+
+The VAPID keys are generated on first use (private half sealed with the app secret) unless
+`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` are set. The inbox count is also shown as the badge on
+the home-screen icon where the platform supports it.
+
 ## MCP server (`/mcp`) — read-only access for AI agents
 
 Lets an outside AI agent — Claude Desktop, claude.ai, anything that speaks

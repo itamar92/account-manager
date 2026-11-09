@@ -9,6 +9,8 @@ import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
 import { get } from './api';
 import { MoneyCalculator } from './pages/band/MoneyCalculator';
+import { NotificationsButton } from './NotificationsPanel';
+import { setAppBadge } from './push';
 
 type NavItem = { to: string; label: string; icon: React.ElementType; badge?: number };
 type NavGroup = { head?: string; items: NavItem[] };
@@ -132,7 +134,11 @@ export function Layout() {
   // it changes only when something on that page is dealt with.
   React.useEffect(() => {
     if (user?.role !== 'owner') return;
-    get('/inbox').then((d) => setInboxCount(d.inbox.openCount)).catch(() => {});
+    get('/inbox').then((d) => {
+      setInboxCount(d.inbox.openCount);
+      // The same count on the home-screen icon, where the platform shows one.
+      setAppBadge(d.inbox.openCount);
+    }).catch(() => {});
   }, [user?.role, location.pathname]);
 
   if (loading) return <div className="min-h-screen flex items-center justify-center text-faint">טוען…</div>;
@@ -231,6 +237,7 @@ export function Layout() {
               <Settings size={18} />
             </NavLink>
           )}
+          <NotificationsButton />
           <div
             title={`${user.name} · ${isOwner ? 'בעלים' : 'חבר להקה'}`}
             className="w-9 h-9 rounded-full bg-accent text-white flex items-center justify-center text-sm font-semibold shrink-0"
