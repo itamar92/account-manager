@@ -16,6 +16,7 @@ import { seedBuiltinTemplates } from './server/quotes.js';
 import { publicQuoteRouter } from './server/publicQuotes.js';
 import { publicCampaignTaskRouter, startReminderScheduler } from './server/campaignTasks.js';
 import { notificationsRouter, startNotificationScheduler } from './server/notifications.js';
+import { startNightlySync } from './server/nightlySync.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -109,6 +110,8 @@ async function start() {
   startReminderScheduler();
   // Push notifications to the home-screen app. Sends only to users who turned them on.
   startNotificationScheduler();
+  // Morning, Google Calendar and Meta pulled every night at 03:00 Israel time (Settings → חיבורים).
+  startNightlySync();
 }
 
 start();

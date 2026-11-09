@@ -136,6 +136,9 @@ export async function runHealthChecks(
     if (getSetting(checkedKey, '') === today) continue;
     // An analysis already running holds the SSH session; tomorrow's probe will do.
     if (def.key === 'agent' && isAgentBusy()) continue;
+    // Synced successfully today already (the nightly run, usually): that was the real test.
+    const lastSync = def.lastSyncSetting ? getSetting(def.lastSyncSetting, '') : '';
+    if (lastSync && !stored(def.key) && israelDate(new Date(lastSync)) === today) continue;
     setSetting(checkedKey, today);
     // Tried twice, half a minute apart: a network blip at the moment of the probe is not a
     // broken connection, and an alert for one teaches the owner to ignore the real thing.
