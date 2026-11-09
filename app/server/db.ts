@@ -846,6 +846,46 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ---------- push notifications ----------
+-- One row per browser (or home-screen app) that agreed to receive notifications. The endpoint
+-- is the push service's address for that one install, and the two keys are what the payload is
+-- encrypted to; none of it is a secret worth more than the ability to send that device a ping.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_success_at TEXT,
+  failures INTEGER NOT NULL DEFAULT 0
+);
+
+-- Which categories each user wants. A JSON object of category → boolean; a category it does
+-- not mention takes its default, so a new kind of notification needs no migration.
+CREATE TABLE IF NOT EXISTS notification_prefs (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  prefs TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- What was already sent, so a condition that holds all week is one notification and not one
+-- every ten minutes. The key names the occurrence ("vat:2026-P5:d5"); a rule that repeats reads
+-- the last sent_on for its key.
+CREATE TABLE IF NOT EXISTS notification_log (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  url TEXT,
+  sent_on TEXT NOT NULL,                  -- YYYY-MM-DD, Israel time
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, key, sent_on)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_log_recent ON notification_log(user_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_band_quote_items_quote ON band_quote_items(quote_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_band_quotes_list ON band_quotes(is_template, created_at);
 

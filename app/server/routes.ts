@@ -13,16 +13,16 @@ import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRev
 import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
 import {
   buildMorningDraft, buildPendingMorningDraft, issueWorksToMorning, morningStatus,
-  pullFromMorning, pushInvoiceToMorning,
+  pushInvoiceToMorning,
 } from './morningSync.js';
 import {
   expenseCategories, expenseStatusAudit, expensesStatus, expensesSummary, listExpenses,
   pullExpensesFromMorning,
 } from './morningExpenses.js';
-import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
+import { calendarStatus, isSyncPriced, previewRule } from './calendarSync.js';
 import {
   adAnalysis, applyCampaignSpend, attributedSpendByEvent, campaignDaily, deleteMapping, listCampaigns, metaStatus,
-  monthlyBreakdown, pullCampaignsFromMeta, setMapping,
+  monthlyBreakdown, setMapping,
 } from './metaSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -89,13 +89,17 @@ import {
   fetchAdVideos, fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchInstagramAccounts, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
 } from './metaClient.js';
 import { imagePath, storeImage } from './metaImages.js';
-import { pixelEmail, pixelOverview, refreshPixelSnapshot, setVenuePixel } from './metaPixel.js';
+import { pixelEmail, pixelOverview, setVenuePixel } from './metaPixel.js';
 import {
   createTasks, deleteShowTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
 } from './campaignTasks.js';
 import { mailStatus } from './mailer.js';
 import { quoteRouter } from './quoteRoutes.js';
 import { quoteFollowUps } from './quoteShow.js';
+import { tracked } from './syncHealth.js';
+import {
+  isNightlyEnabled, lastNightlyRun, setNightlyEnabled, syncCalendar, syncMeta, syncMorning,
+} from './nightlySync.js';
 
 /**
  * The follow-up conversation is a single shared thread rather than one per user: the owner is
@@ -2172,21 +2176,15 @@ router.get('/integrations', requireOwner, handle((_req, res) => {
  */
 router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullFromMorning({ days });
-  const expenses = await pullExpensesFromMorning({ days }).catch((err: any) => ({
-    error: err.message || 'משיכת ההוצאות נכשלה',
-  }));
-  // A document that has just arrived is the answer to a payment already waiting for it, so
-  // the match runs here rather than waiting to be asked for: the queue is shortest the moment
-  // after a sync, which is exactly when somebody is looking at it.
-  const matched = runMatch();
-  res.json({ result: { ...result, expenses, matched: matched.linked } });
+  // The same function the nightly run calls (server/nightlySync.ts), matching included: the
+  // queue is shortest the moment after a sync, which is exactly when somebody is looking at it.
+  res.json({ result: await syncMorning({ days }) });
 }));
 
 /** Pulls expenses only — what the הוצאות page's own sync button asks for. */
 router.post('/integrations/morning/expenses-sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullExpensesFromMorning({ days });
+  const result = await tracked('morning', () => pullExpensesFromMorning({ days }));
   res.json({ result: { ...result, matched: runMatch().linked } });
 }));
 
@@ -2244,7 +2242,13 @@ router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (re
 router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req, res) => {
   const monthsBack = req.body?.months_back != null ? parseInt(req.body.months_back, 10) : undefined;
   const monthsAhead = req.body?.months_ahead != null ? parseInt(req.body.months_ahead, 10) : undefined;
-  res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
+  res.json({ result: await syncCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
+}));
+
+/** The nightly sync's switch (Settings → חיבורים). On unless switched off. */
+router.put('/integrations/nightly', requireOwner, handle((req, res) => {
+  setNightlyEnabled(req.body?.enabled !== false);
+  res.json({ enabled: isNightlyEnabled(), last_run: lastNightlyRun() });
 }));
 
 /** The calendars this account can read, for the rule's calendar picker. */
@@ -2261,11 +2265,9 @@ router.get('/integrations/calendar/calendars', requireOwner, handleAsync(async (
  */
 router.post('/integrations/meta/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullCampaignsFromMeta({ days });
-  // The pixel's counts ride along, so the advisor's next run knows which clubs' sites carry it. A
-  // failure there is not the sync's: the spend has landed, and the panel shows the pixel's error.
-  await refreshPixelSnapshot().catch(() => null);
-  res.json({ result: { ...result, applied: applyCampaignSpend() } });
+  // The same function the nightly run calls. The pixel's counts ride along, so the advisor's
+  // next run knows which clubs' sites carry it.
+  res.json({ result: await syncMeta({ days }) });
 }));
 
 /**
@@ -2624,7 +2626,7 @@ router.post('/band/campaign-tasks/:id/remind', requireOwner, handleAsync(async (
  * — without spending a real analysis to find out which of those is broken.
  */
 router.post('/integrations/agent/ping', requireOwner, handleAsync(async (_req, res) => {
-  res.json({ result: await agentPing() });
+  res.json({ result: await tracked('agent', () => agentPing()) });
 }));
 
 // ---- calendar rules: which events to draw, for band and for personal ----
@@ -2702,6 +2704,7 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
     integrations: {
       morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus(), agent: agentStatus(),
+      nightly: { enabled: isNightlyEnabled(), last_run: lastNightlyRun() },
     },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),

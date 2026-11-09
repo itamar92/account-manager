@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
 import { Bot, Building2, CalendarCheck, Key, Percent, Plug, Settings2, Users } from 'lucide-react';
 import { get, post, put, del } from '../api';
-import { Button, Card, Input, Modal, Empty, PageHeader } from '../ui';
+import { Button, Card, Input, Modal, Empty, PageHeader, Switch } from '../ui';
 import { CalendarRules } from './CalendarRules';
 import { AgentSettings } from './AgentSettings';
 import { CreditPointsCalculator } from './CreditPointsCalculator';
@@ -47,7 +47,11 @@ const amount = (value: unknown) => Math.round(Number(value) || 0).toLocaleString
 export function Settings() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
-  const [sec, setSec] = useState<Section>('general');
+  // A notification about a broken connection links to ?section=connections.
+  const [sec, setSec] = useState<Section>(() => {
+    const wanted = new URLSearchParams(window.location.search).get('section');
+    return SECTIONS.some((s) => s.key === wanted) ? (wanted as Section) : 'general';
+  });
   const [newKey, setNewKey] = useState<any>(null);
   const [keyName, setKeyName] = useState('');
   const [userModal, setUserModal] = useState(false);
@@ -346,6 +350,11 @@ export function Settings() {
           </div>
         )}
 
+        <NightlySync
+          nightly={data.integrations.nightly}
+          onChange={(nightly) => setData({ ...data, integrations: { ...data.integrations, nightly } })}
+        />
+
         <div className="grid gap-3 md:grid-cols-2">
           <IntegrationRow
             title="Morning (חשבונית ירוקה)"
@@ -572,6 +581,53 @@ function IntegrationRow({
           {busy ? busyLabel : actionLabel}
         </Button>
       </div>
+    </div>
+  );
+}
+
+const NIGHTLY_LABELS: Record<string, string> = { morning: 'Morning', calendar: 'יומן', meta: 'Meta' };
+
+/**
+ * The nightly run's switch and what it did last time — the line that answers "is this data from
+ * this morning?" without opening anything.
+ */
+function NightlySync({ nightly, onChange }: {
+  nightly: { enabled: boolean; last_run: null | { date: string; finished_at: string; services: Array<{ service: string; ok: boolean; summary: string }> } };
+  onChange: (nightly: any) => void;
+}) {
+  const [error, setError] = useState('');
+  const toggle = (enabled: boolean) => {
+    setError('');
+    onChange({ ...nightly, enabled });
+    put('/integrations/nightly', { enabled }).then(onChange).catch((e) => {
+      setError(e.message);
+      onChange({ ...nightly });
+    });
+  };
+  const run = nightly.last_run;
+  return (
+    <div className="rounded-xl border border-line p-4 mb-4 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-ink">סנכרון לילי אוטומטי</p>
+          <p className="text-xs text-faint">כל לילה ב-03:00 — Morning, יומן Google ו-Meta, בדיוק כמו כפתורי הסנכרון למטה</p>
+        </div>
+        <Switch checked={nightly.enabled} onChange={toggle} label={nightly.enabled ? 'פעיל' : 'כבוי'} />
+      </div>
+      {run && (
+        <div className="text-xs text-muted space-y-0.5">
+          <p className="text-faint">
+            ריצה אחרונה: {new Date(run.finished_at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' })}
+          </p>
+          {run.services.length === 0 && <p>אין חיבורים מוגדרים לסנכרן.</p>}
+          {run.services.map((s) => (
+            <p key={s.service} className={s.ok ? '' : 'text-neg-ink'}>
+              {s.ok ? '✓' : '⚠'} {NIGHTLY_LABELS[s.service] ?? s.service}: {s.summary}
+            </p>
+          ))}
+        </div>
+      )}
+      {error && <p className="text-xs text-neg-ink">{error}</p>}
     </div>
   );
 }

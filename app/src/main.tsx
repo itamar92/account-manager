@@ -19,6 +19,9 @@ import { QuotePreview } from './pages/band/QuotePreview';
 import { QuotePublic } from './pages/QuotePublic';
 import { Settings } from './pages/Settings';
 import { CampaignStudio } from './pages/campaigns/CampaignStudio';
+import { registerServiceWorker } from './push';
+
+registerServiceWorker();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
