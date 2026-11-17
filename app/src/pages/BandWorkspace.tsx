@@ -81,7 +81,10 @@ export function BandWorkspace() {
 
   const saveEvent = async (e: React.FormEvent) => {
     e.preventDefault();
-    const b = eventModal;
+    // Whether the show is private is sent only when it was ticked here: an edit that did not
+    // touch it must not turn the detection's answer into a decision made by hand.
+    const { is_private, private_choice, ...rest } = eventModal;
+    const b = private_choice === undefined ? rest : { ...rest, is_private: private_choice };
     try {
       if (b.id) await put(`/band/events/${b.id}`, b);
       else await post('/band/events', b);
@@ -177,9 +180,17 @@ export function BandWorkspace() {
               onChange={(e) => setEventModal({ ...eventModal, venue: e.target.value })} />
             <Input label="תאריך *" type="date" value={eventModal.date} required
               onChange={(e) => setEventModal({ ...eventModal, date: e.target.value })} />
+            <label className="flex items-center gap-2 text-sm text-ink-2">
+              <input type="checkbox" className="accent-accent"
+                checked={eventModal.private_choice ?? !!eventModal.is_private}
+                onChange={(e) => setEventModal({ ...eventModal, private_choice: e.target.checked })} />
+              הופעה פרטית — בלי כרטיסים, קמפיין ואקו"ם
+            </label>
             <div className="grid grid-cols-2 gap-3">
-              <Input label="כרטיסים" type="number" value={eventModal.tickets}
-                onChange={(e) => setEventModal({ ...eventModal, tickets: parseInt(e.target.value) || 0 })} />
+              {!(eventModal.private_choice ?? !!eventModal.is_private) && (
+                <Input label="כרטיסים" type="number" value={eventModal.tickets}
+                  onChange={(e) => setEventModal({ ...eventModal, tickets: parseInt(e.target.value) || 0 })} />
+              )}
               <Input label='לפני מע"מ' type="number" step="0.01" value={eventModal.amount_pre_vat}
                 onChange={(e) => setIncome('pre', e.target.value)} />
               <Input label={`כולל מע"מ (${vatPercent}%)`} type="number" step="0.01" value={eventModal.amount_with_vat}

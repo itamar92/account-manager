@@ -119,6 +119,9 @@ export interface QuoteShow {
   location: string | null;
   amount_pre_vat: number;
   amount_with_vat: number;
+  /** Set when the show came from the calendar — it already has its event there. */
+  calendar_event_id?: string | null;
+  is_private?: number;
 }
 
 /** A show on the quote's date it could be linked to — see server/quoteShow.ts. */

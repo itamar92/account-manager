@@ -238,7 +238,8 @@ export const MCP_TOOLS: McpTool[] = [
     description:
       'The band\'s live shows: venue, date, tickets sold, fee, computed expenses and profit, ' +
       'payment status, and how the profit divides between the four members. The core table of ' +
-      'the band\'s books.',
+      'the band\'s books. is_private = 1 marks a private booking (wedding, company event): it sells no ' +
+      'tickets and runs no campaign, so leave it out of ticket and ad-spend analysis.',
     inputSchema: rangeSchema(),
     handler: (args) => {
       const r = range(args);

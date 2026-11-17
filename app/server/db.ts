@@ -971,6 +971,15 @@ addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
 // The show's own ticket page on the club's site. Where the advisor's ticket check goes first; filled
 // in by hand, or by the check itself the first time it finds the page.
 addColumnIfMissing('band_events', 'ticket_url', 'TEXT');
+// A private show — a wedding, a company event, anything booked by a client rather than sold to
+// the public. It has no tickets, no campaign and no אקו"ם, so nothing asks for them. Worked out
+// (server/showPrivacy.ts) from a quote behind the show or the word «פרטי» on the calendar, until
+// somebody sets it by hand: `private_locked` is that decision, and the detection leaves it alone.
+addColumnIfMissing('band_events', 'is_private', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('band_events', 'private_locked', 'INTEGER NOT NULL DEFAULT 0');
+// What the calendar event last said: its title or description mentions «פרטי». Kept so the
+// detection can be re-run between syncs (a quote unlinked, say) without asking Google again.
+addColumnIfMissing('band_events', 'calendar_private', 'INTEGER NOT NULL DEFAULT 0');
 // Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
 // due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
 addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');

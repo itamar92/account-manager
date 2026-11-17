@@ -1,13 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
-import { FileSignature, SlidersHorizontal } from 'lucide-react';
+import { FileSignature, Lock, SlidersHorizontal } from 'lucide-react';
 import { del, get, post, put, nis } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Button, Empty, Input, Modal, MoneyInput, SelectCell, fieldClass } from '../../ui';
 import {
   COST_LINES_HREF, FUND_TRANSFERRED, PAYMENT_STATUSES, RETURN_PARAM, divisionSplitLabel, moneyReceived,
-  roleName, showReturn, useBandMembers, useExpenseCategories, useSupplierRoles,
+  PRIVATE_SKIPPED_LINES, roleName, showReturn, useBandMembers, useExpenseCategories, useSupplierRoles,
 } from './shared';
 import { fetchTransferRates, splitTransfer } from './transfer';
 
@@ -83,6 +83,7 @@ export function ShowDetail() {
     ...members.filter((m) => m.active),
     ...members.filter((m) => !m.active && Number(event.shares?.[m.member_key])),
   ];
+  const isPrivate = !!event.is_private;
   const sold = Number(event.tickets) || 0;
   const capacity = Number(event.capacity) || 0;
   const manual = event.division_mode === 'manual';
@@ -192,6 +193,21 @@ export function ShowDetail() {
             {event.calendar_event_id && (
               <span className="text-xs font-semibold bg-white/15 text-white/85 rounded-full px-2.5 py-1">מהיומן</span>
             )}
+            {isPrivate && (
+              <span className="inline-flex items-center gap-1 text-xs font-semibold bg-[#9B85F5]/25 text-white rounded-full px-2.5 py-1"
+                title={'הופעה פרטית: בלי כרטיסים, קמפיין ואקו"ם'}>
+                <Lock size={12} /> פרטית
+              </span>
+            )}
+            {isOwner && (
+              <button
+                disabled={busy}
+                onClick={() => act(() => put(`/band/events/${event.id}`, { is_private: !isPrivate }))}
+                className="text-[12.5px] text-white/60 hover:text-white underline-offset-2 hover:underline"
+              >
+                {isPrivate ? 'זו לא הופעה פרטית' : 'סימון כהופעה פרטית'}
+              </button>
+            )}
           </div>
           <div className="num text-sm text-white/60 mt-1.5">
             {event.date}{event.location ? ` · ${event.location}` : ''}
@@ -213,6 +229,8 @@ export function ShowDetail() {
         </div>
 
         <div className="flex flex-wrap gap-x-7 gap-y-4 text-start">
+          {/* A private show sells no tickets: the client pays the fee, and that is the income. */}
+          {!isPrivate && (
           <HeroField label="כרטיסים">
             <div className="flex items-center gap-2">
               {isOwner && (
@@ -236,6 +254,7 @@ export function ShowDetail() {
               {capacity ? `מתוך ${capacity.toLocaleString('he-IL')} · ${Math.round((sold / capacity) * 100)}% תפוסה` : 'לא הוגדרה קיבולת'}
             </div>
           </HeroField>
+          )}
 
           <HeroField label='הכנסה · לפני מע"מ'>
             <HeroNumber value={income} disabled={!isOwner} onSave={(v) => saveEvent({ amount_pre_vat: v })} />
@@ -307,7 +326,10 @@ export function ShowDetail() {
           </div>
 
           <div className="flex flex-col divide-y divide-soft text-sm">
-            {categories.filter((line) => line.active || Number(expenses[line.key])).map((line) => {
+            {categories
+              // A private show does without אקו"ם, wristbands and a campaign — unless money is on them.
+              .filter((line) => Number(expenses[line.key]) || (line.active && !(isPrivate && PRIVATE_SKIPPED_LINES.includes(line.key))))
+              .map((line) => {
               const amount = Number(expenses[line.key]) || 0;
               const paid = !!expenses[`${line.key}_paid`];
               // A line is staffed if the band hires for it. The role also names the line, so
@@ -503,7 +525,10 @@ export function ShowDetail() {
             </button>
           )}
           <button
-            onClick={() => { setForm({ ...event }); setEditOpen(true); }}
+            onClick={() => {
+              setForm({ ...event, privacy: !event.private_locked ? 'auto' : event.is_private ? 'yes' : 'no' });
+              setEditOpen(true);
+            }}
             className="bg-surface border border-line-strong text-ink-2 rounded-xl px-5 py-3.5 text-[15px] font-semibold hover:bg-soft"
           >
             פרטי ההופעה
@@ -554,6 +579,7 @@ export function ShowDetail() {
                 venue: form.venue, date: form.date, location: form.location,
                 capacity: form.capacity, payment_status: form.payment_status,
                 paid_to_musicians: form.paid_to_musicians ? 1 : 0,
+                is_private: form.privacy === 'auto' ? 'auto' : form.privacy === 'yes',
               });
               setEditOpen(false);
             }}
@@ -564,8 +590,28 @@ export function ShowDetail() {
               onChange={(e) => setForm({ ...form, date: e.target.value })} />
             <Input label="כתובת" value={form.location || ''}
               onChange={(e) => setForm({ ...form, location: e.target.value })} />
-            <Input label="קיבולת האולם" type="number" min="0" dir="ltr" value={form.capacity ?? 0}
-              onChange={(e) => setForm({ ...form, capacity: parseInt(e.target.value) || 0 })} />
+            <label className="block">
+              <span className="block text-[13px] text-muted mb-1.5">סוג ההופעה</span>
+              <select
+                value={form.privacy}
+                onChange={(e) => setForm({ ...form, privacy: e.target.value })}
+                className={fieldClass}
+              >
+                <option value="auto">
+                  זיהוי אוטומטי — כרגע {event.private_detected ? 'פרטית' : 'ציבורית'}
+                </option>
+                <option value="yes">פרטית</option>
+                <option value="no">ציבורית (עם כרטיסים)</option>
+              </select>
+              <span className="block text-[12px] text-faint mt-1">
+                הופעה פרטית לא דורשת כרטיסים, קמפיין או אקו"ם. בזיהוי האוטומטי, הופעה שמאחוריה הצעת מחיר,
+                או שביומן כתוב בשם או בתיאור שלה «פרטי», נחשבת פרטית.
+              </span>
+            </label>
+            {form.privacy !== 'yes' && (form.privacy !== 'auto' || !event.private_detected) && (
+              <Input label="קיבולת האולם" type="number" min="0" dir="ltr" value={form.capacity ?? 0}
+                onChange={(e) => setForm({ ...form, capacity: parseInt(e.target.value) || 0 })} />
+            )}
             <label className="block">
               <span className="block text-[13px] text-muted mb-1.5">סטטוס תשלום</span>
               <select

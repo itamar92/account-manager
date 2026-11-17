@@ -8,6 +8,7 @@ import {
   createSession, currentSessionToken, destroySession, login, requireAuth, requireOwner,
   requireApiKey, loginRateLimit, clearLoginAttempts,
 } from './auth.js';
+import { detectedPrivate, refreshPrivate, setPrivate } from './showPrivacy.js';
 import { createInvoice, deleteInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
@@ -1279,7 +1280,11 @@ router.get('/band/division', requireAuth, handle((req, res) => {
 router.get('/band/events', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   const events = db
-    .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
+    .prepare(
+      `SELECT band_events.*,
+         EXISTS (SELECT 1 FROM meta_campaign_events m WHERE m.event_id = band_events.id) AS has_campaign
+       FROM band_events${where.sql} ORDER BY date`
+    )
     .all(...where.params) as any[];
   // Which roles are unstaffed travels with the show, because that is what the list is scanned
   // for — a gig three weeks out with nobody on sound is the row you are looking for.
@@ -1345,7 +1350,7 @@ router.get('/band/events/:id', requireAuth, handle((req, res) => {
   ).all(event.id);
 
   res.json({
-    event: { ...withShares(event), label: eventLabel(event.venue, event.date) },
+    event: { ...withShares(event), label: eventLabel(event.venue, event.date), private_detected: detectedPrivate(event) },
     quotes,
     expenses: expense,
     outstanding: expenseOutstanding(expense),
@@ -1422,6 +1427,8 @@ router.post('/band/events', requireOwner, handle((req, res) => {
     normalizePaymentStatus(b.payment_status) || 'waiting_report'
   );
   ensureExpenseRow(getEvent(id));
+  if (b.is_private !== undefined && b.is_private !== null) setPrivate(id, !!b.is_private);
+  else refreshPrivate(id);
   res.json({ event: recomputeEvent(id) });
 }));
 
@@ -1475,6 +1482,12 @@ router.put('/band/events/:id', requireOwner, handle((req, res) => {
     }
     setEventShares(req.params.id, { ...eventShares(req.params.id), ...patchedShares });
   }
+
+  // Private or not: true / false is the owner's decision, 'auto' (or null) hands it back to the
+  // detection. A rename can change what the detection reads, so it runs again either way.
+  if (body.is_private === 'auto' || body.is_private === null) setPrivate(req.params.id, null);
+  else if (body.is_private !== undefined) setPrivate(req.params.id, !!body.is_private);
+  else refreshPrivate(req.params.id);
 
   const updated = getEvent(req.params.id);
   ensureExpenseRow(updated);

@@ -146,7 +146,7 @@ export function venuePixels(snapshot = pixelSnapshot()): VenuePixel[] {
   const shows = db
     .prepare(
       `SELECT id, venue, date, ticket_url FROM band_events
-       WHERE date >= ? OR venue IN (SELECT venue FROM venue_pixel WHERE status != 'none')
+       WHERE (date >= ? AND COALESCE(is_private, 0) = 0) OR venue IN (SELECT venue FROM venue_pixel WHERE status != 'none')
        ORDER BY date`
     )
     .all(addDays(israelDate(), -1)) as Array<{ id: string; venue: string; date: string; ticket_url: string | null }>;

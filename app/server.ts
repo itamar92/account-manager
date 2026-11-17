@@ -8,6 +8,7 @@ import { mcpHttpHandler } from './server/mcpServer.js';
 import { runSeed } from './server/seed.js';
 import { getSetting } from './server/db.js';
 import { backfillBand } from './server/band.js';
+import { refreshAllPrivate } from './server/showPrivacy.js';
 import {
   backfillMemberPayments, backfillSupplierPayments, pruneOrphanPayments,
 } from './server/supplierPayments.js';
@@ -26,6 +27,9 @@ runSeed();
 // Links every show to its expense row and refreshes the derived columns. Idempotent, so it
 // also picks up shows a previous version's calendar sync created without one.
 backfillBand();
+// Which shows are private follows from the quotes and the calendar; worked out once on boot so a
+// database from before the flag existed starts out right.
+refreshAllPrivate();
 // Gives every cost line already marked שולם the payment row it never had. Runs after the
 // backfill above, which is what guarantees each show has an expense row to read the fees from.
 backfillSupplierPayments();

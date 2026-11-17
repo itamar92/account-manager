@@ -64,7 +64,13 @@ export function CampaignStudio() {
   useEffect(() => { document.documentElement.dataset.ws = 'moon'; }, []);
   useEffect(() => { setMoreOpen(false); window.scrollTo({ top: 0 }); }, [section]);
 
-  const loadEvents = () => { get('/band/events').then((d) => setEvents(d.events)).catch((e) => setError(e.message)); };
+  // A private show runs no campaign, so it is left out of every show picker here — unless a
+  // campaign was already tied to it, which must stay visible to be untied.
+  const loadEvents = () => {
+    get('/band/events')
+      .then((d) => setEvents(d.events.filter((e: any) => !e.is_private || e.has_campaign)))
+      .catch((e) => setError(e.message));
+  };
   useEffect(() => { if (user) loadEvents(); }, [user?.id]);
   const changed = () => setReloadKey((k) => k + 1);
 

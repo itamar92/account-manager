@@ -8,7 +8,8 @@ import {
 } from './band.js';
 import { setEventAttendees } from './assignments.js';
 import { linkQuotesByCalendar } from './quoteShow.js';
-import { claimQuoteEvents } from './quoteEventMark.js';
+import { claimQuoteEvents, markedQuoteId } from './quoteEventMark.js';
+import { looksPrivate, refreshPrivate } from './showPrivacy.js';
 
 /** Who a synced show's money is received by, by default: the person whose books these are. */
 function ownerName(): string | null {
@@ -138,11 +139,14 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   const guests = (event.attendees ?? [])
     .filter((a) => a.email && a.responseStatus !== 'declined')
     .map((a) => a.email!);
+  // «פרטי» on the event, or the mark of the quote it was saved from: a private booking.
+  const calendarPrivate = looksPrivate(event.summary, event.description) || !!markedQuoteId(event) ? 1 : 0;
   const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
 
   if (existing) {
-    db.prepare('UPDATE band_events SET venue = ?, date = ?, location = ? WHERE id = ?')
-      .run(existing.venue_locked ? existing.venue : title, date, location, existing.id);
+    db.prepare('UPDATE band_events SET venue = ?, date = ?, location = ?, calendar_private = ? WHERE id = ?')
+      .run(existing.venue_locked ? existing.venue : title, date, location, calendarPrivate, existing.id);
+    refreshPrivate(existing.id);
     const updated = getEvent(existing.id);
     ensureExpenseRow(updated);
     syncExpenseLabel(updated);
@@ -157,8 +161,10 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
     // Adopted by date rather than by name: the name on the row was typed by someone, so it
     // stays and is locked, exactly as a rename after the fact would be.
     const keepName = !!orphan.venue_locked || normalizeName(orphan.venue) !== normalizeName(title);
-    db.prepare('UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ? WHERE id = ?')
-      .run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, orphan.id);
+    db.prepare(
+      'UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ?, calendar_private = ? WHERE id = ?'
+    ).run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, calendarPrivate, orphan.id);
+    refreshPrivate(orphan.id);
     const linked = getEvent(orphan.id);
     ensureExpenseRow(linked);
     syncExpenseLabel(linked);
@@ -169,9 +175,10 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
 
   const id = uuid();
   db.prepare(
-    `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, title, date, event.id, location, ownerName());
+    `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver, calendar_private)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, title, date, event.id, location, ownerName(), calendarPrivate);
+  refreshPrivate(id);
   ensureExpenseRow(getEvent(id));
   setEventAttendees(id, guests);
   tally.created++;

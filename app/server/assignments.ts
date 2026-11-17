@@ -1,4 +1,5 @@
 import { db, uuid } from './db.js';
+import { skippedOnPrivate } from './showPrivacy.js';
 import { ensureExpenseRow, expenseRowForEvent, recomputeEvent } from './band.js';
 import { aliasTextBySupplier } from './supplierNames.js';
 import { isAssignmentRole, requiredRoleKeys, roleKeys, type AssignmentRole } from './supplierRoles.js';
@@ -246,8 +247,12 @@ export function supplierDebts(): Map<string, SupplierDebt> {
   return debts;
 }
 
-/** The required roles nobody has decided about yet — the "you forgot someone" signal. */
+/**
+ * The required roles nobody has decided about yet — the "you forgot someone" signal. A private
+ * show is not asked for the roles it does without (אקו"ם, wristbands, campaign).
+ */
 export function missingRoles(eventId: string): AssignmentRole[] {
   const covered = new Set(assignmentsForEvent(eventId).map((a) => a.role));
-  return REQUIRED_ROLES().filter((role) => !covered.has(role));
+  const show = db.prepare('SELECT is_private FROM band_events WHERE id = ?').get(eventId) as { is_private: number } | undefined;
+  return REQUIRED_ROLES().filter((role) => !covered.has(role) && !(show?.is_private && skippedOnPrivate(role)));
 }
