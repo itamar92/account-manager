@@ -126,7 +126,7 @@ export function CampaignTasksPanel({ events, isOwner, onError, reloadKey, eventI
       {mail && !mail.configured && (
         <div className="rounded-xl bg-warn-soft px-3 py-2.5 text-sm text-warn-ink leading-relaxed">
           תזכורות במייל כבויות: השרת עוד לא מחובר לתיבת מייל. המשימות נשמרות, אבל אף אחד לא יקבל עליהן מייל.
-          {isOwner && <span className="block text-xs mt-0.5 opacity-90">להפעלה: להגדיר בשרת SMTP_USER ו-SMTP_PASS (סיסמת אפליקציה של Gmail).</span>}
+          {isOwner && <span className="block text-xs mt-0.5 opacity-90">להפעלה: הגדרות → חיבורים → «מפתחות שירותים» → מייל (כתובת Gmail וסיסמת אפליקציה).</span>}
         </div>
       )}
       {mail?.configured && !doneLinks && isOwner && (

@@ -94,12 +94,17 @@ Every variable is documented in that file; the short version:
 
 | Integration | Variables | What it enables |
 |-------------|-----------|-----------------|
-| Morning / Green Invoice | `GREEN_INVOICE_ID`, `GREEN_INVOICE_SECRET` | pulling invoices and expenses, issuing documents |
-| Google Calendar | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` | drawing shows and works from calendars, holding quote dates |
-| Meta Ads | `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID` | campaign spend per show (read-only `ads_read`) |
-| Email | `SMTP_USER`, `SMTP_PASS` | campaign-task reminder emails to members |
+| Morning / Green Invoice | `GREEN_INVOICE_ID`, `GREEN_INVOICE_SECRET` or **Settings → חיבורים** | pulling invoices and expenses, issuing documents |
+| Google Calendar | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN` or **Settings → חיבורים** | drawing shows and works from calendars, holding quote dates |
+| Meta Ads | `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID` or **Settings → חיבורים** | campaign spend per show (read-only `ads_read`) |
+| Email | `SMTP_USER`, `SMTP_PASS` or **Settings → חיבורים** | campaign-task reminder emails to members |
 | AI advisor | `AGENT_SSH_*` or **Settings → סוכן AI** | the campaign advisor, reached over SSH |
 | Links | `PUBLIC_BASE_URL` | the base of quote links and email links |
+
+The service keys can be entered and replaced in **Settings → חיבורים → «מפתחות שירותים»** instead —
+the way to swap a revoked key without a shell or a restart. Each save is tested against the service at
+once. Keys saved there are encrypted (with `APP_SECRET_KEY`, or `secret.key` beside the database —
+back it up with the database) and take precedence over `.env`; a key removed there falls back to `.env`.
 
 The detailed behaviour of every screen and integration is in
 [`app/README.md`](app/README.md); the quotes feature has its own design note in

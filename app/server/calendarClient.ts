@@ -2,13 +2,16 @@
  * Google Calendar client.
  *
  * Uses an OAuth2 refresh token so the server can reach the calendar unattended:
- * `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`.
+ * `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REFRESH_TOKEN`, saved in Settings → חיבורים or
+ * taken from the environment (credentials.ts).
  *
  * It only reads: the sync draws shows and works out of what is already there, so the token needs
  * no more than `calendar.readonly`. Even a price quote's «אופציה» event is not written from here:
  * the app hands over a filled-in Google Calendar link (eventTemplateUrl), the event is saved in
  * Google, and the sync finds it by the quote's mark in its description (server/quoteCalendar.ts).
  */
+
+import { credential } from './credentials.js';
 
 // Overridable so the sync can be pointed at a stub during testing, the same way
 // GREEN_INVOICE_BASE_URL points the Morning client at the sandbox.
@@ -48,7 +51,7 @@ export class CalendarError extends Error {
 
 export function isCalendarConfigured(): boolean {
   return Boolean(
-    process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REFRESH_TOKEN
+    credential('GOOGLE_CLIENT_ID') && credential('GOOGLE_CLIENT_SECRET') && credential('GOOGLE_REFRESH_TOKEN')
   );
 }
 
@@ -58,7 +61,7 @@ async function getAccessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) return cachedToken.token;
   if (!isCalendarConfigured())
     throw new CalendarError(
-      'Google Calendar לא מוגדר — חסרים GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN',
+      'Google Calendar לא מוגדר — הזינו את פרטי ה-OAuth בהגדרות → חיבורים',
       503
     );
 
@@ -66,9 +69,9 @@ async function getAccessToken(): Promise<string> {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      refresh_token: process.env.GOOGLE_REFRESH_TOKEN!,
+      client_id: credential('GOOGLE_CLIENT_ID'),
+      client_secret: credential('GOOGLE_CLIENT_SECRET'),
+      refresh_token: credential('GOOGLE_REFRESH_TOKEN'),
       grant_type: 'refresh_token',
     }),
   });

@@ -76,6 +76,7 @@ import {
 import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
+import { CredentialError, credentialsView, saveCredentials, testCredentials } from './serviceCredentials.js';
 import {
   analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearAnalysis, clearChat, clearShowAdvice,
   dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, showSummaries, trackJob,
@@ -2786,6 +2787,37 @@ router.post('/settings/agent', requireOwner, handle((req, res) => {
     res.json({ agent: saveAgentConfig(req.body || {}), status: agentStatus() });
   } catch (err) {
     if (err instanceof AgentConfigError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+}));
+
+/**
+ * The keys of the services the app syncs with (Morning, Meta, Google Calendar, mail), as the
+ * settings form sees them: IDs in full, secrets only as "saved, ending in …". serviceCredentials.ts.
+ */
+router.get('/settings/credentials', requireOwner, handle((_req, res) => {
+  res.json({ services: credentialsView() });
+}));
+
+/**
+ * Saves one service's keys and tests them on the spot. Only typed fields are written (an empty box
+ * means "unchanged"); `clear` forgets a saved key so `.env` applies again.
+ */
+router.post('/settings/credentials/:service', requireOwner, handleAsync(async (req, res) => {
+  try {
+    res.json(await saveCredentials(req.params.service, req.body || {}));
+  } catch (err) {
+    if (err instanceof CredentialError) { res.status(err.status).json({ error: err.message }); return; }
+    throw err;
+  }
+}));
+
+/** Tests the keys now in effect without changing anything. */
+router.post('/settings/credentials/:service/test', requireOwner, handleAsync(async (req, res) => {
+  try {
+    res.json({ test: await testCredentials(req.params.service) });
+  } catch (err) {
+    if (err instanceof CredentialError) { res.status(err.status).json({ error: err.message }); return; }
     throw err;
   }
 }));

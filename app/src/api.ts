@@ -1,11 +1,36 @@
+/**
+ * The words for a failure the app itself never answered.
+ *
+ * The server always explains its own errors in a JSON `error`. A response without one came
+ * from something in front of the app — the Cloudflare tunnel's HTML error page, most often —
+ * and a bare "שגיאה (502)" made a server that was down or restarting look like Morning (or
+ * Meta, or Google) refusing the request. These say where the failure actually was.
+ */
+export function gatewayErrorMessage(status: number): string {
+  // Cloudflare's 524 (and a plain 504): the app was reached but did not answer in time. The
+  // work may well have finished on the server after the browser stopped waiting.
+  if (status === 504 || status === 524)
+    return `השרת לא סיים לענות בזמן (שגיאה ${status}). ייתכן שהפעולה הסתיימה ברקע — רעננו בעוד דקה ובדקו אם הנתונים התעדכנו.`;
+  // 502/503 and Cloudflare's 520–523/530: the tunnel could not get any answer from the app.
+  if (status === 502 || status === 503 || (status >= 520 && status <= 523) || status === 530)
+    return `השרת לא זמין כרגע (שגיאה ${status}) — האפליקציה לא ענתה, כנראה הופעלה מחדש או קרסה. נסו שוב בעוד דקה; אם זה חוזר, בדקו את הלוג של השרת.`;
+  return `שגיאה (${status})`;
+}
+
 export async function api<T = any>(path: string, options: RequestInit = {}): Promise<T> {
-  const res = await fetch(`/api${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'same-origin',
-    ...options,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      ...options,
+    });
+  } catch {
+    // fetch only throws when no response arrived at all: offline, DNS, a dropped connection.
+    throw new Error('אין חיבור לשרת — בדקו את החיבור לאינטרנט ונסו שוב.');
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || `שגיאה (${res.status})`);
+  if (!res.ok) throw new Error(data?.error || gatewayErrorMessage(res.status));
   return data as T;
 }
 

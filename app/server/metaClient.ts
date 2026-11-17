@@ -1,7 +1,8 @@
 /**
  * Meta (Facebook/Instagram) Marketing API read client — what the band's ad spend is pulled from.
  *
- * Credentials come from the environment: `META_ACCESS_TOKEN` and `META_AD_ACCOUNT_ID`. The token
+ * Credentials are `META_ACCESS_TOKEN` and `META_AD_ACCOUNT_ID`, saved in Settings → חיבורים or taken
+ * from the environment (credentials.ts). The token
  * is meant to be a **System User** token generated in Business Settings with the `ads_read`
  * scope, not a personal login token: a system user belongs to the business rather than to a
  * person, so its token does not expire every 60 days and does not stop working when someone
@@ -12,6 +13,8 @@
  * use the same token, which then needs `ads_management` beside `ads_read`; a token without it
  * still syncs, and a confirmed action is refused by Meta with a message that says so.
  */
+
+import { credential } from './credentials.js';
 
 // Overridable so the sync can be pointed at a stub, the same way GREEN_INVOICE_BASE_URL points
 // the Morning client at the sandbox.
@@ -27,7 +30,7 @@ export class MetaError extends Error {
 }
 
 export function isMetaConfigured(): boolean {
-  return Boolean(process.env.META_ACCESS_TOKEN && process.env.META_AD_ACCOUNT_ID);
+  return Boolean(credential('META_ACCESS_TOKEN') && credential('META_AD_ACCOUNT_ID'));
 }
 
 /**
@@ -37,14 +40,14 @@ export function isMetaConfigured(): boolean {
  * accepted and normalised here rather than in every caller.
  */
 export function adAccountId(): string {
-  const raw = (process.env.META_AD_ACCOUNT_ID || '').trim();
-  if (!raw) throw new MetaError('Meta לא מוגדר — חסר META_AD_ACCOUNT_ID', 503);
+  const raw = credential('META_AD_ACCOUNT_ID');
+  if (!raw) throw new MetaError('Meta לא מוגדר — חסר מזהה חשבון הפרסום (הגדרות → חיבורים)', 503);
   return raw.startsWith('act_') ? raw : `act_${raw.replace(/^act/, '')}`;
 }
 
 function accessToken(): string {
-  const token = (process.env.META_ACCESS_TOKEN || '').trim();
-  if (!token) throw new MetaError('Meta לא מוגדר — חסר META_ACCESS_TOKEN', 503);
+  const token = credential('META_ACCESS_TOKEN');
+  if (!token) throw new MetaError('Meta לא מוגדר — חסר טוקן גישה (הגדרות → חיבורים)', 503);
   return token;
 }
 

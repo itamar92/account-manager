@@ -31,6 +31,10 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 
 ### Environment (optional, `.env`)
 
+The Morning, Google Calendar, Meta and SMTP credentials below can also be entered in
+**Settings → חיבורים → «מפתחות שירותים»** (`server/credentials.ts`): saved there they are encrypted,
+win over the variables here, and are tested against the service on save.
+
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `PORT` | 3000 | server port |
