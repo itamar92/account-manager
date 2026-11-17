@@ -29,3 +29,6 @@ graphify-out/
 
 # Impeccable design-skill archive (critique snapshots, live-mode state) — local only
 .impeccable/
+
+# Settings → שרת: the key deploy/setup-ops.sh generates on the VM
+deploy/ops-key/

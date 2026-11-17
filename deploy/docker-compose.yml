@@ -11,6 +11,9 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile
+      args:
+        # Shown in Settings → שרת, so a redeploy can be seen to have landed. am-ops sets it.
+        GIT_SHA: ${GIT_SHA:-}
     image: account-manager:latest
     restart: unless-stopped
     env_file: .env
@@ -20,6 +23,10 @@ services:
       DATA_DIR: /data
     volumes:
       - am-data:/data
+      # Settings → שרת (restart / redeploy from the UI). deploy/setup-ops.sh fills this folder
+      # with a key that opens one fixed command on the VM; empty or missing, the section says
+      # how to set it up and nothing else changes.
+      - ./ops-key:/run/am-ops:ro
     # The AI agent for יועץ קמפיינים runs on the VM itself, and the app reaches it over SSH.
     # On Linux there is no host.docker.internal unless you ask for one — without this the
     # container has no name for the machine it is running on. Harmless when the agent is
