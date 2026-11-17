@@ -5,6 +5,7 @@ import { get, post, put, del } from '../api';
 import { Button, Card, Input, Modal, Empty, PageHeader, Switch } from '../ui';
 import { CalendarRules } from './CalendarRules';
 import { AgentSettings } from './AgentSettings';
+import { ServiceCredentials } from './ServiceCredentials';
 import { CreditPointsCalculator } from './CreditPointsCalculator';
 import { refreshIntegrations, syncSummary, type SyncService } from '../sync';
 
@@ -30,7 +31,7 @@ const SECTION_TITLES: Record<Section, string> = {
 const SECTION_SUBS: Record<Section, string> = {
   general: 'שמות, מע"מ, דמי הפקה וטווח הסנכרון מ-Morning',
   business: 'פרטי העוסק כפי שהם מופיעים על מסמכים',
-  connections: 'מקורות הנתונים והסוכן — הרצה ידנית ובדיקת חיבור',
+  connections: 'מקורות הנתונים, המפתחות שלהם והסוכן — הרצה ידנית ובדיקת חיבור',
   agent: 'חיבור ה-SSH ליועץ הקמפיינים — שרת, משתמש ומפתח',
   calendar: 'כללים שקובעים אילו אירועים נמשכים, ולאן',
   vat: 'תדירות דיווח ומחשבון נקודות הזיכוי',
@@ -340,8 +341,8 @@ export function Settings() {
       {sec === 'connections' && (
       <Card>
         <p className="text-xs text-faint mb-4">
-          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. המפתחות של שלושת המקורות האלה נמצאים בקובץ{' '}
-          <code dir="ltr" className="text-accent">.env</code>; פרטי החיבור של סוכן ה-AI נמצאים בלשונית «סוכן AI».
+          משיכת מסמכים מ-Morning, הופעות מיומן Google וקמפיינים מ-Meta. המפתחות שלהם נמצאים בכרטיס
+          «מפתחות שירותים» למטה; פרטי החיבור של סוכן ה-AI נמצאים בלשונית «סוכן AI».
         </p>
 
         {syncResult && (
@@ -359,7 +360,7 @@ export function Settings() {
           <IntegrationRow
             title="Morning (חשבונית ירוקה)"
             configured={data.integrations.morning.configured}
-            missingHint="חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET"
+            missingHint="חסר מפתח API — ראו «מפתחות שירותים» למטה"
             lastSync={data.integrations.morning.last_sync}
             detail={`${data.integrations.morning.synced_invoices} מסמכים · ${data.integrations.morning.synced_expenses} הוצאות · טווח ${data.integrations.morning.sync_days} ימים`}
             busy={syncing === 'morning'}
@@ -368,7 +369,7 @@ export function Settings() {
           <IntegrationRow
             title="Google Calendar — הופעות"
             configured={data.integrations.calendar.configured}
-            missingHint="חסרים GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN"
+            missingHint="חסרים פרטי OAuth — ראו «מפתחות שירותים» למטה"
             lastSync={data.integrations.calendar.last_sync}
             detail={`${data.integrations.calendar.rules_enabled}/${data.integrations.calendar.rules_total} כללים פעילים · ${data.integrations.calendar.synced_events} הופעות · ${data.integrations.calendar.synced_works} עבודות`}
             busy={syncing === 'calendar'}
@@ -377,7 +378,7 @@ export function Settings() {
           <IntegrationRow
             title="Meta Ads — קמפיינים"
             configured={data.integrations.meta.configured}
-            missingHint="חסרים META_ACCESS_TOKEN / META_AD_ACCOUNT_ID"
+            missingHint="חסרים טוקן ומזהה חשבון — ראו «מפתחות שירותים» למטה"
             lastSync={data.integrations.meta.last_sync}
             detail={
               `${data.integrations.meta.campaigns} קמפיינים · ${data.integrations.meta.mapped_campaigns} משויכים` +
@@ -436,6 +437,18 @@ export function Settings() {
           שקמפיין שויך אליה. השיוך עצמו נעשה ב-הלהקה → פרסום, ידנית: שם של קמפיין נכתב לבני
           אדם, וקמפיין שקידם כמה הופעות לא ניתן לפצל לפי שום כלל אוטומטי.
         </p>
+      </Card>
+      )}
+
+      {sec === 'connections' && (
+      <Card>
+        <h2 className="font-medium mb-1">מפתחות שירותים</h2>
+        <p className="text-xs text-faint mb-4 leading-relaxed">
+          כשמפתח בוטל או הוחלף: צרו חדש בשירות עצמו, הדביקו אותו כאן ולחצו «שמירה ובדיקה» — האפליקציה
+          תבדוק מול השירות מיד, בלי הפעלה מחדש. המפתחות נשמרים מוצפנים, והסודות לא נשלחים חזרה לדפדפן.
+          מה שנשמר כאן גובר על קובץ <code dir="ltr">.env</code>; שדה שלא נשמר בו דבר ממשיך לקחת את הערך מהקובץ.
+        </p>
+        <ServiceCredentials onChanged={load} />
       </Card>
       )}
 

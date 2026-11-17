@@ -11,11 +11,11 @@ export const SYNC_NAMES: Record<SyncService, string> = {
   meta: 'Meta Ads',
 };
 
-/** The .env keys a source is missing when the server reports it unconfigured. */
+/** What a source is missing when the server reports it unconfigured, and where to add it. */
 export const SYNC_MISSING: Record<SyncService, string> = {
-  morning: 'חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET',
-  calendar: 'חסרים GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN',
-  meta: 'חסרים META_ACCESS_TOKEN / META_AD_ACCOUNT_ID',
+  morning: 'חסר מפתח API — הגדרות → חיבורים',
+  calendar: 'חסרים פרטי OAuth — הגדרות → חיבורים',
+  meta: 'חסרים טוקן ומזהה חשבון — הגדרות → חיבורים',
 };
 
 /**

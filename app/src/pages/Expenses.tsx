@@ -111,8 +111,7 @@ export function Expenses() {
 
       {!integration.configured && (
         <div className="text-sm text-muted">
-          Morning לא מוגדר — חסרים <code dir="ltr" className="text-accent">GREEN_INVOICE_ID</code> /{' '}
-          <code dir="ltr" className="text-accent">GREEN_INVOICE_SECRET</code>
+          Morning לא מוגדר — הזינו מפתח API בהגדרות → חיבורים → «מפתחות שירותים»
         </div>
       )}
 

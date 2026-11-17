@@ -1,10 +1,12 @@
 /**
  * Green Invoice (Morning) REST client.
  *
- * Credentials come from the environment — `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET`,
- * the same pair `scripts/build_havila.py` uses. Set `GREEN_INVOICE_BASE_URL` to the
+ * Credentials are `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET`, as saved in Settings → חיבורים or,
+ * failing that, from the environment (see credentials.ts) — the same pair `scripts/build_havila.py` uses. Set `GREEN_INVOICE_BASE_URL` to the
  * sandbox host to try the write path without issuing real documents.
  */
+
+import { credential } from './credentials.js';
 
 const BASE_URL = process.env.GREEN_INVOICE_BASE_URL || 'https://api.greeninvoice.co.il/api/v1';
 
@@ -66,7 +68,7 @@ function morningFailure(method: string, path: string, status: number, body: stri
 }
 
 export function isMorningConfigured(): boolean {
-  return Boolean(process.env.GREEN_INVOICE_ID && process.env.GREEN_INVOICE_SECRET);
+  return Boolean(credential('GREEN_INVOICE_ID') && credential('GREEN_INVOICE_SECRET'));
 }
 
 // Tokens are valid for a while; cache until shortly before expiry to avoid re-auth per call.
@@ -75,12 +77,12 @@ let cachedToken: { token: string; expiresAt: number } | null = null;
 async function getToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) return cachedToken.token;
   if (!isMorningConfigured())
-    throw new MorningError('Morning לא מוגדר — חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET', 503);
+    throw new MorningError('Morning לא מוגדר — הזינו את מפתח ה-API בהגדרות → חיבורים', 503);
 
   const res = await fetch(`${BASE_URL}/account/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: process.env.GREEN_INVOICE_ID, secret: process.env.GREEN_INVOICE_SECRET }),
+    body: JSON.stringify({ id: credential('GREEN_INVOICE_ID'), secret: credential('GREEN_INVOICE_SECRET') }),
   });
   if (!res.ok) throw new MorningError(`Morning auth failed (${res.status}): ${await res.text()}`, 502);
 
