@@ -43,6 +43,7 @@ win over the variables here, and are tested against the service on save.
 | `SEED_OWNER_PASSWORD` | `changeme123` | its initial password (required in production) |
 | `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` | — | Morning API credentials; without them the Morning sync is disabled |
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
+| `GREEN_INVOICE_TOKEN_URL` | `https://api.morning.co/idp/v1/oauth/token` (sandbox: `https://api.sandbox.morning.dev/idp/v1/oauth/token`) | where the key is exchanged for an access token. Morning moved this off the API host in its 2026 update; the old `/account/token` answers 404. Override only if Morning moves it again |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs only `calendar.readonly`: a quote's «אופציה» event is saved in Google from a filled-in link, not written by the app |
 | `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
 | `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token and the ad account; without them the Meta sync is disabled. `ads_read` is enough for the sync; the campaign advisor's actions (pause, daily budget, end date, create a pixel) also need `ads_management` on the same token |
