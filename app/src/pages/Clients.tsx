@@ -49,9 +49,11 @@ export function Clients() {
    * calendar rule feeds, is refused there and the reason is shown as-is.
    */
   const remove = async (client: any) => {
-    const works = client.unpaid_count
-      ? `\n\nיימחקו איתו גם ${client.unpaid_count} עבודות שטרם חויבו (${nis(client.unpaid_total)}).`
-      : '';
+    const parts = [
+      client.unpaid_count ? `${client.unpaid_count} עבודות שטרם חויבו (${nis(client.unpaid_total)})` : '',
+      client.upcoming_count ? `${client.upcoming_count} עבודות עתידיות` : '',
+    ].filter(Boolean);
+    const works = parts.length ? `\n\nיימחקו איתו גם ${parts.join(' ו-')}.` : '';
     if (!confirm(`למחוק את הלקוח «${client.name}»?${works}`)) return;
     setError('');
     try {
