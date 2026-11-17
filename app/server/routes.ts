@@ -76,6 +76,7 @@ import {
 import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
+import { appIdentity, opsConfigured, parseStatus, runOps } from './opsClient.js';
 import { CredentialError, credentialsView, saveCredentials, testCredentials } from './serviceCredentials.js';
 import {
   analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearAnalysis, clearChat, clearShowAdvice,
@@ -2789,6 +2790,33 @@ router.post('/settings/agent', requireOwner, handle((req, res) => {
     if (err instanceof AgentConfigError) return res.status(err.status).json({ error: err.message });
     throw err;
   }
+}));
+
+// ---- Settings → שרת: restart / redeploy the container from the UI (opsClient.ts, deploy/ops.sh) ----
+
+/** This process: its build and start time. No SSH — the page polls it to see a restart land. */
+router.get('/admin/server/identity', requireOwner, handle((_req, res) => {
+  res.json({ ...appIdentity(), configured: opsConfigured() });
+}));
+
+/** What the host says: a job running or not, how the last one ended, the checkout's commit. */
+router.get('/admin/server/status', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ ...appIdentity(), status: parseStatus(await runOps('status')) });
+}));
+
+router.get('/admin/server/logs', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ logs: await runOps('logs') });
+}));
+
+/**
+ * Starts the job and answers at once: ops.sh detaches it and waits a few seconds before touching
+ * the container, so this response gets out before the process that sends it is stopped.
+ */
+router.post('/admin/server/:action(restart|redeploy)', requireOwner, handleAsync(async (req, res) => {
+  const action = req.params.action as 'restart' | 'redeploy';
+  await runOps(action);
+  console.log(`[ops] ${action} requested by ${req.user?.email || 'owner'}`);
+  res.json({ ok: true, action, ...appIdentity() });
 }));
 
 /**

@@ -481,6 +481,31 @@ cd deploy && docker compose up -d --build
 
 The database is in a named volume, untouched by rebuilds.
 
+### From the app: Settings → שרת
+
+A **הפעלה מחדש** (restart) and an **עדכון ופריסה מחדש** (redeploy `master`) button, so neither
+needs an SSH session. One-time setup on the VM:
+
+```bash
+cd /opt/account-manager && git pull
+sudo deploy/setup-ops.sh
+cd deploy && docker compose up -d --build
+```
+
+The container cannot restart itself without the Docker socket, which would be root on the VM. So
+the app does what it does for the AI agent (§4a): it SSHes to the host with a key that opens one
+command. `setup-ops.sh` creates an `amops` account whose only key is forced to
+`sudo -n /usr/local/sbin/am-ops` — a root-owned copy of `deploy/ops.sh` that matches the request
+against `status`, `logs`, `restart` and `redeploy` and never executes it. The key pair is
+generated on the VM, written with the pinned host key to `deploy/ops-key/` (git-ignored), and
+mounted read-only into the container, so there is nothing to paste into the app.
+
+Restart and redeploy run detached on the host (they stop the container that asked for them), one
+at a time; the page follows the job and shows its output. Redeploy does the same steps as the
+workflow below — fetch `master`, `reset --hard`, `up -d --build` — and a failed fetch or build
+leaves the running container in place. Re-run `sudo deploy/setup-ops.sh` to install a changed
+`ops.sh`; `--new-key` rotates the key.
+
 ## Automatic deploys
 
 `.github/workflows/deploy.yml` runs exactly that update over SSH when `master`

@@ -83,7 +83,8 @@ jobs:
           echo "deploying $(git log -1 --oneline)"
 
           cd deploy
-          docker compose up -d --build
+          # Shown in Settings → שרת as the running version.
+          GIT_SHA="$(git rev-parse --short HEAD)" docker compose up -d --build
 
           # The image's own HEALTHCHECK is the readiness signal — the app is not
           # published on a host port, so this is the only way in from the VM.

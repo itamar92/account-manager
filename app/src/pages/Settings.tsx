@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { Bot, Building2, CalendarCheck, Key, Percent, Plug, Settings2, Users } from 'lucide-react';
+import { Bot, Building2, CalendarCheck, Key, Percent, Plug, Server, Settings2, Users } from 'lucide-react';
 import { get, post, put, del } from '../api';
 import { Button, Card, Input, Modal, Empty, PageHeader, Switch } from '../ui';
 import { CalendarRules } from './CalendarRules';
 import { AgentSettings } from './AgentSettings';
+import { ServerSettings } from './ServerSettings';
 import { ServiceCredentials } from './ServiceCredentials';
 import { CreditPointsCalculator } from './CreditPointsCalculator';
 import { refreshIntegrations, syncSummary, type SyncService } from '../sync';
@@ -19,6 +20,7 @@ const SECTIONS = [
   { key: 'vat', label: 'מע"מ ומס', icon: Percent },
   { key: 'users', label: 'משתמשים', icon: Users },
   { key: 'api', label: 'מפתחות API', icon: Key },
+  { key: 'server', label: 'שרת', icon: Server },
 ] as const;
 
 type Section = typeof SECTIONS[number]['key'];
@@ -26,6 +28,7 @@ type Section = typeof SECTIONS[number]['key'];
 const SECTION_TITLES: Record<Section, string> = {
   general: 'כללי', business: 'פרטי העסק', connections: 'חיבורים', agent: 'סוכן AI',
   calendar: 'כללי יומן', vat: 'מע"מ ומס', users: 'משתמשים והרשאות', api: 'מפתחות API',
+  server: 'שרת',
 };
 
 const SECTION_SUBS: Record<Section, string> = {
@@ -37,6 +40,7 @@ const SECTION_SUBS: Record<Section, string> = {
   vat: 'תדירות דיווח ומחשבון נקודות הזיכוי',
   users: 'מי נכנס לאפליקציה ומה הוא רואה',
   api: 'גישה לאפליקציות חיצוניות ולסוכני AI',
+  server: 'הפעלה מחדש ועדכון גרסה, בלי להתחבר לשרת',
 };
 
 /**
@@ -453,6 +457,8 @@ export function Settings() {
       )}
 
       {sec === 'agent' && <AgentSettings onSaved={load} onError={setError} />}
+
+      {sec === 'server' && <ServerSettings onError={setError} />}
 
       {sec === 'calendar' && <CalendarRules onChange={load} onError={setError} />}
 
