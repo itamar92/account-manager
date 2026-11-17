@@ -114,7 +114,7 @@ export function buildContext(range: { from?: string; to?: string } = {}): Advise
       .prepare(
         `SELECT e.id, e.venue, e.date, e.tickets, e.capacity, e.ticket_url, v.url AS venue_site
          FROM band_events e LEFT JOIN venue_websites v ON v.venue = e.venue
-         WHERE e.date >= date('now') ORDER BY e.date LIMIT 20`
+         WHERE e.date >= date('now') AND COALESCE(e.is_private, 0) = 0 ORDER BY e.date LIMIT 20`
       )
       .all() as Array<{ id: string; venue: string; date: string; tickets: number; capacity: number; ticket_url: string | null; venue_site: string | null }>
   ).map((e) => ({ ...e, label: eventLabel(e.venue, e.date), ticket_status: lastTicketStatus(e.id) }));
@@ -534,8 +534,10 @@ export function showSummaries(spendByEvent: Map<string, { spend: number }>): Sho
     .prepare(
       `SELECT e.id, e.venue, e.date, e.capacity, p.status AS pixel_status
        FROM band_events e LEFT JOIN venue_pixel p ON p.venue = e.venue
-       WHERE e.date >= ?
-          OR (e.date >= date(?, ?) AND EXISTS (SELECT 1 FROM ai_campaign_reports r WHERE r.kind = 'draft' AND r.event_id = e.id))
+       WHERE (e.date >= ?
+          OR (e.date >= date(?, ?) AND EXISTS (SELECT 1 FROM ai_campaign_reports r WHERE r.kind = 'draft' AND r.event_id = e.id)))
+         -- A private show has no campaign to follow, unless one was tied to it anyway.
+         AND (COALESCE(e.is_private, 0) = 0 OR EXISTS (SELECT 1 FROM meta_campaign_events m WHERE m.event_id = e.id))
        ORDER BY e.date`
     )
     .all(today, today, `-${SAVED_PLAN_DAYS} days`) as Array<{ id: string; venue: string; date: string; capacity: number | null; pixel_status: string | null }>;

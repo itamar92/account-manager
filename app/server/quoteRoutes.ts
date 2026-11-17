@@ -2,7 +2,7 @@ import express, { Router } from 'express';
 import { requireAuth, requireOwner } from './auth.js';
 import { getVatPercent } from './db.js';
 import { regenerateLink, sendQuote } from './quoteLink.js';
-import { linkQuoteToShow, markSignedSeen, settleShowAmount, showsOnDate } from './quoteShow.js';
+import { linkQuoteToShow, markSignedSeen, settleShowAmount, showsForPicker, showsOnDate } from './quoteShow.js';
 import { calendarDraft, calendarReady, quoteEventLink, refreshQuoteEvent } from './quoteCalendar.js';
 import {
   FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
@@ -105,7 +105,10 @@ quoteRouter.put('/settings', handle((req, res) => {
 
 /** The shows on a date, so the editor can offer «יש הופעה בתאריך הזה — לשייך?». */
 quoteRouter.get('/show-candidates', handle((req, res) => {
-  res.json({ shows: showsOnDate(String(req.query.date ?? ''), String(req.query.quote_id ?? '')) });
+  const date = String(req.query.date ?? '');
+  const quoteId = String(req.query.quote_id ?? '');
+  // ?all=1 is «שיוך להופעה קיימת»: every show it could be, not only those on the quote's date.
+  res.json({ shows: req.query.all ? showsForPicker(quoteId, date) : showsOnDate(date, quoteId) });
 }));
 
 // ---- the logo and the signature ----

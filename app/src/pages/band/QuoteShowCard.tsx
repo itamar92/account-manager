@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, CalendarCheck2, CalendarDays, ExternalLink } from 'lucide-react';
+import { AlertTriangle, CalendarCheck2, CalendarDays, ExternalLink, Link2 } from 'lucide-react';
 import { get, nis, post } from '../../api';
 import { useAuth } from '../../AuthContext';
-import { Button, Card } from '../../ui';
+import { Button, Card, SearchInput, textMatch } from '../../ui';
 import {
   isOptionTitle, quoteDate, type Quote, type QuoteItem, type QuoteShow, type ShowCandidate,
 } from './quotes';
@@ -34,10 +34,16 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
   const isOwner = user?.role === 'owner';
   const [candidates, setCandidates] = useState<ShowCandidate[] | null>(null);
   const [picking, setPicking] = useState(false);
+  /** «שיוך להופעה קיימת»: every show it could be, not only those on the quote's date. */
+  const [browsing, setBrowsing] = useState(false);
+  const [allShows, setAllShows] = useState<ShowCandidate[] | null>(null);
+  const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const signed = quote.status === 'signed';
   const date = quote.event_date;
   const hasEvent = !!quote.calendar_event_id;
+  // A show made from the calendar is already there: the quote needs no event of its own.
+  const showOnCalendar = !hasEvent && !!show?.calendar_event_id;
   const stillOption = signed && hasEvent && isOptionTitle(quote.calendar_event_title);
   const looking = !show || picking;
 
@@ -48,12 +54,22 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
       .catch(() => setCandidates([]));
   }, [looking, date, show?.id, quote.id]);
 
+  useEffect(() => {
+    if (!browsing) return;
+    setAllShows(null);
+    get(`/band/quotes/show-candidates?all=1&date=${date ?? ''}&quote_id=${quote.id}`)
+      .then((d) => setAllShows((d.shows as ShowCandidate[]).filter((s) => s.id !== show?.id)))
+      .catch(() => setAllShows([]));
+  }, [browsing, date, show?.id, quote.id]);
+
   const act = async (path: string, body: unknown) => {
     setBusy(true);
     try {
       if (!(await saveFirst())) return;
       onChange(await post(`/band/quotes/${quote.id}/${path}`, body));
       setPicking(false);
+      setBrowsing(false);
+      setQuery('');
     } catch (err: any) { onError(err.message); }
     finally { setBusy(false); }
   };
@@ -95,6 +111,11 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
             </div>
           )}
         </div>
+      ) : showOnCalendar ? (
+        <p className="flex items-start gap-1.5 text-[13px] text-muted">
+          <CalendarDays size={16} className="shrink-0 mt-0.5" />
+          ההופעה כבר ביומן — אין צורך באירוע נוסף להצעה.
+        </p>
       ) : (
         <div className="space-y-2">
           <p className="text-[13px] text-muted">
@@ -170,21 +191,36 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
             <p className="text-[13px] text-muted">
               {candidates.length === 1 ? 'יש הופעה בתאריך הזה — לשייך?' : `יש ${candidates.length} הופעות בתאריך הזה — לאיזו?`}
             </p>
-            <ul className="divide-y divide-line border-y border-line">
-              {candidates.map((c) => (
-                <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
-                  <div className="min-w-0 text-sm">
-                    <div className="font-medium truncate">{c.venue}</div>
-                    <div className="text-[12px] text-faint">
-                      {c.location && <>{c.location} · </>}
-                      {Number(c.amount_pre_vat) ? <span className="num">{nis(c.amount_pre_vat)}</span> : 'בלי סכום'}
-                      {c.taken_by && <> · של הצעה אחרת (<span className="num">{c.taken_by}</span>)</>}
-                    </div>
-                  </div>
-                  <Button variant="ghost" disabled={busy || !!c.taken_by} onClick={() => link(c.id)}>שיוך</Button>
-                </li>
-              ))}
-            </ul>
+            <CandidateList shows={candidates} busy={busy} onLink={link} />
+          </div>
+        )}
+
+        {/* Any show already in the books — the quote's date may be missing or differ from it. */}
+        {looking && !browsing && (
+          <Button variant="ghost" disabled={busy} onClick={() => setBrowsing(true)}>
+            <span className="flex items-center gap-1.5"><Link2 size={15} /> שיוך להופעה קיימת</span>
+          </Button>
+        )}
+        {browsing && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <SearchInput value={query} onChange={setQuery} placeholder="חיפוש לפי מקום או תאריך…" className="flex-1" />
+              <Button variant="ghost" onClick={() => { setBrowsing(false); setQuery(''); }}>סגירה</Button>
+            </div>
+            {!allShows ? (
+              <p className="text-[13px] text-faint">טוען…</p>
+            ) : (() => {
+              const shown = allShows.filter((c) => !query.trim()
+                || textMatch(query, c.venue, c.location, c.date, quoteDate(c.date)));
+              return shown.length ? (
+                <div className="max-h-80 overflow-y-auto">
+                  <CandidateList shows={shown} busy={busy} onLink={link} withDate quoteDate={date} />
+                </div>
+              ) : <p className="text-[13px] text-faint">לא נמצאו הופעות{query.trim() ? ' שמתאימות לחיפוש' : ''}.</p>;
+            })()}
+            <p className="text-[12px] text-faint">
+              מוצגות ההופעות מחודשיים אחורה והלאה, הקרובות לתאריך ההצעה קודם. הופעה עם הצעת מחיר נחשבת הופעה פרטית.
+            </p>
           </div>
         )}
         {picking && (
@@ -196,5 +232,39 @@ export function QuoteShowCard({ quote, show, calendarReady, saveFirst, onChange,
         )}
       </div>
     </Card>
+  );
+}
+
+/** Shows the quote could be linked to, each with its «שיוך». */
+function CandidateList({ shows, busy, onLink, withDate, quoteDate: forDate }: {
+  shows: ShowCandidate[];
+  busy: boolean;
+  onLink: (id: string) => void;
+  withDate?: boolean;
+  quoteDate?: string | null;
+}) {
+  return (
+    <ul className="divide-y divide-line border-y border-line">
+      {shows.map((c) => (
+        <li key={c.id} className="flex items-center justify-between gap-3 py-2.5">
+          <div className="min-w-0 text-sm">
+            <div className="font-medium truncate">{c.venue}</div>
+            <div className="text-[12px] text-faint">
+              {withDate && (
+                <span className={forDate && c.date !== forDate ? 'num' : 'num text-ink-2 font-medium'}>
+                  {quoteDate(c.date)}
+                </span>
+              )}
+              {withDate && ' · '}
+              {c.location && <>{c.location} · </>}
+              {Number(c.amount_pre_vat) ? <span className="num">{nis(c.amount_pre_vat)}</span> : 'בלי סכום'}
+              {c.calendar_event_id && <> · מהיומן</>}
+              {c.taken_by && <> · של הצעה אחרת (<span className="num">{c.taken_by}</span>)</>}
+            </div>
+          </div>
+          <Button variant="ghost" disabled={busy || !!c.taken_by} onClick={() => onLink(c.id)}>שיוך</Button>
+        </li>
+      ))}
+    </ul>
   );
 }

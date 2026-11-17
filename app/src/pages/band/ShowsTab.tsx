@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { clsx } from 'clsx';
+import { Lock } from 'lucide-react';
 import { del, get, post, nis } from '../../api';
 import { SyncButton } from '../../SyncButton';
 import { Button, Combobox, Empty, FilterBar, PageHeader, Pill, PeriodSelect, SearchInput, textMatch } from '../../ui';
@@ -277,7 +278,13 @@ function ShowCard({ show, onOpen }: { show: any; onOpen: () => void }) {
         </div>
       </div>
 
-      {/* Tickets read as a proportion only when somebody has said how big the room is. */}
+      {/* Tickets read as a proportion only when somebody has said how big the room is. A private
+          show sells none, so it says what it is instead. */}
+      {show.is_private ? (
+        <div className="w-[8.5rem] shrink-0 hidden sm:flex items-center gap-1.5 text-[13px] text-muted">
+          <Lock size={13} className="shrink-0" /> הופעה פרטית
+        </div>
+      ) : (
       <div className="w-[8.5rem] shrink-0 hidden sm:flex flex-col gap-1.5">
         <div className="num text-[13px] text-body">
           {capacity ? `${sold.toLocaleString('he-IL')} / ${capacity.toLocaleString('he-IL')}` : `${sold.toLocaleString('he-IL')} כרטיסים`}
@@ -291,6 +298,7 @@ function ShowCard({ show, onOpen }: { show: any; onOpen: () => void }) {
           </span>
         )}
       </div>
+      )}
 
       <span className={clsx('text-[12.5px] font-semibold rounded-full px-2.5 py-1 whitespace-nowrap shrink-0', pillBg, pillText)}>
         {paymentStatusLabel(show.payment_status)}

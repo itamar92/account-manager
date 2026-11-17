@@ -458,7 +458,8 @@ export function suggestEventsForCampaign(campaignId: string, limit = 3): Mapping
 
   const nameTokens = new Set(tokens(campaign.name));
   const nameDates = datesInName(campaign.name);
-  const events = db.prepare('SELECT id, venue, date FROM band_events ORDER BY date DESC').all() as any[];
+  // A private show runs no campaign, so it is never suggested for one.
+  const events = db.prepare('SELECT id, venue, date FROM band_events WHERE COALESCE(is_private, 0) = 0 ORDER BY date DESC').all() as any[];
 
   const scored = events.map((event) => {
     const venueTokens = tokens(event.venue);
@@ -602,7 +603,7 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
 
   const events = db
     .prepare(
-      `SELECT e.id, e.venue, e.date, e.tickets, e.amount_pre_vat, e.profit, e.paid_to_musicians,
+      `SELECT e.id, e.venue, e.date, e.tickets, e.amount_pre_vat, e.profit, e.paid_to_musicians, e.is_private,
               x.id AS expense_id, x.campaign AS campaign_on_row, x.campaign_locked
        FROM band_events e LEFT JOIN band_event_expenses x ON x.event_id = e.id${where}
        ORDER BY e.date DESC`
@@ -634,7 +635,12 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
     }
   }
 
-  const rows: AdAnalysisRow[] = events.map((event) => {
+  // A private show sells no tickets and runs no campaign: counting its fee would only dilute the
+  // spend-to-revenue figures. It stays in only if money was spent on it anyway.
+  const counted = events.filter((event) =>
+    !event.is_private || (attributed.get(event.id)?.spend ?? 0) > 0 || Number(event.campaign_on_row) > 0);
+
+  const rows: AdAnalysisRow[] = counted.map((event) => {
     const totals = attributed.get(event.id);
     const adSpend = totals?.spend ?? 0;
     const tickets = Number(event.tickets) || 0;

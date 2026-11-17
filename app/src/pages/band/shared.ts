@@ -300,3 +300,9 @@ export function showReturn(raw: string | null): { to: string; label: string } {
   const match = RETURN_LABELS.find(([prefix]) => path === prefix || path.startsWith(`${prefix}/`));
   return { to, label: match ? match[1] : 'הופעות' };
 }
+
+/**
+ * The cost lines and supplier roles a private show does without — mirrors PRIVATE_SKIPPED_LINES
+ * in server/showPrivacy.ts: no אקו"ם, no wristbands at the door, no campaign.
+ */
+export const PRIVATE_SKIPPED_LINES: string[] = ['akom', 'bracelets', 'campaign'];
