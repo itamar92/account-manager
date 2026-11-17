@@ -29,16 +29,20 @@ def get_token():
     gi_id, gi_secret = os.getenv("GREEN_INVOICE_ID"), os.getenv("GREEN_INVOICE_SECRET")
     if not gi_id or not gi_secret:
         print("Missing GREEN_INVOICE_ID/GREEN_INVOICE_SECRET in .env"); sys.exit(1)
+    # Morning's 2026 API update retired /api/v1/account/token (it answers 404); tokens now come
+    # from its identity service, with the same key ID and secret as OAuth client credentials.
     req = urllib.request.Request(
-        "https://api.greeninvoice.co.il/api/v1/account/token",
+        os.getenv("GREEN_INVOICE_TOKEN_URL", "https://api.morning.co/idp/v1/oauth/token"),
         data=json.dumps({
-            "id": gi_id,
-            "secret": gi_secret,
+            "grant_type": "client_credentials",
+            "client_id": gi_id,
+            "client_secret": gi_secret,
         }).encode(),
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
         method="POST",
     )
-    return json.loads(urllib.request.urlopen(req).read())["token"]
+    body = json.loads(urllib.request.urlopen(req).read())
+    return body.get("accessToken") or body.get("access_token") or body["token"]
 
 def search_docs(token, from_date, to_date):
     req = urllib.request.Request(
