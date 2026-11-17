@@ -21,6 +21,26 @@ import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRev
  * weeks, or (for a business that bills on חשבון עסקה) reports nothing owed at all. An invoice
  * raised here has never been to Morning, so there the whole total stands while it is open.
  */
+/** Today's date in Israel, where the work happens — a UTC date turns over three hours late. */
+export function workToday(now = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jerusalem', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(now);
+}
+
+/**
+ * A work that is waiting to be billed, as SQL: unbilled *and* its date has arrived.
+ *
+ * The calendar draws jobs in weeks ahead; a gig next month is not something to charge yet,
+ * and counting it made every "to bill" figure and reminder cry wolf. Until its date it is
+ * «upcoming» — still unbilled in the table, but nothing anybody has to act on.
+ * Binds one parameter: today (see `workToday`).
+ */
+export const chargeableWorkSql = (alias = '') => {
+  const col = alias ? `${alias}.` : '';
+  return `(${col}status = 'unpaid' AND ${col}date <= ?)`;
+};
+
 export const outstandingSql = (alias = '') => {
   const col = alias ? `${alias}.` : '';
   return `(CASE WHEN ${col}status = 'cancelled' THEN 0
@@ -50,8 +70,9 @@ export function listClients() {
   return db
     .prepare(
       `SELECT c.*,
-         (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_total,
-         (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid') AS unpaid_count,
+         (SELECT COALESCE(SUM(total),0) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid' AND w.date <= @today) AS unpaid_total,
+         (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid' AND w.date <= @today) AS unpaid_count,
+         (SELECT COUNT(*) FROM works w WHERE w.client_id = c.id AND w.status = 'unpaid' AND w.date > @today) AS upcoming_count,
          (SELECT COALESCE(SUM(${outstandingSql('i')}),0) FROM invoices i WHERE i.client_id = c.id
             AND i.doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})) AS open_invoices_total,
          (SELECT COALESCE(SUM(subtotal),0) FROM invoices i WHERE i.client_id = c.id
@@ -60,18 +81,25 @@ export function listClients() {
          (SELECT MAX(date) FROM works w WHERE w.client_id = c.id) AS last_work_date
        FROM clients c ORDER BY c.name`
     )
-    .all({ from: `${year}-01-01`, to: `${year}-12-31` });
+    .all({ from: `${year}-01-01`, to: `${year}-12-31`, today: workToday() });
 }
 
 /** Works, newest first, narrowed by any combination of status, client and date range. */
 export function listWorks(
   filters: ListRange & { status?: string; client_id?: string } = {}
 ) {
-  let sql = `SELECT w.*, c.name AS client_name, i.number AS invoice_number
+  const today = workToday();
+  // `upcoming` is derived, never stored: an unbilled job whose date is still ahead. It turns
+  // into a plain «לא חויב» on its own the day it happens.
+  let sql = `SELECT w.*, c.name AS client_name, i.number AS invoice_number,
+               CASE WHEN w.status = 'unpaid' AND w.date > ? THEN 1 ELSE 0 END AS upcoming
              FROM works w JOIN clients c ON c.id = w.client_id
              LEFT JOIN invoices i ON i.id = w.invoice_id WHERE 1=1`;
-  const params: any[] = [];
-  if (filters.status) { sql += ' AND w.status = ?'; params.push(filters.status); }
+  const params: any[] = [today];
+  // «לא חויב» means "needs billing now", so it leaves out what has not happened yet.
+  if (filters.status === 'unpaid') { sql += ` AND ${chargeableWorkSql('w')}`; params.push(today); }
+  else if (filters.status === 'upcoming') { sql += " AND w.status = 'unpaid' AND w.date > ?"; params.push(today); }
+  else if (filters.status) { sql += ' AND w.status = ?'; params.push(filters.status); }
   if (filters.client_id) { sql += ' AND w.client_id = ?'; params.push(filters.client_id); }
   if (filters.from) { sql += ' AND w.date >= ?'; params.push(filters.from); }
   if (filters.to) { sql += ' AND w.date <= ?'; params.push(filters.to); }

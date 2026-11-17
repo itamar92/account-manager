@@ -934,6 +934,9 @@ addColumnIfMissing('band_events', 'attendees', 'TEXT');
 // because that is a decision about the show; 20 (the default) nets the band's 30/30/20/20.
 addColumnIfMissing('band_events', 'commission_percent', 'REAL NOT NULL DEFAULT 20');
 addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
+// 1 when the owner set the status by hand — a job billed outside the app (an invoice made in
+// Morning directly, or before the app existed) that no invoice here is linked to.
+addColumnIfMissing('works', 'status_manual', 'INTEGER NOT NULL DEFAULT 0');
 // What Morning says a document still has outstanding (its `amountOpened`). A tax invoice is
 // settled by a receipt raised against it, which closes it in Morning without changing anything
 // about the invoice itself — so what is still owed is a figure to be read rather than inferred.

@@ -13,7 +13,7 @@
  */
 
 import { db } from './db.js';
-import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
+import { chargeableWorkSql, listClients, listInvoices, listWorks, outstandingSql, workToday } from './queries.js';
 import { RECEIVABLE_DOC_TYPES_SQL } from './docTypes.js';
 import { listExpenses, expenseCategories, expensesSummary } from './morningExpenses.js';
 import { bandDivision, bandFollowUps, bandSummary } from './routes.js';
@@ -109,8 +109,8 @@ export const MCP_TOOLS: McpTool[] = [
             )
             .get(),
           uninvoiced_works: db
-            .prepare("SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE status = 'unpaid'")
-            .get(),
+            .prepare(`SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE ${chargeableWorkSql()}`)
+            .get(workToday()),
         },
         band: bandSummary(),
         currency: 'ILS',
@@ -135,9 +135,10 @@ export const MCP_TOOLS: McpTool[] = [
     name: 'list_works',
     description:
       'Billable jobs (עבודות) — the atomic unit of business income, before invoicing. Statuses ' +
-      'run unpaid → invoiced → paid. Use to see what work has not been billed yet.',
+      'run unpaid → invoiced → paid. "unpaid" is jobs whose date has arrived and that still need ' +
+      'billing; "upcoming" is unbilled jobs still in the future. Use to see what work has not been billed yet.',
     inputSchema: rangeSchema({
-      status: { type: 'string', enum: ['unpaid', 'invoiced', 'paid'], description: 'Narrow to one status.' },
+      status: { type: 'string', enum: ['unpaid', 'upcoming', 'invoiced', 'paid'], description: 'Narrow to one status.' },
       client_id: { type: 'string', description: 'Narrow to one client, by id from list_clients.' },
     }),
     handler: (args) =>

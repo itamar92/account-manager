@@ -73,7 +73,7 @@ import {
 import {
   isExpenseBasis, isPeriodKey, overview, recognitionRates, setRecognitionRates,
 } from './overview.js';
-import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
+import { chargeableWorkSql, listClients, listInvoices, listWorks, outstandingSql, workToday } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
 import { appIdentity, opsConfigured, parseStatus, runOps } from './opsClient.js';
@@ -261,9 +261,10 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
        WHERE doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})
      ) WHERE owed > 0`
   ).get() as any;
+  // Only what is billable now — a calendar gig next month is not money waiting on anybody.
   const unpaidWorks = db.prepare(
-    "SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE status = 'unpaid'"
-  ).get() as any;
+    `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE ${chargeableWorkSql()}`
+  ).get(workToday()) as any;
 
   // Income against expenses, month by month — the chart's series and the profit cards are
   // the same numbers the דוחות page reports, so the two can never tell different stories.
@@ -348,8 +349,8 @@ export function inboxItems() {
   // several jobs, so it travels with the count.
   const unbilled = db.prepare(
     `SELECT w.id, w.total, c.name AS client_name FROM works w JOIN clients c ON c.id = w.client_id
-     WHERE w.status = 'unpaid'`
-  ).all() as any[];
+     WHERE ${chargeableWorkSql('w')}`
+  ).all(workToday()) as any[];
   const byClient = new Map<string, { count: number; total: number }>();
   for (const w of unbilled) {
     const entry = byClient.get(w.client_name) ?? { count: 0, total: 0 };
@@ -785,6 +786,36 @@ router.post('/works/bulk-client', requireOwner, handle((req, res) => {
       if (work.status !== 'unpaid') { locked.push(work.description); continue; }
       if (work.client_id === clientId) continue;
       db.prepare('UPDATE works SET client_id = ? WHERE id = ?').run(clientId, id);
+      updated++;
+    }
+  })();
+
+  res.json({ updated, locked });
+}));
+
+/**
+ * Sets the status of works by hand: for jobs billed outside the app, which would otherwise sit
+ * as «לא חויב» forever with no invoice here to link them to — and back again to undo it.
+ *
+ * A work linked to an invoice is left alone and reported as locked: its status follows that
+ * invoice, and cancelling the invoice is what releases it.
+ */
+router.post('/works/bulk-status', requireOwner, handle((req, res) => {
+  const ids = bulkIds(req.body);
+  const status = req.body?.status;
+  if (!['unpaid', 'invoiced', 'paid'].includes(status))
+    return res.status(400).json({ error: 'status must be unpaid, invoiced or paid' });
+
+  const locked: string[] = [];
+  let updated = 0;
+  db.transaction(() => {
+    for (const id of ids) {
+      const work = db.prepare('SELECT * FROM works WHERE id = ?').get(id) as any;
+      if (!work) continue;
+      if (work.invoice_id) { locked.push(work.description); continue; }
+      if (work.status === status) continue;
+      db.prepare('UPDATE works SET status = ?, status_manual = ? WHERE id = ?')
+        .run(status, status === 'unpaid' ? 0 : 1, id);
       updated++;
     }
   })();
