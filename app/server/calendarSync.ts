@@ -1,7 +1,7 @@
 import { db, uuid, getVatPercent, setSetting, getSetting } from './db.js';
 import { eventDate, eventStartTime, isCalendarConfigured, listEvents, type CalendarEvent } from './calendarClient.js';
 import {
-  cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
+  cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type EventOverride, type MatchVerdict,
 } from './calendarRules.js';
 import {
   ensureExpenseRow, eventSharesTotal, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel,
@@ -322,6 +322,29 @@ function applyCancellation(event: CalendarEvent, rule: CalendarRule, tally: Rule
 }
 
 /**
+ * Whether a rule that did not draw an event because of a manual override should remove the
+ * row its target holds for that event.
+ *
+ * An «exclude» removes it: that is the point of excluding. An event pinned to another rule is
+ * different. Rules of the same kind share one row per event (works and band_events are both
+ * keyed by the calendar event), so that row is the pinned rule's, and deleting it here would undo
+ * the pin on every sync — which is how a show added by hand to the shows rule kept vanishing
+ * whenever a second rule over the same calendar ran after it. Only a pin to a rule of the
+ * other kind leaves this kind's row stale, so only then does it go.
+ */
+export function missDropsRow(
+  rule: CalendarRule,
+  override: EventOverride | undefined,
+  targetOf: (ruleId: string) => CalendarRule['target'] | undefined
+): boolean {
+  if (!override) return false;
+  if (override.action === 'exclude') return true;
+  if (!override.rule_id || override.rule_id === rule.id) return false;
+  const pinnedTarget = targetOf(override.rule_id);
+  return !!pinnedTarget && pinnedTarget !== rule.target;
+}
+
+/**
  * Runs every enabled rule and writes the events each one draws to its target.
  *
  * Rules are independent: one calendar failing does not stop the others, and its error is
@@ -338,6 +361,9 @@ export async function pullShowsFromCalendar(
   );
   const byCalendar = await fetchCalendars(rules, monthsBack, monthsAhead);
   const overrides = overrideMap();
+  // Every rule, not only the ones running now: a pin may point at a rule outside this run.
+  const targets = new Map(listRules().map((r) => [r.id, r.target]));
+  const targetOf = (id: string) => targets.get(id);
   const results: RuleSyncResult[] = [];
 
   for (const rule of rules) {
@@ -372,7 +398,9 @@ export async function pullShowsFromCalendar(
         if (!verdict.matched) {
           // An event excluded after it was already drawn should lose its row, so the
           // correction takes effect without hunting the row down by hand.
-          if (verdict.reason === 'manual') applyCancellation(event, rule, tally);
+          if (verdict.reason === 'manual' && missDropsRow(rule, overrides.get(event.id), targetOf)) {
+            applyCancellation(event, rule, tally);
+          }
           continue;
         }
         tally.matched++;
