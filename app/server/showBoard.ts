@@ -593,7 +593,16 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
     });
   }
 
-  return items.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? '99').localeCompare(b.time ?? '99'));
+  items.sort((a, b) => a.date.localeCompare(b.date) || (a.time ?? '99').localeCompare(b.time ?? '99'));
+  // The same night can reach the books twice — drawn from the calendar and posted again by an
+  // automation through the API. One date, one name: listed once, the calendar's copy kept.
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const id = `${item.date}|${item.auto_title.replace(/\s+/g, ' ').trim().toLowerCase()}`;
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 /** What the friends' link answers. Nothing on it but the name, the time, the place and the tickets. */

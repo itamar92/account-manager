@@ -160,3 +160,13 @@ test('works typed by hand are on the public board, unless their client is switch
   assert.ok(!titles().includes('קרניבנד לאונרד כהן'));
   board.updateBoardSettings({ excluded_clients: [] });
 });
+
+test('works from any source are listed, and the same night twice is listed once', () => {
+  const client = uuid();
+  db.prepare("INSERT INTO clients (id, name) VALUES (?, 'לקוח אוטומציה')").run(client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, source, calendar_event_id) VALUES (?, ?, '2099-09-01', 'קרניבנד במכון ויצמן', 0, 'calendar', 'cal-y')").run(uuid(), client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, source) VALUES (?, ?, '2099-09-01', 'קרניבנד במכון ויצמן', 0, 'n8n')").run(uuid(), client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, source) VALUES (?, ?, '2099-09-02', 'קרניבנד בבית העם', 0, 'n8n')").run(uuid(), client);
+  const days = board.boardItems().filter((i) => i.date.startsWith('2099-09')).map((i) => i.date);
+  assert.deepEqual(days, ['2099-09-01', '2099-09-02']);
+});
