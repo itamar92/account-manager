@@ -135,6 +135,17 @@ export function eventDate(event: CalendarEvent): string | null {
   return raw ? raw.slice(0, 10) : null;
 }
 
+/**
+ * When a timed event starts, as HH:MM on the clock it was written in (Google returns dateTime in
+ * the calendar's own zone, so the wall-clock part is the time people mean). NULL for an all-day
+ * event, which has no time to show.
+ */
+export function eventStartTime(event: CalendarEvent): string | null {
+  const raw = event.start?.dateTime;
+  const match = raw?.match(/T(\d{2}:\d{2})/);
+  return match ? match[1] : null;
+}
+
 export interface CalendarSummary {
   id: string;
   summary: string;

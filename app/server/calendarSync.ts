@@ -1,5 +1,5 @@
 import { db, uuid, getVatPercent, setSetting, getSetting } from './db.js';
-import { eventDate, isCalendarConfigured, listEvents, type CalendarEvent } from './calendarClient.js';
+import { eventDate, eventStartTime, isCalendarConfigured, listEvents, type CalendarEvent } from './calendarClient.js';
 import {
   cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
 } from './calendarRules.js';
@@ -143,9 +143,16 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   const calendarPrivate = looksPrivate(event.summary, event.description) || !!markedQuoteId(event) ? 1 : 0;
   const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
 
+  // When it starts and what its description says, for the show boards (server/showBoard.ts).
+  const startTime = eventStartTime(event);
+  const description = event.description?.trim() || null;
+  const summary = event.summary?.trim() || null;
+
   if (existing) {
-    db.prepare('UPDATE band_events SET venue = ?, date = ?, location = ?, calendar_private = ? WHERE id = ?')
-      .run(existing.venue_locked ? existing.venue : title, date, location, calendarPrivate, existing.id);
+    db.prepare(
+      `UPDATE band_events SET venue = ?, date = ?, location = ?, calendar_private = ?, start_time = ?,
+         calendar_description = ?, calendar_summary = ? WHERE id = ?`
+    ).run(existing.venue_locked ? existing.venue : title, date, location, calendarPrivate, startTime, description, summary, existing.id);
     refreshPrivate(existing.id);
     const updated = getEvent(existing.id);
     ensureExpenseRow(updated);
@@ -162,8 +169,9 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
     // stays and is locked, exactly as a rename after the fact would be.
     const keepName = !!orphan.venue_locked || normalizeName(orphan.venue) !== normalizeName(title);
     db.prepare(
-      'UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ?, calendar_private = ? WHERE id = ?'
-    ).run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, calendarPrivate, orphan.id);
+      `UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ?, calendar_private = ?,
+         start_time = ?, calendar_description = ?, calendar_summary = ? WHERE id = ?`
+    ).run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, calendarPrivate, startTime, description, summary, orphan.id);
     refreshPrivate(orphan.id);
     const linked = getEvent(orphan.id);
     ensureExpenseRow(linked);
@@ -175,9 +183,10 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
 
   const id = uuid();
   db.prepare(
-    `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver, calendar_private)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, title, date, event.id, location, ownerName(), calendarPrivate);
+    `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver, calendar_private,
+       start_time, calendar_description, calendar_summary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, title, date, event.id, location, ownerName(), calendarPrivate, startTime, description, summary);
   refreshPrivate(id);
   ensureExpenseRow(getEvent(id));
   setEventAttendees(id, guests);
@@ -215,8 +224,17 @@ function applyPersonalWork(
     return { amount, vat, total: round2(amount + vat) };
   };
   const existing = db.prepare('SELECT * FROM works WHERE calendar_event_id = ?').get(event.id) as any;
+  // What the public show board needs, kept up to date even on a work that is already billed: none
+  // of it is bookkeeping. See server/showBoard.ts.
+  const boardFields = (workId: string) => db.prepare(
+    'UPDATE works SET start_time = ?, calendar_rule_id = ?, calendar_private = ?, calendar_summary = ? WHERE id = ?'
+  ).run(
+    eventStartTime(event), rule.id, looksPrivate(event.summary, event.description) ? 1 : 0,
+    event.summary?.trim() || null, workId
+  );
 
   if (existing) {
+    boardFields(existing.id);
     // Locked once billed — changing a line on an issued invoice is not the sync's call.
     if (existing.status !== 'unpaid') {
       tally.skipped++;
@@ -239,6 +257,7 @@ function applyPersonalWork(
   // reached it. Link it instead of adding a duplicate line to the table.
   const orphan = findOrphanWork(clientId, date, title);
   if (orphan) {
+    boardFields(orphan.id);
     // An already-billed row is linked and nothing more, which is enough to stop the event
     // being drawn again as a second, unbilled copy of work you have already invoiced.
     if (orphan.status !== 'unpaid') {
@@ -255,11 +274,13 @@ function applyPersonalWork(
   }
 
   const price = priceOf(fixedAmount);
+  const workId = uuid();
   db.prepare(
     `INSERT INTO works (id, client_id, date, description, amount, vat_amount, total, status,
        calendar_event_id, location, source)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, 'calendar')`
-  ).run(uuid(), clientId, date, title, price.amount, price.vat, price.total, event.id, location);
+  ).run(workId, clientId, date, title, price.amount, price.vat, price.total, event.id, location);
+  boardFields(workId);
   tally.created++;
 }
 
