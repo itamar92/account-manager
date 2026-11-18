@@ -143,3 +143,20 @@ test('«אופציה» in the name is an unsigned hold: on the band board, off t
   assert.equal(crew.status, 'option');
   assert.equal(crew.title, 'גריי מודיעין');
 });
+
+test('works typed by hand are on the public board, unless their client is switched off', () => {
+  const client = uuid();
+  db.prepare("INSERT INTO clients (id, name) VALUES (?, 'לקוח הופעות')").run(client);
+  const handTyped = uuid();
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount) VALUES (?, ?, '2099-08-01', 'קרניבנד אלטון ג''ון בפתח תקווה', 0)").run(handTyped, client);
+  const calendarNoRule = uuid();
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, calendar_event_id) VALUES (?, ?, '2099-08-02', 'קרניבנד לאונרד כהן', 0, 'cal-x')").run(calendarNoRule, client);
+  board.updateBoardSettings({ personal_rules: ['some-other-rule'] }); // the retired setting no longer hides anything
+  const token = board.setBoardEnabled('public', true);
+  const titles = () => board.publicBoard(token).shows.map((s) => s.title);
+  assert.ok(titles().includes("קרניבנד אלטון ג'ון בפתח תקווה"));
+  assert.ok(titles().includes('קרניבנד לאונרד כהן'));
+  board.updateBoardSettings({ excluded_clients: [client] });
+  assert.ok(!titles().includes('קרניבנד לאונרד כהן'));
+  board.updateBoardSettings({ excluded_clients: [] });
+});

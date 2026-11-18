@@ -4,6 +4,7 @@ import { listRules } from './calendarRules.js';
 import { activeBandMembers } from './band.js';
 import { attendeeEmails, assignmentsForEvent } from './assignments.js';
 import { roleNames } from './supplierRoles.js';
+import { looksPrivate } from './showPrivacy.js';
 import { israelDate } from './campaignTasks.js';
 
 /**
@@ -71,7 +72,14 @@ export interface BoardSettings {
   /** Whether the band's own (non-private) shows are on the public board. */
   include_band: boolean;
   /** Personal calendar rules whose works are on the public board; null = all of them. */
+  /** Retired: the public board used to pick works by calendar rule. Read only to carry it over. */
   personal_rules: string[] | null;
+  /**
+   * Clients whose works stay off the public board. Every work has a client — the calendar's and
+   * the ones typed into «עבודות» by hand alike — so this is the one switch that covers them all.
+   * Opt-out: a work shows unless its client is listed here.
+   */
+  excluded_clients: string[];
   reminders: VenueReminder[];
   /** Acts typed by hand: a name and the words in a calendar title that mean it. */
   acts: ActDef[];
@@ -99,6 +107,7 @@ export function boardSettings(): BoardSettings {
     crew_title: getSetting('crew_board_title', ''),
     include_band: getSetting('show_board_include_band', '1') !== '0',
     personal_rules: readJson<string[] | null>('show_board_rules', null),
+    excluded_clients: readJson<string[]>('show_board_excluded_clients', []),
     reminders: readJson<VenueReminder[]>('crew_board_reminders', DEFAULT_REMINDERS),
     acts: readJson<ActDef[]>('show_board_acts', []),
   };
@@ -110,6 +119,10 @@ export function updateBoardSettings(patch: Partial<BoardSettings>): BoardSetting
   if (patch.public_title !== undefined) setSetting('show_board_title', cleanText(patch.public_title, 120));
   if (patch.crew_title !== undefined) setSetting('crew_board_title', cleanText(patch.crew_title, 120));
   if (patch.include_band !== undefined) setSetting('show_board_include_band', patch.include_band ? '1' : '0');
+  if (patch.excluded_clients !== undefined) {
+    const ids = Array.isArray(patch.excluded_clients) ? patch.excluded_clients.map((id) => String(id)).filter(Boolean) : [];
+    setSetting('show_board_excluded_clients', JSON.stringify([...new Set(ids)]));
+  }
   if (patch.personal_rules !== undefined) {
     const rules = Array.isArray(patch.personal_rules)
       ? patch.personal_rules.map((id) => String(id)).filter(Boolean)
@@ -546,26 +559,31 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
 
   const personalRules = listRules().filter((r) => r.target === 'personal');
   const ruleById = new Map(personalRules.map((r) => [r.id, r]));
-  const included = settings.personal_rules ? new Set(settings.personal_rules) : null;
+  // A work synced before the rule was recorded on it is still that client's rule's work.
+  const ruleByClient = new Map(personalRules.filter((r) => r.client_name).map((r) => [r.client_name!.trim(), r]));
+  const excluded = new Set(settings.excluded_clients);
+  // Every work, not only the calendar's: a show typed into «עבודות» by hand is a show too.
   const works = db.prepare(
     `SELECT w.id, w.description, w.date, w.location, w.start_time, w.calendar_rule_id, w.calendar_private,
-            w.calendar_summary, w.description_locked, c.name AS client_name
+            w.calendar_summary, w.description_locked, w.client_id, c.name AS client_name
        FROM works w LEFT JOIN clients c ON c.id = w.client_id
-      WHERE w.calendar_event_id IS NOT NULL AND w.date >= ? ORDER BY w.date, w.start_time`
+      WHERE w.date >= ? ORDER BY w.date, w.start_time`
   ).all(from) as any[];
   for (const w of works) {
     const key = `work:${w.id}`;
     const o = over.get(key) ?? EMPTY_OVERRIDE;
-    const rule = w.calendar_rule_id ? ruleById.get(w.calendar_rule_id) : undefined;
+    const rule = (w.calendar_rule_id ? ruleById.get(w.calendar_rule_id) : undefined)
+      ?? ruleByClient.get(String(w.client_name ?? '').trim());
     const auto = publicTitle(w.description_locked || !w.calendar_summary ? w.description : w.calendar_summary);
-    const isPrivate = !!w.calendar_private;
+    // Typed by hand, there is no calendar flag to read — the name itself may still say «פרטי».
+    const isPrivate = !!w.calendar_private || looksPrivate(w.description);
     const option = isOption(w.calendar_summary, w.description);
-    const ruleOff = included && (!w.calendar_rule_id || !included.has(w.calendar_rule_id));
+    const clientOff = excluded.has(w.client_id);
     const offReason = option ? 'אופציה — עוד לא נסגר' : isPrivate ? 'אירוע פרטי'
       : o.hidden ? 'הוסתר ידנית'
-        : ruleOff ? 'הכלל שלו לא מוצג בלוח' : null;
+        : clientOff ? `${w.client_name || 'הלקוח'} לא מוצג בלוח` : null;
     items.push({
-      key, source: 'work', source_label: rule?.name || w.client_name || 'יומן', date: w.date, time: w.start_time ?? null,
+      key, source: 'work', source_label: w.client_name || rule?.name || 'עבודות', date: w.date, time: w.start_time ?? null,
       name: w.description, auto_title: auto, title: o.public_title || auto,
       place: splitLocation(w.location), ticket_url: o.ticket_url,
       ...regionOf(o, w.location, auto, w.description),
@@ -678,7 +696,11 @@ export function boardAdmin() {
     settings: boardSettings(),
     band_name: getBandName(),
     regions: REGIONS,
-    personal_rules: listRules().filter((r) => r.target === 'personal').map((r) => ({ id: r.id, name: r.name, enabled: !!r.enabled })),
+    // The clients that have upcoming works: a switch each for the public board.
+    clients: db.prepare(
+      `SELECT c.id, c.name, COUNT(*) AS upcoming FROM works w JOIN clients c ON c.id = w.client_id
+        WHERE w.date >= ? GROUP BY c.id ORDER BY upcoming DESC, c.name`
+    ).all(israelDate()) as Array<{ id: string; name: string; upcoming: number }>,
     items: boardItems(),
   };
 }

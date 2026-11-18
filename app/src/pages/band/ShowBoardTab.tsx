@@ -22,7 +22,7 @@ interface Item {
 interface Reminder { keywords: string; text: string }
 interface Settings {
   public_title: string; crew_title: string; include_band: boolean;
-  personal_rules: string[] | null; reminders: Reminder[];
+  excluded_clients: string[]; reminders: Reminder[];
   acts: Array<{ name: string; keywords: string }>;
 }
 interface Admin {
@@ -30,7 +30,7 @@ interface Admin {
   settings: Settings;
   band_name: string;
   regions: string[];
-  personal_rules: Array<{ id: string; name: string; enabled: boolean }>;
+  clients: Array<{ id: string; name: string; upcoming: number }>;
   items: Item[];
 }
 
@@ -84,11 +84,11 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
 
   if (!data || !settings) return <div className="text-faint py-10 text-center">טוען…</div>;
 
-  const ruleIncluded = (id: string) => !settings.personal_rules || settings.personal_rules.includes(id);
-  const toggleRule = (id: string, on: boolean) => {
-    const current = settings.personal_rules ?? data.personal_rules.map((r) => r.id);
-    setSettings({ ...settings, personal_rules: on ? [...new Set([...current, id])] : current.filter((r) => r !== id) });
-  };
+  const clientShown = (id: string) => !settings.excluded_clients.includes(id);
+  const toggleClient = (id: string, on: boolean) => setSettings({
+    ...settings,
+    excluded_clients: on ? settings.excluded_clients.filter((c) => c !== id) : [...settings.excluded_clients, id],
+  });
   const setReminder = (i: number, patch: Partial<Reminder>) =>
     setSettings({ ...settings, reminders: settings.reminders.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
 
@@ -127,14 +127,14 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             <Switch label={`הופעות ${data.band_name}`} checked={settings.include_band}
               onChange={(v) => setSettings({ ...settings, include_band: v })} />
-            {data.personal_rules.map((r) => (
-              <Switch key={r.id} label={`${r.name}${r.enabled ? '' : ' (כלל כבוי)'}`} checked={ruleIncluded(r.id)}
-                onChange={(v) => toggleRule(r.id, v)} />
+            {data.clients.map((c) => (
+              <Switch key={c.id} label={`${c.name} (${c.upcoming})`} checked={clientShown(c.id)}
+                onChange={(v) => toggleClient(c.id, v)} />
             ))}
           </div>
-          {!data.personal_rules.length && (
-            <p className="text-[13px] text-faint mt-1.5">הופעות מהיומן האישי נכנסות דרך כללי יומן מסוג «אישי» (הגדרות → יומן).</p>
-          )}
+          <p className="text-[12px] text-faint mt-1.5">
+            העבודות הקרובות שלך לפי לקוח — מהיומן וגם אלה שהוזנו ידנית. כבו לקוח שהעבודות שלו אינן הופעות.
+          </p>
         </div>
 
         <div>
