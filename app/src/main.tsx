@@ -17,6 +17,8 @@ import { ShowDetail } from './pages/band/ShowDetail';
 import { QuoteEditor } from './pages/band/QuoteEditor';
 import { QuotePreview } from './pages/band/QuotePreview';
 import { QuotePublic } from './pages/QuotePublic';
+import { PublicShowBoard } from './pages/boards/PublicShowBoard';
+import { CrewBoard } from './pages/boards/CrewBoard';
 import { Settings } from './pages/Settings';
 import { CampaignStudio } from './pages/campaigns/CampaignStudio';
 import { registerServiceWorker } from './push';
@@ -31,6 +33,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
           <Route path="/login" element={<Login />} />
           {/* A client's quote link: no login and no shell — see server/publicQuotes.ts. */}
           <Route path="/q/:token" element={<QuotePublic />} />
+          {/* The show boards: friends' and the band's, no login — see server/showBoard.ts. */}
+          <Route path="/board/:token" element={<PublicShowBoard />} />
+          <Route path="/crew/:token" element={<CrewBoard />} />
           {/* Outside the shell: the quote on its own, the way the client will get it. */}
           <Route path="/band/quotes/:id/preview" element={<QuotePreview />} />
           {/* The campaign studio is an app of its own, with its own rail, outside the books' shell. */}

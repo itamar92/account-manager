@@ -3,7 +3,7 @@ import { NavLink, Outlet, Navigate, useLocation, useNavigate } from 'react-route
 import {
   Inbox, LayoutDashboard, Users, Briefcase, FileText, Receipt, FileBarChart, Settings,
   LogOut, Wallet, Music, Megaphone, CalendarCheck, Plus, ChevronDown, MoreHorizontal,
-  Calculator, HandCoins, Tags, FileSignature,
+  Calculator, HandCoins, Tags, FileSignature, CalendarDays,
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from './AuthContext';
@@ -12,7 +12,7 @@ import { MoneyCalculator } from './pages/band/MoneyCalculator';
 import { NotificationsButton } from './NotificationsPanel';
 import { setAppBadge } from './push';
 
-type NavItem = { to: string; label: string; icon: React.ElementType; badge?: number };
+type NavItem = { to: string; label: string; icon: React.ElementType; badge?: number; ownerOnly?: boolean };
 type NavGroup = { head?: string; items: NavItem[] };
 
 /**
@@ -54,6 +54,8 @@ const moonNav: NavGroup[] = [
       { to: '/band/shows', label: 'הופעות', icon: Music },
       // Where a show is sold before it is one — and the one screen here the band edits too.
       { to: '/band/quotes', label: 'הצעות מחיר', icon: FileSignature },
+      // The friends' link and the band's link to the coming shows.
+      { to: '/band/board', label: 'לוחות הופעות', icon: CalendarDays, ownerOnly: true },
     ],
   },
   {
@@ -148,7 +150,8 @@ export function Layout() {
   // Band members are locked to the band area — personal accounting routes are owner-only.
   if (!isOwner && !moon) return <Navigate to="/band/summary" replace />;
 
-  const groups = moon ? moonNav : bizNav(inboxCount);
+  const groups = (moon ? moonNav : bizNav(inboxCount))
+    .map((g) => ({ ...g, items: g.items.filter((item) => isOwner || !item.ownerOnly) }));
   const mobileItems = moon ? moonMobile : bizMobile;
 
   const navClass = (isActive: boolean) =>

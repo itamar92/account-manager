@@ -10,6 +10,7 @@ import { SuppliersTab } from './band/SuppliersTab';
 import { SupplierPaymentsTab } from './band/SupplierPaymentsTab';
 import { SupplierNamesTab } from './band/SupplierNamesTab';
 import { QuotesTab } from './band/QuotesTab';
+import { ShowBoardTab } from './band/ShowBoardTab';
 import { divisionSplitLabel, useBandMembers } from './band/shared';
 
 /**
@@ -26,11 +27,11 @@ import { divisionSplitLabel, useBandMembers } from './band/shared';
  * `quotes` is where a show is sold before it exists. It is the one tab the band edits too.
  */
 type Tab = 'summary' | 'shows' | 'quotes' | 'suppliers' | 'supplierPayments' | 'supplierNames'
-  | 'generalExpenses' | 'ads' | 'campaignAi';
+  | 'generalExpenses' | 'board' | 'ads' | 'campaignAi';
 
 const TABS: Tab[] = [
   'summary', 'shows', 'quotes', 'suppliers', 'supplierPayments', 'supplierNames', 'generalExpenses',
-  'ads', 'campaignAi',
+  'board', 'ads', 'campaignAi',
 ];
 
 /** Where the retired tabs now live, so an old bookmark still lands somewhere sensible. */
@@ -148,7 +149,7 @@ export function BandWorkspace() {
   return (
     <div className="space-y-5">
       {/* Quotes are the band's to edit as well, so the view-only line would be untrue there. */}
-      {!isOwner && tab !== 'quotes' && (
+      {!isOwner && tab !== 'quotes' && tab !== 'board' && (
         <p className="text-sm text-muted">תצוגה בלבד — עריכה זמינה למנהל בלבד</p>
       )}
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
@@ -161,6 +162,11 @@ export function BandWorkspace() {
       )}
 
       {tab === 'quotes' && <QuotesTab onError={showError} />}
+
+      {/* The two show-board links are the owner's to hand out. */}
+      {tab === 'board' && (isOwner
+        ? <ShowBoardTab onError={showError} />
+        : <p className="text-sm text-muted">לוחות ההופעות מנוהלים ע״י המנהל.</p>)}
 
       {tab === 'suppliers' && <SuppliersTab {...tabProps} />}
 

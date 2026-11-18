@@ -15,6 +15,7 @@ import {
 import { backfillSupplierAliases } from './server/supplierNames.js';
 import { seedBuiltinTemplates } from './server/quotes.js';
 import { publicQuoteRouter } from './server/publicQuotes.js';
+import { publicBoardRouter, showBoardRouter } from './server/showBoardRoutes.js';
 import { publicCampaignTaskRouter, startReminderScheduler } from './server/campaignTasks.js';
 import { notificationsRouter, startNotificationScheduler } from './server/notifications.js';
 import { startNightlySync } from './server/nightlySync.js';
@@ -55,6 +56,9 @@ app.use('/api/v1', apiV1);
 // A client's quote link: no login, the token is the credential (see server/publicQuotes.ts).
 // Mounted ahead of /api so none of the logged-in routes ever sees it.
 app.use('/api/public/quotes', publicQuoteRouter);
+// The show boards' links — friends' and the band's — also open with no login (server/showBoard.ts).
+app.use('/api/public/boards', publicBoardRouter);
+app.use('/api/show-board', showBoardRouter);
 // The «בוצע» link in a campaign-task reminder: the token closes that one task and nothing else.
 // urlencoded for the page's one-button form, which posts no fields but is still a form post.
 app.use('/api/public/campaign-tasks', express.urlencoded({ extended: false }), publicCampaignTaskRouter);
@@ -64,7 +68,7 @@ app.use('/api', router);
 
 // The page a client's link opens. Kept out of search engines, and it passes its own address on
 // to nobody, since that address is the key to the quote.
-app.use('/q', (_req, res, next) => {
+app.use(['/q', '/board', '/crew'], (_req, res, next) => {
   res.set({ 'X-Robots-Tag': 'noindex, nofollow', 'Referrer-Policy': 'no-referrer' });
   next();
 });

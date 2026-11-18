@@ -850,6 +850,22 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
 -- One row per browser (or home-screen app) that agreed to receive notifications. The endpoint
 -- is the push service's address for that one install, and the two keys are what the payload is
 -- encrypted to; none of it is a secret worth more than the ability to send that device a ping.
+-- What the owner decided about one show on the show boards (server/showBoard.ts), keyed
+-- 'show:<band_events.id>' or 'work:<works.id>'. Everything is optional: NULL means "whatever the
+-- calendar says". A band show's ticket link is band_events.ticket_url, shared with the ticket check;
+-- a work has nowhere else to keep one, so it lives here.
+CREATE TABLE IF NOT EXISTS show_board_items (
+  item_key TEXT PRIMARY KEY,
+  public_title TEXT,
+  ticket_url TEXT,
+  hidden INTEGER NOT NULL DEFAULT 0,
+  call_time TEXT,
+  soundcheck_time TEXT,
+  parking TEXT,
+  notes TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -980,6 +996,21 @@ addColumnIfMissing('band_events', 'private_locked', 'INTEGER NOT NULL DEFAULT 0'
 // What the calendar event last said: its title or description mentions «פרטי». Kept so the
 // detection can be re-run between syncs (a quote unlinked, say) without asking Google again.
 addColumnIfMissing('band_events', 'calendar_private', 'INTEGER NOT NULL DEFAULT 0');
+// What the show board reads off the calendar event: when it starts (HH:MM, Israel time — NULL for
+// an all-day event) and the event's description, which is where the call time, the sound check
+// and the parking are written. The description is parsed for those lines only; the rest of it
+// (fees, contacts) never leaves the database. See server/showBoard.ts.
+addColumnIfMissing('band_events', 'start_time', 'TEXT');
+addColumnIfMissing('band_events', 'calendar_description', 'TEXT');
+// The event's title exactly as the calendar has it. The stored name drops the rule's keywords
+// («קולדפליי» off «קולדפליי זאפה»), which is right for the books and wrong for a public page.
+addColumnIfMissing('band_events', 'calendar_summary', 'TEXT');
+// The same for a calendar work, plus the rule that drew it — the public board lists the works of
+// the personal rules the owner picks — and whether its event said «פרטי».
+addColumnIfMissing('works', 'start_time', 'TEXT');
+addColumnIfMissing('works', 'calendar_rule_id', 'TEXT');
+addColumnIfMissing('works', 'calendar_private', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('works', 'calendar_summary', 'TEXT');
 // Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
 // due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
 addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');
