@@ -9,11 +9,13 @@ interface Override {
   public_title: string | null; ticket_url: string | null; hidden: boolean;
   call_time: string | null; soundcheck_time: string | null; parking: string | null; notes: string | null;
   region: string | null;
+  act: string | null;
 }
 interface Item {
   key: string; source: 'band' | 'work'; source_label: string; date: string; time: string | null;
   name: string; auto_title: string; title: string; place: Place | null; ticket_url: string | null;
   auto_region: string | null; region: string | null;
+  auto_act: string | null; act: string | null;
   is_private: boolean; hidden: boolean; on_public: boolean; off_reason: string | null;
   override: Override; parsed: Logistics | null;
 }
@@ -21,6 +23,7 @@ interface Reminder { keywords: string; text: string }
 interface Settings {
   public_title: string; crew_title: string; include_band: boolean;
   personal_rules: string[] | null; reminders: Reminder[];
+  acts: Array<{ name: string; keywords: string }>;
 }
 interface Admin {
   tokens: { public: string; crew: string };
@@ -135,6 +138,31 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
         </div>
 
         <div>
+          <div className="text-[13px] text-muted mb-1">הרכבים — התגיות לסינון בלוח הציבורי</div>
+          <p className="text-[12px] text-faint mb-2">
+            נוצרות לבד ממילות המפתח של כללי היומן. כאן אפשר לתת שם יפה ולהוסיף מילים שמזהות אותו בכותרת האירוע.
+          </p>
+          <div className="space-y-2">
+            {settings.acts.map((a, i) => (
+              <div key={i} className="flex flex-wrap md:flex-nowrap items-center gap-2">
+                <input className="w-48 bg-soft border border-line rounded-lg px-3 py-2 text-sm" placeholder="שם ההרכב: Disco Train"
+                  value={a.name} onChange={(e) => setSettings({ ...settings, acts: settings.acts.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+                <input className="flex-1 min-w-40 bg-soft border border-line rounded-lg px-3 py-2 text-sm" placeholder="מילים בכותרת: דיסקו טריין, דיסקו"
+                  value={a.keywords} onChange={(e) => setSettings({ ...settings, acts: settings.acts.map((x, j) => (j === i ? { ...x, keywords: e.target.value } : x)) })} />
+                <button className="p-2 text-muted hover:text-neg" title="מחיקה"
+                  onClick={() => setSettings({ ...settings, acts: settings.acts.filter((_, j) => j !== i) })}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+            <button className="inline-flex items-center gap-1.5 text-sm text-accent font-semibold"
+              onClick={() => setSettings({ ...settings, acts: [...settings.acts, { name: '', keywords: '' }] })}>
+              <Plus size={15} /> הרכב
+            </button>
+          </div>
+        </div>
+
+        <div>
           <div className="text-[13px] text-muted mb-2">תזכורות לפי מקום (בלוח הפנימי)</div>
           <div className="space-y-2">
             {settings.reminders.map((r, i) => (
@@ -173,7 +201,8 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
         {!data.items.length && <div className="text-center text-faint py-8">אין הופעות קרובות ביומן.</div>}
         <ul className="divide-y divide-line">
           {data.items.map((item) => (
-            <ItemRow key={item.key} item={item} regions={data.regions} open={open === item.key}
+            <ItemRow key={item.key} item={item} regions={data.regions}
+              acts={[...new Set(data.items.map((i) => i.act).filter((a): a is string => !!a))]} open={open === item.key}
               onToggle={() => setOpen(open === item.key ? null : item.key)} onSave={(p) => saveItem(item.key, p)} />
           ))}
         </ul>
@@ -226,12 +255,13 @@ function LinkCard({ kind, title, description, token, onToggle, onRotate }: {
   );
 }
 
-function ItemRow({ item, regions, open, onToggle, onSave }: {
-  item: Item; regions: string[]; open: boolean; onToggle: () => void; onSave: (patch: Partial<Override>) => void;
+function ItemRow({ item, regions, acts, open, onToggle, onSave }: {
+  item: Item; regions: string[]; acts: string[]; open: boolean; onToggle: () => void; onSave: (patch: Partial<Override>) => void;
 }) {
   const [form, setForm] = useState({
     public_title: item.override.public_title ?? '',
     ticket_url: item.ticket_url ?? '',
+    act: item.override.act ?? '',
     call_time: item.override.call_time ?? '',
     soundcheck_time: item.override.soundcheck_time ?? '',
     parking: item.override.parking ?? '',
@@ -241,6 +271,7 @@ function ItemRow({ item, regions, open, onToggle, onSave }: {
     setForm({
       public_title: item.override.public_title ?? '',
       ticket_url: item.ticket_url ?? '',
+      act: item.override.act ?? '',
       call_time: item.override.call_time ?? '',
       soundcheck_time: item.override.soundcheck_time ?? '',
       parking: item.override.parking ?? '',
@@ -260,6 +291,7 @@ function ItemRow({ item, regions, open, onToggle, onSave }: {
         {item.on_public
           ? <Tag tone="pos">בלוח הציבורי</Tag>
           : <Tag tone={item.is_private ? 'warn' : 'neutral'}><EyeOff size={11} /> {item.off_reason}</Tag>}
+        {item.act && <Tag tone="accent">{item.act}</Tag>}
         {item.region && <Tag>{item.region}</Tag>}
         {item.ticket_url && <Tag>כרטיסים ✓</Tag>}
       </button>
@@ -273,6 +305,9 @@ function ItemRow({ item, regions, open, onToggle, onSave }: {
           <div className="grid md:grid-cols-2 gap-3">
             <Input label="שם בלוח הציבורי" placeholder={item.auto_title} value={form.public_title} onChange={set('public_title')} />
             <Input label="קישור לכרטיסים" dir="ltr" placeholder="https://" value={form.ticket_url} onChange={set('ticket_url')} />
+            <Input label="הרכב (תגית)" placeholder={item.auto_act ?? 'לא זוהה'} value={form.act} onChange={set('act')}
+              list={`acts-${item.key}`} />
+            <datalist id={`acts-${item.key}`}>{acts.map((a) => <option key={a} value={a} />)}</datalist>
             <label className="block">
               <span className="block text-[13px] text-muted mb-1.5">אזור (לסינון בלוח הציבורי)</span>
               <select className="w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm"
@@ -295,7 +330,7 @@ function ItemRow({ item, regions, open, onToggle, onSave }: {
             </>
           )}
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => onSave(item.source === 'band' ? form : { public_title: form.public_title, ticket_url: form.ticket_url })}>שמירה</Button>
+            <Button onClick={() => onSave(item.source === 'band' ? form : { public_title: form.public_title, ticket_url: form.ticket_url, act: form.act })}>שמירה</Button>
             {!item.is_private && (
               <Switch label="הסתרה מהלוח הציבורי" checked={item.hidden} onChange={(v) => onSave({ hidden: v })} />
             )}

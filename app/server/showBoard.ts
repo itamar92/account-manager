@@ -73,6 +73,14 @@ export interface BoardSettings {
   /** Personal calendar rules whose works are on the public board; null = all of them. */
   personal_rules: string[] | null;
   reminders: VenueReminder[];
+  /** Acts typed by hand: a name and the words in a calendar title that mean it. */
+  acts: ActDef[];
+}
+
+export interface ActDef {
+  name: string;
+  /** Comma-separated; the name itself always counts as one. */
+  keywords: string;
 }
 
 function readJson<T>(key: string, fallback: T): T {
@@ -92,6 +100,7 @@ export function boardSettings(): BoardSettings {
     include_band: getSetting('show_board_include_band', '1') !== '0',
     personal_rules: readJson<string[] | null>('show_board_rules', null),
     reminders: readJson<VenueReminder[]>('crew_board_reminders', DEFAULT_REMINDERS),
+    acts: readJson<ActDef[]>('show_board_acts', []),
   };
 }
 
@@ -113,6 +122,13 @@ export function updateBoardSettings(patch: Partial<BoardSettings>): BoardSetting
       .filter((r) => r.keywords && r.text)
       .slice(0, 30);
     setSetting('crew_board_reminders', JSON.stringify(list));
+  }
+  if (patch.acts !== undefined) {
+    const list = (Array.isArray(patch.acts) ? patch.acts : [])
+      .map((a) => ({ name: cleanText(a?.name, 60), keywords: cleanText(a?.keywords, 300) }))
+      .filter((a) => a.name)
+      .slice(0, 40);
+    setSetting('show_board_acts', JSON.stringify(list));
   }
   return boardSettings();
 }
@@ -247,6 +263,43 @@ export function remindersFor(reminders: VenueReminder[], ...texts: Array<string 
   return out;
 }
 
+// ---------------------------------------------------------------- acts
+
+export type ActFinder = (...texts: Array<string | null | undefined>) => string | null;
+
+/** Words a calendar rule may search for that say "a show" rather than whose show it is. */
+const NOT_AN_ACT = new Set(['הופעה', 'הופעות', 'מופע', 'מופעים', 'גיג', 'גיגים', 'show', 'shows', 'gig', 'gigs']);
+
+/**
+ * Which act a show is — the badge the public board filters by («Disco Train», «קולדפליי»).
+ *
+ * Acts typed by hand come first, matched on their name or any of their words. Failing those,
+ * the calendar rules' own keywords are the acts: a rule that draws «קולדפליי» events is the
+ * Coldplay act's rule. The longest match wins, so «קרניבנד אלטון ג'ון» beats «קרניבנד».
+ * Nothing matching leaves the caller's fallback (the band's name, or the rule's).
+ */
+export function actFinder(manual: ActDef[] = boardSettings().acts): ActFinder {
+  const entries: Array<{ word: string; name: string; manual: boolean }> = [];
+  for (const act of manual) {
+    for (const word of [act.name, ...act.keywords.split(',')]) {
+      const w = word.trim().toLowerCase();
+      if (w) entries.push({ word: w, name: act.name, manual: true });
+    }
+  }
+  for (const rule of listRules()) {
+    for (const keyword of rule.keywords.split(/[,\n]/)) {
+      const k = keyword.trim();
+      if (k && !NOT_AN_ACT.has(k.toLowerCase()) && !k.includes('@')) entries.push({ word: k.toLowerCase(), name: k, manual: false });
+    }
+  }
+  entries.sort((a, b) => Number(b.manual) - Number(a.manual) || b.word.length - a.word.length);
+  return (...texts) => {
+    const hay = texts.filter(Boolean).join(' ').toLowerCase();
+    if (!hay) return null;
+    return entries.find((e) => hay.includes(e.word))?.name ?? null;
+  };
+}
+
 // ---------------------------------------------------------------- regions
 
 /** The regions the public board filters by, in the order they are offered (north to south). */
@@ -306,6 +359,7 @@ export interface BoardItemOverride {
   parking: string | null;
   notes: string | null;
   region: Region | null;
+  act: string | null;
 }
 
 function overrides(): Map<string, BoardItemOverride> {
@@ -319,12 +373,13 @@ function overrides(): Map<string, BoardItemOverride> {
     parking: r.parking ?? null,
     notes: r.notes ?? null,
     region: isRegion(r.region) ? r.region : null,
+    act: r.act ?? null,
   }]));
 }
 
 const EMPTY_OVERRIDE: BoardItemOverride = {
   public_title: null, ticket_url: null, hidden: false, call_time: null, soundcheck_time: null, parking: null, notes: null,
-  region: null,
+  region: null, act: null,
 };
 
 /** A link someone typed, or null: only http(s), so the page never renders a javascript: href. */
@@ -369,6 +424,7 @@ export function updateBoardItem(key: string, patch: Record<string, unknown>) {
   if ('call_time' in patch) next.call_time = cleanTime(patch.call_time);
   if ('soundcheck_time' in patch) next.soundcheck_time = cleanTime(patch.soundcheck_time);
   if ('parking' in patch) next.parking = optionalText(patch.parking, 300);
+  if ('act' in patch) next.act = optionalText(patch.act, 60);
   if ('region' in patch) next.region = isRegion(patch.region) ? patch.region : null;
   if ('notes' in patch) next.notes = String(patch.notes ?? '').trim().slice(0, 1000) || null;
   if ('ticket_url' in patch) {
@@ -380,13 +436,13 @@ export function updateBoardItem(key: string, patch: Record<string, unknown>) {
 
   db.prepare(
     `INSERT INTO show_board_items (item_key, public_title, ticket_url, hidden, call_time, soundcheck_time, parking, notes,
-       region, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       region, act, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(item_key) DO UPDATE SET public_title = excluded.public_title, ticket_url = excluded.ticket_url,
        hidden = excluded.hidden, call_time = excluded.call_time, soundcheck_time = excluded.soundcheck_time,
-       parking = excluded.parking, notes = excluded.notes, region = excluded.region, updated_at = excluded.updated_at`
+       parking = excluded.parking, notes = excluded.notes, region = excluded.region, act = excluded.act, updated_at = excluded.updated_at`
   ).run(key, next.public_title, next.ticket_url, next.hidden ? 1 : 0, next.call_time, next.soundcheck_time, next.parking, next.notes,
-    next.region);
+    next.region, next.act);
   return boardItems().find((item) => item.key === key) ?? null;
 }
 
@@ -408,6 +464,9 @@ export interface BoardItem {
   /** The region guessed from the town, and the one in force (the owner's, when set). */
   auto_region: Region | null;
   region: Region | null;
+  /** Which act this is — guessed from the title (see actFor), or the owner's. */
+  auto_act: string | null;
+  act: string | null;
   ticket_url: string | null;
   is_private: boolean;
   hidden: boolean;
@@ -425,6 +484,11 @@ function regionOf(o: BoardItemOverride, ...texts: Array<string | null | undefine
   return { auto_region: auto, region: o.region ?? auto };
 }
 
+function actOf(o: BoardItemOverride, finder: ActFinder, fallback: string | null, ...texts: Array<string | null | undefined>) {
+  const auto = finder(...texts) ?? fallback;
+  return { auto_act: auto, act: o.act ?? auto };
+}
+
 /** Upcoming band shows and calendar works, with everything the boards and the owner need. */
 export function boardItems(options: { from?: string } = {}): BoardItem[] {
   const from = options.from ?? israelDate();
@@ -432,6 +496,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
   const over = overrides();
   const items: BoardItem[] = [];
   const bandName = getBandName();
+  const finder = actFinder(settings.acts);
 
   const shows = db.prepare(
     `SELECT id, venue, date, location, ticket_url, is_private, venue_locked, start_time, calendar_summary, calendar_description
@@ -451,6 +516,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       name: s.venue, auto_title: auto, title: o.public_title || auto,
       place: splitLocation(s.location), ticket_url: s.ticket_url ?? null,
       ...regionOf(o, s.location, auto, s.venue),
+      ...actOf(o, finder, bandName, s.calendar_summary, s.venue),
       is_private: isPrivate, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: parseLogistics(s.calendar_description),
     });
@@ -480,6 +546,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       name: w.description, auto_title: auto, title: o.public_title || auto,
       place: splitLocation(w.location), ticket_url: o.ticket_url,
       ...regionOf(o, w.location, auto, w.description),
+      ...actOf(o, finder, rule?.name ?? null, w.calendar_summary, w.description),
       is_private: isPrivate, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: null,
     });
@@ -503,6 +570,7 @@ export function publicBoard(token: string) {
         title: item.title,
         place: item.place,
         region: item.region,
+        act: item.act,
         ticket_url: item.ticket_url,
       })),
     regions: REGIONS,
@@ -540,7 +608,11 @@ export function crewBoard(token: string) {
   if (!sameToken(token, boardToken('crew'))) throw new BoardError('הקישור הזה כבר לא פעיל', 404);
   const settings = boardSettings();
   const bandName = getBandName();
-  const shows = boardItems().filter((item) => item.source === 'band').map((item) => {
+  const today = israelDate();
+  // «כל ההופעות» on the band's board reaches back to the start of last year's same month, so the
+  // band can look up who played a show they already did; «קרובות» starts at today.
+  const from = `${Number(today.slice(0, 4)) - 1}${today.slice(4, 8)}01`;
+  const shows = boardItems({ from }).filter((item) => item.source === 'band').map((item) => {
     const id = item.key.split(':')[1];
     const row = db.prepare('SELECT * FROM band_events WHERE id = ?').get(id) as any;
     const parsed = item.parsed ?? { call_time: null, soundcheck_time: null, stage_time: null, parking: null };
@@ -551,7 +623,9 @@ export function crewBoard(token: string) {
       time: item.time,
       // The band knows a private show by the name it has in the books; the public name is for fans.
       title: item.is_private ? item.name : item.title,
+      act: item.act,
       is_private: item.is_private,
+      past: item.date < today,
       place: item.place,
       call_time: item.override.call_time ?? parsed.call_time,
       soundcheck_time: item.override.soundcheck_time ?? parsed.soundcheck_time,
@@ -565,7 +639,11 @@ export function crewBoard(token: string) {
       ticket_url: item.ticket_url,
     };
   });
-  return { title: settings.crew_title || `${bandName} — לוח הופעות לצוות`, shows };
+  // Everybody on any show, for «בחרו שם לראות רק את שלכם».
+  const people = [...new Set(shows.flatMap((s) => [
+    ...s.members.map((m) => m.name), ...s.crew.map((c) => c.name), ...(s.sound_company ? [s.sound_company] : []),
+  ]))].sort((a, b) => a.localeCompare(b, 'he'));
+  return { title: settings.crew_title || 'לוח הופעות', band_name: bandName, today, people, shows };
 }
 
 /** The owner's screen: both links, the settings, and every upcoming show with its decisions. */

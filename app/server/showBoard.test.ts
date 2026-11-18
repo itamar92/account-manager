@@ -113,3 +113,19 @@ test('a show is filed under the region of its town', () => {
   board.updateBoardItem(`show:${id}`, { region: 'דרום' });
   assert.equal(board.boardItems().find((i) => i.key === `show:${id}`)!.region, 'דרום');
 });
+
+test('a show is badged with its act: typed by hand first, then the calendar rules', () => {
+  db.prepare("INSERT INTO calendar_rules (id, name, target, keywords) VALUES (?, 'Coldplay', 'personal', 'קולדפליי, הופעה')").run(uuid());
+  const find = board.actFinder([{ name: 'Disco Train', keywords: 'דיסקו טריין' }]);
+  assert.equal(find('הופעה קולדפליי זאפה'), 'קולדפליי');
+  assert.equal(find('דיסקו טריין בגריי'), 'Disco Train');
+  assert.equal(find('Disco Train Gray'), 'Disco Train');
+  assert.equal(find('הופעה בבארבי'), null);
+  board.updateBoardSettings({ acts: [{ name: 'Disco Train', keywords: 'דיסקו' }] });
+  const id = addShow({ venue: 'גריי', calendar_summary: 'דיסקו גריי', date: '2099-06-01' });
+  const item = () => board.boardItems().find((i) => i.key === `show:${id}`)!;
+  assert.equal(item().act, 'Disco Train');
+  board.updateBoardItem(`show:${id}`, { act: 'אחר' });
+  assert.equal(item().act, 'אחר');
+  assert.equal(item().auto_act, 'Disco Train');
+});

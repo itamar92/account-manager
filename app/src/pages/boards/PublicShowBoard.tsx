@@ -11,7 +11,30 @@ interface PublicShow {
   title: string;
   place: Place | null;
   region: string | null;
+  act: string | null;
   ticket_url: string | null;
+}
+
+/** Each act keeps one colour wherever it appears, picked from its name. */
+export function actHue(name: string): number {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return h;
+}
+
+function ActBadge({ name, active, onClick, size = 'md' }: {
+  name: string; active?: boolean; onClick?: () => void; size?: 'sm' | 'md';
+}) {
+  const hue = actHue(name);
+  const style = active
+    ? { background: `hsl(${hue} 85% 68%)`, color: '#16121f', borderColor: `hsl(${hue} 85% 68%)` }
+    : { background: `hsl(${hue} 70% 60% / 0.14)`, color: `hsl(${hue} 90% 82%)`, borderColor: `hsl(${hue} 70% 65% / 0.35)` };
+  const cls = `shrink-0 inline-flex items-center gap-1.5 rounded-full border font-semibold transition ${size === 'sm'
+    ? 'text-[11px] px-2 py-0.5' : 'text-sm px-3.5 py-1.5'}`;
+  const dot = <span className="w-1.5 h-1.5 rounded-full" style={{ background: active ? '#16121f' : `hsl(${hue} 90% 72%)` }} />;
+  return onClick
+    ? <button onClick={onClick} className={cls} style={style}>{dot}{name}</button>
+    : <span className={cls} style={style}>{dot}{name}</span>;
 }
 
 /** Loose text match: case, spacing and the geresh people type three different ways. */
@@ -28,6 +51,7 @@ export function PublicShowBoard() {
   const [params, setParams] = useSearchParams();
   const query = params.get('q') ?? '';
   const region = params.get('region') ?? '';
+  const act = params.get('act') ?? '';
   const single = params.get('show') ?? '';
   const setParam = (key: string, value: string) => {
     const next = new URLSearchParams(params);
@@ -45,12 +69,17 @@ export function PublicShowBoard() {
     }).catch((e) => setError(e.message));
   }, [token]);
 
+  // The acts on the board, the busiest first: a badge per act, generated from the shows themselves.
+  const acts = data ? Object.entries(data.shows.reduce<Record<string, number>>((m, show) => {
+    if (show.act) m[show.act] = (m[show.act] ?? 0) + 1;
+    return m;
+  }, {})).sort((a, b) => b[1] - a[1]).map(([name]) => name) : [];
   const regionsPresent = data ? data.regions.filter((r) => data.shows.some((show) => show.region === r)) : [];
   const shown = !data ? [] : single
     ? data.shows.filter((show) => show.id === single)
-    : data.shows.filter((show) => (!region || show.region === region)
+    : data.shows.filter((show) => (!region || show.region === region) && (!act || show.act === act)
       && (!query || fold([show.title, show.place?.name, show.place?.address].filter(Boolean).join(' ')).includes(fold(query))));
-  const filtered = !!(query || region);
+  const filtered = !!(query || region || act);
 
   const share = async () => {
     const url = window.location.href;
@@ -103,6 +132,13 @@ export function PublicShowBoard() {
                 className="flex-1 bg-transparent outline-none text-[15px] placeholder:text-white/40" />
               {query && <button onClick={() => setParam('q', '')} aria-label="ניקוי"><X size={16} className="text-white/60" /></button>}
             </label>
+            {acts.length > 1 && (
+              <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
+                {acts.map((name) => (
+                  <ActBadge key={name} name={name} active={act === name} onClick={() => setParam('act', act === name ? '' : name)} />
+                ))}
+              </div>
+            )}
             {regionsPresent.length > 1 && (
               <div className="flex gap-2 overflow-x-auto no-scrollbar -mx-1 px-1">
                 {['', ...regionsPresent].map((r) => (
@@ -169,6 +205,7 @@ function ShowCard({ show }: { show: PublicShow }) {
         <span className="text-[11px] text-violet-100/70 mt-1">{weekday(show.date).replace('יום ', '')}</span>
       </div>
       <div className="min-w-0 flex-1">
+        {show.act && <div className="mb-1.5"><ActBadge name={show.act} size="sm" /></div>}
         <div className="flex flex-wrap items-center gap-2">
           {soon && <span className="rounded-full bg-amber-400 text-[#16121f] text-[11px] font-bold px-2 py-0.5">{soon}</span>}
           <h3 className="text-lg font-bold leading-snug">{show.title}</h3>
