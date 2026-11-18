@@ -129,3 +129,17 @@ test('a show is badged with its act: typed by hand first, then the calendar rule
   assert.equal(item().act, 'אחר');
   assert.equal(item().auto_act, 'Disco Train');
 });
+
+test('«אופציה» in the name is an unsigned hold: on the band board, off the public one', () => {
+  assert.ok(board.isOption('אופציה - הופעה הלהקה אירוע חברה קיסריה'));
+  assert.ok(board.isOption('חתונה בקיסריה (אופציה)'));
+  assert.ok(!board.isOption('אופציות בע"מ'));
+  assert.equal(board.withoutOptionWord('אופציה - אירוע חברה קיסריה'), 'אירוע חברה קיסריה');
+  assert.equal(board.withoutOptionWord('חתונה בקיסריה - אופציה'), 'חתונה בקיסריה');
+  const id = addShow({ venue: 'גריי מודיעין', calendar_summary: 'אופציה - הופעה גריי מודיעין', date: '2099-07-01' });
+  const item = board.boardItems().find((i) => i.key === `show:${id}`)!;
+  assert.ok(item.is_option && !item.on_public);
+  const crew = board.crewBoard(board.setBoardEnabled('crew', true)).shows.find((s) => s.date === '2099-07-01')!;
+  assert.equal(crew.status, 'option');
+  assert.equal(crew.title, 'גריי מודיעין');
+});

@@ -14,6 +14,8 @@ interface CrewShow {
   title: string;
   act: string | null;
   is_private: boolean;
+  /** «סגור», or «אופציה» — held for a quote the client has not signed (the word in the event's name). */
+  status: 'confirmed' | 'option';
   past: boolean;
   place: Place | null;
   call_time: string | null;
@@ -205,13 +207,15 @@ function ShowCard({ show, person, embedded }: { show: CrewShow; person: string; 
   ].filter(([, v]) => v) as Array<[string, string]>;
 
   return (
-    <article className={`${embedded ? '' : 'rounded-2xl border border-[var(--cb-line)] bg-[var(--cb-card)]'} p-4 ${show.past ? 'opacity-70' : ''}`}>
+    <article className={`${embedded ? '' : `rounded-2xl border bg-[var(--cb-card)] ${show.status === 'option'
+      ? 'border-dashed border-[var(--cb-warn)]' : 'border-[var(--cb-line)]'}`} p-4 ${show.past ? 'opacity-70' : ''}`}>
       <div className="flex gap-4">
         <DateTile date={show.date} past={show.past} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap gap-1.5 mb-1.5">
             {soon && <Badge tone="accent">{soon}</Badge>}
-            {show.is_private && <Badge tone="warn"><Lock size={10} /> פרטי</Badge>}
+            {show.status === 'option' ? <Badge tone="warn">אופציה</Badge> : <Badge>סגור</Badge>}
+            {show.is_private && <Badge><Lock size={10} /> פרטי</Badge>}
             {show.ticket_url && (
               <a href={show.ticket_url} target="_blank" rel="noopener noreferrer"><Badge><Ticket size={10} /> כרטיסים</Badge></a>
             )}
@@ -298,7 +302,7 @@ function ListGroup({ shows, person }: { shows: CrewShow[]; person: string }) {
         return (
           <div key={s.id} className={s.past ? 'opacity-70' : ''}>
             <button onClick={() => setOpen(isOpen ? null : s.id)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-start hover:bg-[var(--cb-raised)] ${s.is_private ? 'outline-1 outline-dashed outline-[var(--cb-warn)] -outline-offset-4 rounded-xl' : ''}`}>
+              className={`w-full flex items-center gap-3 px-4 py-3 text-start hover:bg-[var(--cb-raised)] ${s.status === 'option' ? 'outline-1 outline-dashed outline-[var(--cb-warn)] -outline-offset-4 rounded-xl' : ''}`}>
               <span className="w-[3px] self-stretch rounded-full bg-[var(--cb-accent)]" />
               <span className="w-11 shrink-0 text-center">
                 <span className="block text-[15px] font-extrabold tabular-nums">{d.getDate()}.{d.getMonth() + 1}</span>
@@ -310,7 +314,8 @@ function ListGroup({ shows, person }: { shows: CrewShow[]; person: string }) {
                   {[s.act, s.call_time && `הגעה ${s.call_time}`].filter(Boolean).join(' · ')}
                 </span>
               </span>
-              {s.is_private && <Badge tone="warn">פרטי</Badge>}
+              {s.status === 'option' && <Badge tone="warn">אופציה</Badge>}
+              {s.is_private && <Badge>פרטי</Badge>}
               <ChevronDown size={16} className={`shrink-0 text-[var(--cb-muted)] transition-transform ${isOpen ? 'rotate-180' : ''}`} />
             </button>
             {isOpen && <div className="px-2 pb-2"><div className="rounded-xl border border-[var(--cb-line)] bg-[var(--cb-card)]"><ShowCard show={s} person={person} embedded /></div></div>}
@@ -360,7 +365,9 @@ function MonthView({ shows, today, person }: { shows: CrewShow[]; today: string;
             return (
               <button key={iso} disabled={!list} onClick={() => setPicked(isPicked ? null : iso)}
                 className={`aspect-square rounded-lg flex flex-col items-center justify-center text-sm transition
-                  ${list ? 'bg-[var(--cb-accent)] text-[var(--cb-accent-ink)] font-extrabold' : 'text-[var(--cb-muted)]'}
+                  ${list ? (list.every((x) => x.status === 'option')
+                  ? 'border-2 border-dashed border-[var(--cb-warn)] text-[var(--cb-text)] font-extrabold'
+                  : 'bg-[var(--cb-accent)] text-[var(--cb-accent-ink)] font-extrabold') : 'text-[var(--cb-muted)]'}
                   ${isPicked ? 'ring-2 ring-[var(--cb-text)]' : ''} ${isToday && !list ? 'border border-[var(--cb-accent)] text-[var(--cb-text)]' : ''}`}>
                 {localDate(iso).getDate()}
                 {list && list.length > 1 && <span className="text-[9px] font-bold opacity-90">×{list.length}</span>}

@@ -135,6 +135,25 @@ export function updateBoardSettings(patch: Partial<BoardSettings>): BoardSetting
 
 // ---------------------------------------------------------------- parsing the calendar
 
+/**
+ * «אופציה» in an event's name: the date is held for a quote the client has not signed yet
+ * (server/quoteOption.ts writes it at the front; a hand-written one may sit anywhere). Read as a
+ * whole word, with the Hebrew prefixes, so «אופציות» in a venue's name does not count.
+ */
+const OPTION_WORD = /(^|[^\p{L}\p{N}])[הב]?אופציה(?![\p{L}\p{N}])/u;
+
+export const isOption = (...texts: Array<string | null | undefined>) => texts.some((t) => !!t && OPTION_WORD.test(t));
+
+/** The name with «אופציה» (and the dash that glued it on) taken out, for showing next to its badge. */
+export function withoutOptionWord(title: string): string {
+  const out = title
+    .replace(/(^|[^\p{L}\p{N}])[הב]?אופציה(?![\p{L}\p{N}])\s*[-–—:|]?\s*/gu, '$1')
+    .replace(/\s*[-–—:|]\s*$/u, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return out || title;
+}
+
 /** Words that say "this is a show" and nothing else, taken off the front of a public name. */
 const LEADING_NOISE = ['הופעה', 'הופעות', 'גיג', 'show', 'gig'];
 const SEPARATORS = '\\-–—:|,';
@@ -145,7 +164,7 @@ const SEPARATORS = '\\-–—:|,';
  * already reads well («קרניבנד אלטון ג'ון בהיכל התרבות») is left exactly as it is.
  */
 export function publicTitle(raw: string | null | undefined): string {
-  let title = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  let title = withoutOptionWord(String(raw ?? '').replace(/\s+/g, ' ').trim());
   const original = title;
   let changed = true;
   while (changed) {
@@ -469,6 +488,8 @@ export interface BoardItem {
   act: string | null;
   ticket_url: string | null;
   is_private: boolean;
+  /** «אופציה»: held for a quote that is not signed yet — on the band's board, never on the public one. */
+  is_option: boolean;
   hidden: boolean;
   /** Whether it appears on the public board, all things considered. */
   on_public: boolean;
@@ -508,7 +529,8 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
     // A name typed by hand in the app is the owner's choice; otherwise the calendar's own title.
     const auto = publicTitle(s.venue_locked || !s.calendar_summary ? s.venue : s.calendar_summary);
     const isPrivate = !!s.is_private;
-    const offReason = isPrivate ? 'אירוע פרטי'
+    const option = isOption(s.calendar_summary, s.venue);
+    const offReason = option ? 'אופציה — עוד לא נסגר' : isPrivate ? 'אירוע פרטי'
       : o.hidden ? 'הוסתר ידנית'
         : !settings.include_band ? `הופעות ${bandName} לא מוצגות` : null;
     items.push({
@@ -517,7 +539,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       place: splitLocation(s.location), ticket_url: s.ticket_url ?? null,
       ...regionOf(o, s.location, auto, s.venue),
       ...actOf(o, finder, bandName, s.calendar_summary, s.venue),
-      is_private: isPrivate, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
+      is_private: isPrivate, is_option: option, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: parseLogistics(s.calendar_description),
     });
   }
@@ -537,8 +559,9 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
     const rule = w.calendar_rule_id ? ruleById.get(w.calendar_rule_id) : undefined;
     const auto = publicTitle(w.description_locked || !w.calendar_summary ? w.description : w.calendar_summary);
     const isPrivate = !!w.calendar_private;
+    const option = isOption(w.calendar_summary, w.description);
     const ruleOff = included && (!w.calendar_rule_id || !included.has(w.calendar_rule_id));
-    const offReason = isPrivate ? 'אירוע פרטי'
+    const offReason = option ? 'אופציה — עוד לא נסגר' : isPrivate ? 'אירוע פרטי'
       : o.hidden ? 'הוסתר ידנית'
         : ruleOff ? 'הכלל שלו לא מוצג בלוח' : null;
     items.push({
@@ -547,7 +570,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       place: splitLocation(w.location), ticket_url: o.ticket_url,
       ...regionOf(o, w.location, auto, w.description),
       ...actOf(o, finder, rule?.name ?? null, w.calendar_summary, w.description),
-      is_private: isPrivate, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
+      is_private: isPrivate, is_option: option, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: null,
     });
   }
@@ -622,9 +645,11 @@ export function crewBoard(token: string) {
       date: item.date,
       time: item.time,
       // The band knows a private show by the name it has in the books; the public name is for fans.
-      title: item.is_private ? item.name : item.title,
+      title: item.is_private ? withoutOptionWord(item.name) : item.title,
       act: item.act,
       is_private: item.is_private,
+      // «סגור» or «אופציה», as the band reads it at a glance.
+      status: item.is_option ? 'option' : 'confirmed',
       past: item.date < today,
       place: item.place,
       call_time: item.override.call_time ?? parsed.call_time,

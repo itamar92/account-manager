@@ -16,7 +16,7 @@ interface Item {
   name: string; auto_title: string; title: string; place: Place | null; ticket_url: string | null;
   auto_region: string | null; region: string | null;
   auto_act: string | null; act: string | null;
-  is_private: boolean; hidden: boolean; on_public: boolean; off_reason: string | null;
+  is_private: boolean; is_option: boolean; hidden: boolean; on_public: boolean; off_reason: string | null;
   override: Override; parsed: Logistics | null;
 }
 interface Reminder { keywords: string; text: string }
@@ -290,7 +290,7 @@ function ItemRow({ item, regions, acts, open, onToggle, onSave }: {
         <Tag tone={item.source === 'band' ? 'accent' : 'neutral'}>{item.source_label}</Tag>
         {item.on_public
           ? <Tag tone="pos">בלוח הציבורי</Tag>
-          : <Tag tone={item.is_private ? 'warn' : 'neutral'}><EyeOff size={11} /> {item.off_reason}</Tag>}
+          : <Tag tone={item.is_private || item.is_option ? 'warn' : 'neutral'}><EyeOff size={11} /> {item.off_reason}</Tag>}
         {item.act && <Tag tone="accent">{item.act}</Tag>}
         {item.region && <Tag>{item.region}</Tag>}
         {item.ticket_url && <Tag>כרטיסים ✓</Tag>}
@@ -331,7 +331,7 @@ function ItemRow({ item, regions, acts, open, onToggle, onSave }: {
           )}
           <div className="flex flex-wrap items-center gap-3">
             <Button onClick={() => onSave(item.source === 'band' ? form : { public_title: form.public_title, ticket_url: form.ticket_url, act: form.act })}>שמירה</Button>
-            {!item.is_private && (
+            {!item.is_private && !item.is_option && (
               <Switch label="הסתרה מהלוח הציבורי" checked={item.hidden} onChange={(v) => onSave({ hidden: v })} />
             )}
           </div>
