@@ -8,10 +8,12 @@ interface Logistics { call_time: string | null; soundcheck_time: string | null; 
 interface Override {
   public_title: string | null; ticket_url: string | null; hidden: boolean;
   call_time: string | null; soundcheck_time: string | null; parking: string | null; notes: string | null;
+  region: string | null;
 }
 interface Item {
   key: string; source: 'band' | 'work'; source_label: string; date: string; time: string | null;
   name: string; auto_title: string; title: string; place: Place | null; ticket_url: string | null;
+  auto_region: string | null; region: string | null;
   is_private: boolean; hidden: boolean; on_public: boolean; off_reason: string | null;
   override: Override; parsed: Logistics | null;
 }
@@ -24,6 +26,7 @@ interface Admin {
   tokens: { public: string; crew: string };
   settings: Settings;
   band_name: string;
+  regions: string[];
   personal_rules: Array<{ id: string; name: string; enabled: boolean }>;
   items: Item[];
 }
@@ -170,7 +173,7 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
         {!data.items.length && <div className="text-center text-faint py-8">אין הופעות קרובות ביומן.</div>}
         <ul className="divide-y divide-line">
           {data.items.map((item) => (
-            <ItemRow key={item.key} item={item} open={open === item.key}
+            <ItemRow key={item.key} item={item} regions={data.regions} open={open === item.key}
               onToggle={() => setOpen(open === item.key ? null : item.key)} onSave={(p) => saveItem(item.key, p)} />
           ))}
         </ul>
@@ -223,8 +226,8 @@ function LinkCard({ kind, title, description, token, onToggle, onRotate }: {
   );
 }
 
-function ItemRow({ item, open, onToggle, onSave }: {
-  item: Item; open: boolean; onToggle: () => void; onSave: (patch: Partial<Override>) => void;
+function ItemRow({ item, regions, open, onToggle, onSave }: {
+  item: Item; regions: string[]; open: boolean; onToggle: () => void; onSave: (patch: Partial<Override>) => void;
 }) {
   const [form, setForm] = useState({
     public_title: item.override.public_title ?? '',
@@ -257,6 +260,7 @@ function ItemRow({ item, open, onToggle, onSave }: {
         {item.on_public
           ? <Tag tone="pos">בלוח הציבורי</Tag>
           : <Tag tone={item.is_private ? 'warn' : 'neutral'}><EyeOff size={11} /> {item.off_reason}</Tag>}
+        {item.region && <Tag>{item.region}</Tag>}
         {item.ticket_url && <Tag>כרטיסים ✓</Tag>}
       </button>
 
@@ -269,6 +273,14 @@ function ItemRow({ item, open, onToggle, onSave }: {
           <div className="grid md:grid-cols-2 gap-3">
             <Input label="שם בלוח הציבורי" placeholder={item.auto_title} value={form.public_title} onChange={set('public_title')} />
             <Input label="קישור לכרטיסים" dir="ltr" placeholder="https://" value={form.ticket_url} onChange={set('ticket_url')} />
+            <label className="block">
+              <span className="block text-[13px] text-muted mb-1.5">אזור (לסינון בלוח הציבורי)</span>
+              <select className="w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm"
+                value={item.override.region ?? ''} onChange={(e) => onSave({ region: e.target.value || null })}>
+                <option value="">{item.auto_region ? `אוטומטי — ${item.auto_region}` : 'אוטומטי — לא זוהה'}</option>
+                {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+            </label>
           </div>
           {item.source === 'band' && (
             <>

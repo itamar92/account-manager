@@ -1011,6 +1011,8 @@ addColumnIfMissing('works', 'start_time', 'TEXT');
 addColumnIfMissing('works', 'calendar_rule_id', 'TEXT');
 addColumnIfMissing('works', 'calendar_private', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('works', 'calendar_summary', 'TEXT');
+// The region a show is filed under on the public board, when the owner corrects the guess.
+addColumnIfMissing('show_board_items', 'region', 'TEXT');
 // Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
 // due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
 addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');

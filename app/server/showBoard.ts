@@ -247,6 +247,54 @@ export function remindersFor(reminders: VenueReminder[], ...texts: Array<string 
   return out;
 }
 
+// ---------------------------------------------------------------- regions
+
+/** The regions the public board filters by, in the order they are offered (north to south). */
+export const REGIONS = ['צפון', 'שרון', 'מרכז', 'ירושלים', 'דרום', 'אילת'] as const;
+export type Region = (typeof REGIONS)[number];
+
+/** Towns, in Hebrew and as Google spells them, and the region each one is in. */
+const TOWNS: Record<Region, string[]> = {
+  'צפון': ['חיפה', 'Haifa', 'קריית', 'קרית', 'Kiryat', 'Qiryat', 'נהריה', 'Nahariya', 'עכו', 'Akko', 'Acre',
+    'כרמיאל', 'Karmiel', 'נצרת', 'Nazareth', 'עפולה', 'Afula', 'טבריה', 'Tiberias', 'צפת', 'Safed', 'Tzfat',
+    'יקנעם', 'Yokneam', 'זכרון יעקב', 'Zikhron', 'טירת כרמל', 'Tirat Carmel', 'נשר', 'Nesher', 'מעלות',
+    'ראש פינה', 'Rosh Pina', 'גליל', 'Galil', 'Galilee', 'גולן', 'Golan', 'קצרין', 'Katzrin', 'עתלית', 'בית שאן',
+    'Beit She\'an', 'מגדל העמק', 'Migdal HaEmek', 'שפרעם', 'יוקנעם'],
+  'שרון': ['נתניה', 'Netanya', 'הרצליה', 'Herzliya', 'רעננה', "Ra'anana", 'Raanana', 'כפר סבא', 'Kefar Sava',
+    'Kfar Saba', 'הוד השרון', 'Hod HaSharon', 'חדרה', 'Hadera', 'קיסריה', 'Caesarea', 'פרדס חנה', 'Pardes Hanna',
+    'אבן יהודה', 'Even Yehuda', 'כוכב יאיר', 'רמת השרון', 'Ramat HaSharon', 'אור עקיבא', 'Or Akiva', 'שרון'],
+  'מרכז': ['תל אביב', 'Tel Aviv', 'Tel-Aviv', 'יפו', 'Jaffa', 'Yafo', 'רמת גן', 'Ramat Gan', 'גבעתיים', 'Givatayim',
+    'בני ברק', 'Bnei Brak', 'פתח תקווה', 'פתח תקוה', 'Petah Tikva', 'Petah Tiqva', 'ראשון לציון', 'Rishon',
+    'חולון', 'Holon', 'בת ים', 'Bat Yam', 'אור יהודה', 'Or Yehuda', 'יהוד', 'Yehud', 'ראש העין', 'Rosh HaAyin',
+    'אייר פורט סיטי', 'Airport City', 'שוהם', 'Shoham', 'לוד', 'Lod', 'רמלה', 'Ramla', 'מודיעין', "Modi'in",
+    'Modiin', 'נס ציונה', 'Ness Ziona', 'Nes Tziona', 'רחובות', 'Rehovot', 'קריית אונו', 'קרית אונו', 'Kiryat Ono',
+    'יבנה', 'Yavne', 'גדרה', 'Gedera', 'אלעד', 'Elad', 'גני תקווה', 'Ganei Tikva', 'סביון', 'Savyon'],
+  'ירושלים': ['ירושלים', 'Jerusalem', 'בית שמש', 'Beit Shemesh', 'מבשרת', 'Mevaseret', 'מעלה אדומים',
+    "Ma'ale Adumim", 'אבו גוש', 'Abu Ghosh'],
+  'דרום': ['אשדוד', 'Ashdod', 'אשקלון', 'Ashkelon', 'באר שבע', 'Beer Sheva', "Be'er Sheva", 'Beersheba',
+    'קריית גת', 'קרית גת', 'Kiryat Gat', 'שדרות', 'Sderot', 'נתיבות', 'Netivot', 'אופקים', 'Ofakim', 'דימונה',
+    'Dimona', 'ערד', 'Arad', 'מצפה רמון', 'Mitzpe Ramon', 'קריית מלאכי', 'Kiryat Malakhi', 'נגב', 'Negev'],
+  'אילת': ['אילת', 'Eilat', 'Elat'],
+};
+
+const TOWN_LIST: Array<{ word: string; region: Region }> = Object.entries(TOWNS)
+  .flatMap(([region, words]) => words.map((word) => ({ word: word.toLowerCase(), region: region as Region })))
+  // The longest name wins, so «קריית אונו» is the centre and not the north's «קריית».
+  .sort((a, b) => b.word.length - a.word.length);
+
+/** The region a show is in, from the town in its location (or failing that, its name). */
+export function regionFor(...texts: Array<string | null | undefined>): Region | null {
+  for (const text of texts) {
+    const hay = String(text ?? '').toLowerCase();
+    if (!hay) continue;
+    const hit = TOWN_LIST.find((t) => hay.includes(t.word));
+    if (hit) return hit.region;
+  }
+  return null;
+}
+
+export const isRegion = (value: unknown): value is Region => (REGIONS as readonly string[]).includes(String(value));
+
 // ---------------------------------------------------------------- per-show decisions
 
 export interface BoardItemOverride {
@@ -257,6 +305,7 @@ export interface BoardItemOverride {
   soundcheck_time: string | null;
   parking: string | null;
   notes: string | null;
+  region: Region | null;
 }
 
 function overrides(): Map<string, BoardItemOverride> {
@@ -269,11 +318,13 @@ function overrides(): Map<string, BoardItemOverride> {
     soundcheck_time: r.soundcheck_time ?? null,
     parking: r.parking ?? null,
     notes: r.notes ?? null,
+    region: isRegion(r.region) ? r.region : null,
   }]));
 }
 
 const EMPTY_OVERRIDE: BoardItemOverride = {
   public_title: null, ticket_url: null, hidden: false, call_time: null, soundcheck_time: null, parking: null, notes: null,
+  region: null,
 };
 
 /** A link someone typed, or null: only http(s), so the page never renders a javascript: href. */
@@ -318,6 +369,7 @@ export function updateBoardItem(key: string, patch: Record<string, unknown>) {
   if ('call_time' in patch) next.call_time = cleanTime(patch.call_time);
   if ('soundcheck_time' in patch) next.soundcheck_time = cleanTime(patch.soundcheck_time);
   if ('parking' in patch) next.parking = optionalText(patch.parking, 300);
+  if ('region' in patch) next.region = isRegion(patch.region) ? patch.region : null;
   if ('notes' in patch) next.notes = String(patch.notes ?? '').trim().slice(0, 1000) || null;
   if ('ticket_url' in patch) {
     const url = cleanUrl(patch.ticket_url);
@@ -327,12 +379,14 @@ export function updateBoardItem(key: string, patch: Record<string, unknown>) {
   }
 
   db.prepare(
-    `INSERT INTO show_board_items (item_key, public_title, ticket_url, hidden, call_time, soundcheck_time, parking, notes, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `INSERT INTO show_board_items (item_key, public_title, ticket_url, hidden, call_time, soundcheck_time, parking, notes,
+       region, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(item_key) DO UPDATE SET public_title = excluded.public_title, ticket_url = excluded.ticket_url,
        hidden = excluded.hidden, call_time = excluded.call_time, soundcheck_time = excluded.soundcheck_time,
-       parking = excluded.parking, notes = excluded.notes, updated_at = excluded.updated_at`
-  ).run(key, next.public_title, next.ticket_url, next.hidden ? 1 : 0, next.call_time, next.soundcheck_time, next.parking, next.notes);
+       parking = excluded.parking, notes = excluded.notes, region = excluded.region, updated_at = excluded.updated_at`
+  ).run(key, next.public_title, next.ticket_url, next.hidden ? 1 : 0, next.call_time, next.soundcheck_time, next.parking, next.notes,
+    next.region);
   return boardItems().find((item) => item.key === key) ?? null;
 }
 
@@ -351,6 +405,9 @@ export interface BoardItem {
   auto_title: string;
   title: string;
   place: Place | null;
+  /** The region guessed from the town, and the one in force (the owner's, when set). */
+  auto_region: Region | null;
+  region: Region | null;
   ticket_url: string | null;
   is_private: boolean;
   hidden: boolean;
@@ -361,6 +418,11 @@ export interface BoardItem {
   override: BoardItemOverride;
   /** Band shows only: what the calendar description says, before anything typed by hand. */
   parsed: Logistics | null;
+}
+
+function regionOf(o: BoardItemOverride, ...texts: Array<string | null | undefined>) {
+  const auto = regionFor(...texts);
+  return { auto_region: auto, region: o.region ?? auto };
 }
 
 /** Upcoming band shows and calendar works, with everything the boards and the owner need. */
@@ -388,6 +450,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       key, source: 'band', source_label: bandName, date: s.date, time: s.start_time ?? null,
       name: s.venue, auto_title: auto, title: o.public_title || auto,
       place: splitLocation(s.location), ticket_url: s.ticket_url ?? null,
+      ...regionOf(o, s.location, auto, s.venue),
       is_private: isPrivate, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: parseLogistics(s.calendar_description),
     });
@@ -416,6 +479,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       key, source: 'work', source_label: rule?.name || w.client_name || 'יומן', date: w.date, time: w.start_time ?? null,
       name: w.description, auto_title: auto, title: o.public_title || auto,
       place: splitLocation(w.location), ticket_url: o.ticket_url,
+      ...regionOf(o, w.location, auto, w.description),
       is_private: isPrivate, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: null,
     });
@@ -438,8 +502,10 @@ export function publicBoard(token: string) {
         time: item.time,
         title: item.title,
         place: item.place,
+        region: item.region,
         ticket_url: item.ticket_url,
       })),
+    regions: REGIONS,
   };
 }
 
@@ -508,6 +574,7 @@ export function boardAdmin() {
     tokens: { public: boardToken('public'), crew: boardToken('crew') },
     settings: boardSettings(),
     band_name: getBandName(),
+    regions: REGIONS,
     personal_rules: listRules().filter((r) => r.target === 'personal').map((r) => ({ id: r.id, name: r.name, enabled: !!r.enabled })),
     items: boardItems(),
   };

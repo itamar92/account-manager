@@ -100,3 +100,16 @@ test('the crew board has private shows, the lineup, the logistics and the remind
   assert.deepEqual(show.reminders, ['להביא מיקרופון אלחוטי']);
   assert.equal(show.notes, 'לבוש שחור');
 });
+
+test('a show is filed under the region of its town', () => {
+  assert.equal(board.regionFor('Zappa Tel Aviv, Raoul Wallenberg St 24, Tel Aviv-Yafo, Israel'), 'מרכז');
+  assert.equal(board.regionFor('היכל התרבות, קריית אונו'), 'מרכז');
+  assert.equal(board.regionFor('קריית ביאליק'), 'צפון');
+  assert.equal(board.regionFor(null, 'זאפה הרצליה'), 'שרון');
+  assert.equal(board.regionFor('Eilat'), 'אילת');
+  assert.equal(board.regionFor('בארבי'), null);
+  const id = addShow({ venue: 'בארבי', date: '2099-05-01', location: 'Haifa' });
+  assert.equal(board.boardItems().find((i) => i.key === `show:${id}`)!.region, 'צפון');
+  board.updateBoardItem(`show:${id}`, { region: 'דרום' });
+  assert.equal(board.boardItems().find((i) => i.key === `show:${id}`)!.region, 'דרום');
+});

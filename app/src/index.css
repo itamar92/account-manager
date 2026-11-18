@@ -145,3 +145,9 @@ body {
   .quote-doc { border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
   .quote-doc, .quote-doc * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 }
+
+/* A row that scrolls sideways (the public board's region chips) without a scrollbar under it. */
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
