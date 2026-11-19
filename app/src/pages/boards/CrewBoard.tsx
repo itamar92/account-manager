@@ -10,7 +10,6 @@ import { byMonth, localDate, monthHeading, relativeDay, type Place } from './boa
 interface CrewShow {
   id: string;
   date: string;
-  time: string | null;
   title: string;
   act: string | null;
   is_private: boolean;
@@ -19,7 +18,10 @@ interface CrewShow {
   past: boolean;
   place: Place | null;
   call_time: string | null;
+  /** The calendar event's start, unless the description or the owner says otherwise. */
   soundcheck_time: string | null;
+  doors_time: string | null;
+  /** The club's usual hour (זאפה/גריי 21:30); a private event's is typed per show. */
   stage_time: string | null;
   parking: string | null;
   notes: string | null;
@@ -202,8 +204,7 @@ function ShowCard({ show, person, embedded }: { show: CrewShow; person: string; 
     ...show.crew,
   ];
   const times = [
-    ['הגעה', show.call_time], ['בלאנס', show.soundcheck_time], ['עלייה לבמה', show.stage_time],
-    ['האירוע', show.time !== show.stage_time ? show.time : null],
+    ['הגעה', show.call_time], ['בלאנס', show.soundcheck_time], ['פתיחת דלתות', show.doors_time], ['עלייה לבמה', show.stage_time],
   ].filter(([, v]) => v) as Array<[string, string]>;
 
   return (
@@ -311,7 +312,11 @@ function ListGroup({ shows, person }: { shows: CrewShow[]; person: string }) {
               <span className="min-w-0 flex-1">
                 <span className="block font-extrabold truncate">{s.title}</span>
                 <span className="block text-[12px] text-[var(--cb-muted)] truncate">
-                  {[s.act, s.call_time && `הגעה ${s.call_time}`].filter(Boolean).join(' · ')}
+                  {[
+                    s.act,
+                    s.call_time ? `הגעה ${s.call_time}` : s.soundcheck_time && `בלאנס ${s.soundcheck_time}`,
+                    s.stage_time && `במה ${s.stage_time}`,
+                  ].filter(Boolean).join(' · ')}
                 </span>
               </span>
               {s.status === 'option' && <Badge tone="warn">אופציה</Badge>}

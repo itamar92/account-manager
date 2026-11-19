@@ -1015,6 +1015,10 @@ addColumnIfMissing('works', 'calendar_summary', 'TEXT');
 addColumnIfMissing('show_board_items', 'region', 'TEXT');
 // Which act the show is (Disco Train, a tribute…), when the owner corrects the guess.
 addColumnIfMissing('show_board_items', 'act', 'TEXT');
+// When the doors open (what fans see) and when the band goes on, typed for one show — a private
+// event's own hours, or a club night that runs differently from the club's usual ones.
+addColumnIfMissing('show_board_items', 'doors_time', 'TEXT');
+addColumnIfMissing('show_board_items', 'stage_time', 'TEXT');
 // Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
 // due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
 addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');

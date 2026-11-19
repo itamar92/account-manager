@@ -45,9 +45,10 @@ test('arrival, sound check, stage and parking are read out of the description', 
     '<b>שכר: 5000</b><br>הגעה 17:30, בלאנס ב-18.15<br>עלייה לבמה 21:00<br>חניה: חניון הבימה, כניסה מדיזנגוף'
   );
   assert.deepEqual(parsed, {
-    call_time: '17:30', soundcheck_time: '18:15', stage_time: '21:00', parking: 'חניון הבימה, כניסה מדיזנגוף',
+    call_time: '17:30', soundcheck_time: '18:15', doors_time: null, stage_time: '21:00', parking: 'חניון הבימה, כניסה מדיזנגוף',
   });
-  assert.deepEqual(board.parseLogistics(null), { call_time: null, soundcheck_time: null, stage_time: null, parking: null });
+  assert.deepEqual(board.parseLogistics(null), { call_time: null, soundcheck_time: null, doors_time: null, stage_time: null, parking: null });
+  assert.equal(board.parseLogistics('פתיחת דלתות 20:15').doors_time, '20:15');
   assert.equal(board.parseLogistics("סאונד צ'ק 19:00").soundcheck_time, '19:00');
 });
 
@@ -66,7 +67,9 @@ test('the public board hides private shows and needs its token', () => {
   const token = board.setBoardEnabled('public', true);
   const view = board.publicBoard(token);
   assert.deepEqual(view.shows.map((s) => s.title), ['קולדפליי זאפה תל אביב']);
-  assert.equal(view.shows[0].time, '21:00');
+  // The calendar's 21:00 is the balance; fans are told when Zappa opens its doors.
+  assert.equal(view.shows[0].doors_time, '19:30');
+  assert.ok(!('time' in view.shows[0]));
 
   board.updateBoardItem(`show:${open}`, { ticket_url: 'tickets.example.com/x', public_title: 'קולדפליי — זאפה' });
   assert.equal(board.publicBoard(token).shows[0].ticket_url, 'https://tickets.example.com/x');
@@ -99,6 +102,9 @@ test('the crew board has private shows, the lineup, the logistics and the remind
   assert.deepEqual(show.members, [{ name: 'נגן א', role: 'גיטרה' }]);
   assert.deepEqual(show.reminders, ['להביא מיקרופון אלחוטי']);
   assert.equal(show.notes, 'לבוש שחור');
+  // A private night at Zappa is not a Zappa club night: no doors, and the stage time is typed.
+  assert.equal(show.doors_time, null);
+  assert.equal(show.stage_time, null);
 });
 
 test('a show is filed under the region of its town', () => {
@@ -169,4 +175,60 @@ test('works from any source are listed, and the same night twice is listed once'
   db.prepare("INSERT INTO works (id, client_id, date, description, amount, source) VALUES (?, ?, '2099-09-02', 'קרניבנד בבית העם', 0, 'n8n')").run(uuid(), client);
   const days = board.boardItems().filter((i) => i.date.startsWith('2099-09')).map((i) => i.date);
   assert.deepEqual(days, ['2099-09-01', '2099-09-02']);
+});
+
+test('the calendar start is the balance; the club sets doors and stage; a private event keeps its own', () => {
+  const zappa = addShow({ venue: 'זאפה הרצליה', calendar_summary: 'הופעה זאפה הרצליה', date: '2099-10-01', start_time: '18:00' });
+  addShow({ venue: 'Gray Club', location: 'Gray, Modiin', date: '2099-10-02', start_time: '18:30' });
+  const written = addShow({ venue: 'זאפה ירושלים', date: '2099-10-03', start_time: '17:00', calendar_description: 'עלייה לבמה 22:00\nבלאנס 17:30' });
+  const wedding = addShow({ venue: 'חתונה פרטית בגריי', date: '2099-10-04', start_time: '19:00' });
+  addShow({ venue: 'בארבי', date: '2099-10-05', start_time: '20:00' });
+
+  const crew = () => board.crewBoard(board.setBoardEnabled('crew', true)).shows;
+  const night = (date: string) => crew().find((s) => s.date === date)!;
+  const hours = (date: string) => {
+    const s = night(date);
+    return [s.soundcheck_time, s.doors_time, s.stage_time];
+  };
+  assert.deepEqual(hours('2099-10-01'), ['18:00', '19:30', '21:30']);
+  assert.deepEqual(hours('2099-10-02'), ['18:30', '20:00', '21:30']);
+  // What the description says beats both the calendar start and the club's usual hour.
+  assert.deepEqual(hours('2099-10-03'), ['17:30', '19:30', '22:00']);
+  assert.ok(night('2099-10-04').is_private);
+  assert.deepEqual(hours('2099-10-04'), ['19:00', null, null]);
+  assert.deepEqual(hours('2099-10-05'), ['20:00', null, null]);
+
+  // Typed by hand for one show: a private event's stage time, a club night that opens late.
+  board.updateBoardItem(`show:${wedding}`, { stage_time: '22.30' });
+  board.updateBoardItem(`show:${zappa}`, { doors_time: '20:00' });
+  assert.equal(night('2099-10-04').stage_time, '22:30');
+  assert.throws(() => board.updateBoardItem(`show:${wedding}`, { stage_time: '25:00' }), /שעה לא תקינה/);
+
+  const pub = board.publicBoard(board.setBoardEnabled('public', true)).shows;
+  const doors = (date: string) => pub.find((s) => s.date === date)?.doors_time;
+  assert.equal(doors('2099-10-01'), '20:00');
+  assert.equal(doors('2099-10-02'), '20:00');
+  assert.equal(doors('2099-10-05'), null); // no known doors time: no time, never the balance
+  assert.ok(!pub.some((s) => s.date === '2099-10-04'));
+  const item = board.boardItems().find((i) => i.key === `show:${zappa}`)!;
+  assert.equal(item.auto_hours.doors_time, '19:30');
+  assert.equal(item.hours.doors_time, '20:00');
+});
+
+test('venue hours are the owner\'s to edit, and a work at the club gets them too', () => {
+  const defaults = board.boardSettings().venue_hours;
+  assert.deepEqual(defaults.map((h) => [h.doors, h.stage]), [['19:30', '21:30'], ['20:00', '21:30']]);
+  assert.throws(() => board.updateBoardSettings({ venue_hours: [{ keywords: 'בארבי', doors: '7pm', stage: null }] }), /שעה לא תקינה/);
+  const saved = board.updateBoardSettings({
+    venue_hours: [...defaults, { keywords: 'בארבי', doors: '20.30', stage: '' }, { keywords: 'ריק', doors: '', stage: '' }],
+  }).venue_hours;
+  assert.deepEqual(saved[2], { keywords: 'בארבי', doors: '20:30', stage: null });
+  assert.equal(saved.length, 3);
+
+  const client = uuid();
+  db.prepare("INSERT INTO clients (id, name) VALUES (?, 'לקוח שעות')").run(client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, start_time) VALUES (?, ?, '2099-11-01', 'קרניבנד בבארבי', 0, '18:00')").run(uuid(), client);
+  const pub = board.publicBoard(board.setBoardEnabled('public', true)).shows;
+  assert.equal(pub.find((s) => s.date === '2099-11-01')?.doors_time, '20:30');
+  board.updateBoardSettings({ venue_hours: defaults });
 });
