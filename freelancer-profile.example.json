@@ -1,0 +1,14 @@
+{
+  "business_type": "osek_murshe",
+  "vat_filing_frequency": "bi-monthly",
+  "annual_turnover_nis": 0,
+  "detailed_vat_report_874_required": false,
+  "invoice_allocation_number_required_above_nis": 10000,
+  "industry": "music",
+  "accountant": {
+    "name": "",
+    "submission_cadence": null
+  },
+  "vat_rate": 0.18,
+  "notes": "Copy to freelancer-profile.json (git-ignored) and fill in. Read by the tax-compliance agent in .claude/agents/."
+}

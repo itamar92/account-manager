@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { del, get, post, nis } from '../api';
+import { SyncButton } from '../SyncButton';
 import {
   Button, Modal, StatusBadge, DataTable, FilterBar, PageHeader, PeriodSelect, SearchInput,
   filterClass, textMatch, usePeriodFilter,
@@ -88,6 +89,7 @@ export function Invoices() {
       <PageHeader
         title="חשבוניות"
         sub={<><span className="num">{openCount}</span> פתוחות · <span className="num">{nis(openTotal)}</span> ממתין להתקבל</>}
+        actions={<SyncButton service="morning" onError={setError} onDone={setNotice} reload={load} />}
       />
 
       <FilterBar>
@@ -103,7 +105,7 @@ export function Invoices() {
       </FilterBar>
 
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
-      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
+      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5 whitespace-pre-line">{notice}</div>}
 
       <DataTable
         empty="אין חשבוניות"

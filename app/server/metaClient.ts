@@ -1,14 +1,20 @@
 /**
  * Meta (Facebook/Instagram) Marketing API read client — what the band's ad spend is pulled from.
  *
- * Credentials come from the environment: `META_ACCESS_TOKEN` and `META_AD_ACCOUNT_ID`. The token
+ * Credentials are `META_ACCESS_TOKEN` and `META_AD_ACCOUNT_ID`, saved in Settings → חיבורים or taken
+ * from the environment (credentials.ts). The token
  * is meant to be a **System User** token generated in Business Settings with the `ads_read`
  * scope, not a personal login token: a system user belongs to the business rather than to a
  * person, so its token does not expire every 60 days and does not stop working when someone
  * changes their password. Reading your own ad account with `ads_read` needs no App Review.
  *
- * Read-only, like the calendar client — nothing here creates, pauses or pays for anything.
+ * Reads, with one exception kept apart at the bottom of the file: the writes the campaign
+ * advisor's actions make (`metaActions.ts`), each only after the owner confirmed its preview. They
+ * use the same token, which then needs `ads_management` beside `ads_read`; a token without it
+ * still syncs, and a confirmed action is refused by Meta with a message that says so.
  */
+
+import { credential } from './credentials.js';
 
 // Overridable so the sync can be pointed at a stub, the same way GREEN_INVOICE_BASE_URL points
 // the Morning client at the sandbox.
@@ -24,7 +30,7 @@ export class MetaError extends Error {
 }
 
 export function isMetaConfigured(): boolean {
-  return Boolean(process.env.META_ACCESS_TOKEN && process.env.META_AD_ACCOUNT_ID);
+  return Boolean(credential('META_ACCESS_TOKEN') && credential('META_AD_ACCOUNT_ID'));
 }
 
 /**
@@ -34,14 +40,14 @@ export function isMetaConfigured(): boolean {
  * accepted and normalised here rather than in every caller.
  */
 export function adAccountId(): string {
-  const raw = (process.env.META_AD_ACCOUNT_ID || '').trim();
-  if (!raw) throw new MetaError('Meta לא מוגדר — חסר META_AD_ACCOUNT_ID', 503);
+  const raw = credential('META_AD_ACCOUNT_ID');
+  if (!raw) throw new MetaError('Meta לא מוגדר — חסר מזהה חשבון הפרסום (הגדרות → חיבורים)', 503);
   return raw.startsWith('act_') ? raw : `act_${raw.replace(/^act/, '')}`;
 }
 
 function accessToken(): string {
-  const token = (process.env.META_ACCESS_TOKEN || '').trim();
-  if (!token) throw new MetaError('Meta לא מוגדר — חסר META_ACCESS_TOKEN', 503);
+  const token = credential('META_ACCESS_TOKEN');
+  if (!token) throw new MetaError('Meta לא מוגדר — חסר טוקן גישה (הגדרות → חיבורים)', 503);
   return token;
 }
 
@@ -52,9 +58,13 @@ function accessToken(): string {
  * part worth showing — "(#190) invalid token" says what to fix, a bare 400 does not. The token
  * is never included in an error, since these messages reach the browser.
  */
-async function graph<T>(path: string, params: Record<string, string>): Promise<T> {
-  const query = new URLSearchParams({ ...params, access_token: accessToken() });
-  const res = await fetch(`${GRAPH_URL}/${API_VERSION}/${path}?${query}`);
+async function graph<T>(path: string, params: Record<string, string>, write = false): Promise<T> {
+  const res = write
+    ? await fetch(`${GRAPH_URL}/${API_VERSION}/${path}`, {
+        method: 'POST',
+        body: new URLSearchParams({ ...params, access_token: accessToken() }),
+      })
+    : await fetch(`${GRAPH_URL}/${API_VERSION}/${path}?${new URLSearchParams({ ...params, access_token: accessToken() })}`);
 
   let body: any;
   try {
@@ -66,7 +76,13 @@ async function graph<T>(path: string, params: Record<string, string>): Promise<T
     const err = body.error;
     // 190 is an expired or revoked token, 102 a session problem — both mean "generate a new
     // system user token", which is worth saying rather than leaving as a code.
-    const hint = err.code === 190 || err.code === 102 ? ' — יש להנפיק טוקן חדש ב-Business Settings' : '';
+    // On a write, 10 and the 200s are permission errors: the token was generated with ads_read
+    // only, which is enough for everything but the advisor's actions.
+    const hint = err.code === 190 || err.code === 102
+      ? ' — יש להנפיק טוקן חדש ב-Business Settings'
+      : write && (err.code === 10 || (err.code >= 200 && err.code < 300))
+        ? ' — לטוקן של Meta אין הרשאת ads_management. יש להנפיק אותו מחדש עם ads_management ו-ads_read ולעדכן את META_ACCESS_TOKEN'
+        : '';
     throw new MetaError(`Meta: ${err.message || 'שגיאה לא ידועה'}${hint}`, res.status === 403 ? 403 : 502);
   }
   if (!res.ok) throw new MetaError(`Meta ${path} נכשל (${res.status})`);
@@ -173,7 +189,233 @@ export async function fetchDailyCampaignInsights(since: string, until: string): 
     }));
 }
 
+export interface MetaAdCopy {
+  id: string;
+  campaign_id: string;
+  name: string | null;
+  status: string | null;
+  primary_text: string | null;
+  headline: string | null;
+  description: string | null;
+  call_to_action: string | null;
+  link_url: string | null;
+  created_time: string | null;
+}
+
+const text = (value: unknown): string | null => {
+  const s = typeof value === 'string' ? value.trim() : '';
+  return s || null;
+};
+
+/**
+ * The words an ad showed, wherever Meta keeps them for that kind of ad.
+ *
+ * There is no single field. A link ad keeps its copy under `object_story_spec.link_data`, a
+ * video ad under `video_data` (where the headline is `title` and the description is
+ * `link_description`), a dynamic-creative ad as lists in `asset_feed_spec` — the first variant is
+ * the one taken — and an ad made from an existing post often has only the creative's own
+ * `body`/`title`. Each is tried in turn, and whatever is missing stays null.
+ */
+export function extractAdCopy(ad: any): MetaAdCopy {
+  const creative = ad?.creative ?? {};
+  const story = creative.object_story_spec ?? {};
+  const link = story.link_data ?? {};
+  const video = story.video_data ?? {};
+  const feed = creative.asset_feed_spec ?? {};
+  const first = (list: any) => (Array.isArray(list) && list.length ? list[0] : undefined);
+
+  return {
+    id: String(ad.id),
+    campaign_id: String(ad.campaign_id ?? ''),
+    name: text(ad.name),
+    status: text(ad.effective_status) ?? text(ad.status),
+    primary_text: text(link.message) ?? text(video.message) ?? text(first(feed.bodies)?.text) ?? text(creative.body),
+    headline: text(link.name) ?? text(video.title) ?? text(first(feed.titles)?.text) ?? text(creative.title),
+    description: text(link.description) ?? text(video.link_description) ?? text(first(feed.descriptions)?.text),
+    call_to_action:
+      text(link.call_to_action?.type) ?? text(video.call_to_action?.type)
+      ?? text(first(feed.call_to_action_types)) ?? text(creative.call_to_action_type),
+    link_url:
+      text(link.link) ?? text(video.call_to_action?.value?.link)
+      ?? text(first(feed.link_urls)?.website_url) ?? text(creative.link_url),
+    created_time: text(ad.created_time),
+  };
+}
+
+/**
+ * Every ad on the account with the copy it ran — for the advisor, which writes new ads in the
+ * band's own voice. Same `ads_read` scope as the rest; nothing here is written.
+ */
+export async function fetchAds(): Promise<MetaAdCopy[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/ads`, {
+    fields:
+      'id,name,status,effective_status,campaign_id,created_time,' +
+      'creative{title,body,call_to_action_type,link_url,object_story_spec,asset_feed_spec}',
+  });
+  return rows.filter((row) => row?.id && row?.campaign_id).map(extractAdCopy);
+}
+
 /** Cheap connectivity probe: proves the token works without pulling any reporting. */
 export async function ping(): Promise<MetaAccount> {
   return fetchAccount();
+}
+
+/** One object — a campaign, ad set, ad or pixel — with the fields asked for. */
+export async function fetchObject(id: string, fields: string): Promise<any> {
+  if (!/^\d+$/.test(id)) throw new MetaError(`מזהה Meta לא תקין: ${id}`, 400);
+  return graph<any>(id, { fields });
+}
+
+export interface MetaPixel {
+  id: string;
+  name: string | null;
+  last_fired_time: string | null;
+  is_unavailable: boolean;
+}
+
+/** The ad account's pixels (datasets). Same `ads_read` scope as the campaigns. */
+export async function fetchPixels(): Promise<MetaPixel[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/adspixels`, { fields: 'id,name,last_fired_time,is_unavailable' });
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    name: text(row.name),
+    last_fired_time: text(row.last_fired_time),
+    is_unavailable: row.is_unavailable === true,
+  }));
+}
+
+/**
+ * What a pixel received since `since`, summed over the period by `aggregation` — `event` gives
+ * PageView / ViewContent / Purchase…, `host` gives the sites it fired on. The second is how a
+ * club's ticket page is known to carry the pixel without anyone having to say so.
+ */
+export async function fetchPixelStats(pixelId: string, aggregation: 'event' | 'host', since: Date): Promise<Record<string, number>> {
+  if (!/^\d+$/.test(pixelId)) throw new MetaError(`מזהה פיקסל לא תקין: ${pixelId}`, 400);
+  const body = await graph<any>(`${pixelId}/stats`, {
+    aggregation,
+    start_time: String(Math.floor(since.getTime() / 1000)),
+  });
+  const totals: Record<string, number> = {};
+  for (const bucket of Array.isArray(body?.data) ? body.data : []) {
+    for (const row of Array.isArray(bucket?.data) ? bucket.data : []) {
+      const key = text(row?.value);
+      if (key) totals[key] = (totals[key] ?? 0) + num(row?.count);
+    }
+  }
+  return totals;
+}
+
+// ---------------------------------------------------------------- writes
+
+/**
+ * One write, with the sync's token. Only `metaActions.ts` calls this, and only for an action a
+ * person saw previewed and confirmed; the paths it can reach are the few that module builds,
+ * never one from a request.
+ */
+export async function graphWrite<T = any>(path: string, params: Record<string, string>): Promise<T> {
+  return graph<T>(path, params, true);
+}
+
+// ---------------------------------------------------------------- the campaign studio's reads
+
+export interface MetaPage {
+  id: string;
+  name: string | null;
+}
+
+/**
+ * The Facebook pages this ad account may run ads for — an ad has to be published by one. The
+ * account's own list rather than the token's, since a system user may see pages the account
+ * cannot promote.
+ */
+export async function fetchPromotePages(): Promise<MetaPage[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/promote_pages`, { fields: 'id,name' });
+  return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), name: text(row.name) }));
+}
+
+/** A campaign's ad sets, read live: the sync keeps campaigns only. */
+export async function fetchCampaignAdSets(campaignId: string): Promise<any[]> {
+  if (!/^\d+$/.test(campaignId)) throw new MetaError(`מזהה Meta לא תקין: ${campaignId}`, 400);
+  return graphPaged<any>(`${campaignId}/adsets`, {
+    fields: 'id,name,status,effective_status,daily_budget,lifetime_budget,start_time,end_time,optimization_goal,targeting{age_min,age_max,geo_locations}',
+  });
+}
+
+/** A campaign's ads, with enough of the creative to recognise each one. */
+export async function fetchCampaignAds(campaignId: string): Promise<any[]> {
+  if (!/^\d+$/.test(campaignId)) throw new MetaError(`מזהה Meta לא תקין: ${campaignId}`, 400);
+  return graphPaged<any>(`${campaignId}/ads`, {
+    fields: 'id,name,status,effective_status,adset_id,creative{id,title,body,thumbnail_url,image_url}',
+  });
+}
+
+export interface MetaAudience {
+  id: string;
+  name: string | null;
+  subtype: string | null;
+  /** Meta's own range; -1 when it will not say (a very new or very small audience). */
+  size_lower: number | null;
+  size_upper: number | null;
+  /** Meta's delivery status code: 200 is ready to deliver. */
+  ready: boolean;
+  status: string | null;
+}
+
+/**
+ * The ad account's saved custom audiences — website visitors, video viewers, page engagers,
+ * customer lists, lookalikes. What a «hot» campaign targets, and what any campaign may exclude.
+ * Same `ads_read` scope as the campaigns.
+ */
+export async function fetchCustomAudiences(): Promise<MetaAudience[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/customaudiences`, {
+    fields: 'id,name,subtype,approximate_count_lower_bound,approximate_count_upper_bound,delivery_status',
+  });
+  const size = (v: unknown) => {
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    name: text(row.name),
+    subtype: text(row.subtype),
+    size_lower: size(row.approximate_count_lower_bound),
+    size_upper: size(row.approximate_count_upper_bound),
+    ready: row.delivery_status?.code == null || Number(row.delivery_status.code) === 200,
+    status: text(row.delivery_status?.description),
+  }));
+}
+
+export interface MetaInstagramAccount {
+  id: string;
+  username: string | null;
+}
+
+/** The Instagram accounts the ad account may advertise as — the source of an Instagram engagement audience. */
+export async function fetchInstagramAccounts(): Promise<MetaInstagramAccount[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/instagram_accounts`, { fields: 'id,username' });
+  return rows.filter((row) => row?.id).map((row) => ({ id: String(row.id), username: text(row.username) }));
+}
+
+export interface MetaVideo {
+  id: string;
+  title: string | null;
+  created_time: string | null;
+  /** Seconds. */
+  length: number | null;
+  picture: string | null;
+}
+
+/**
+ * The videos in the ad account's library — every video that was used in an ad, newest first. What
+ * a video viewers audience is built from. Organic posts that were never advertised are not here.
+ */
+export async function fetchAdVideos(): Promise<MetaVideo[]> {
+  const rows = await graphPaged<any>(`${adAccountId()}/advideos`, { fields: 'id,title,created_time,length,picture' });
+  return rows.filter((row) => row?.id).map((row) => ({
+    id: String(row.id),
+    title: text(row.title),
+    created_time: text(row.created_time),
+    length: Number.isFinite(Number(row.length)) ? Math.round(Number(row.length)) : null,
+    picture: text(row.picture),
+  })).sort((a, b) => String(b.created_time ?? '').localeCompare(String(a.created_time ?? '')));
 }

@@ -256,7 +256,7 @@ const WORD_CHAR = '\\p{L}\\p{N}';
 
 /**
  * Removes every standalone occurrence of one word, together with the separator it leaves
- * behind: "קולדפליי - הופעה - זאפה" loses "הופעה -" rather than keeping a stray dash.
+ * behind: "הלהקה - הופעה - זאפה" loses "הופעה -" rather than keeping a stray dash.
  */
 function removeWord(title: string, word: string): string {
   const pattern = `(?<![${WORD_CHAR}])${escapeRegExp(word)}(?![${WORD_CHAR}])\\s*[${SEPARATORS}]*`;
@@ -276,12 +276,12 @@ function tidy(title: string): string {
  * The name a synced event is stored under.
  *
  * Two things come off. The show words above go wherever they appear, always. Then the rule's
- * own keywords are stripped off the front, so with the keyword "קולדפליי" the calendar entry
- * "הופעה קולדפליי גריי תל אביב" is stored as "גריי תל אביב".
+ * own keywords are stripped off the front, so with the keyword "הלהקה" the calendar entry
+ * "הופעה הלהקה גריי תל אביב" is stored as "גריי תל אביב".
  *
  * Every keyword the rule searches for is stripped, not just the one that happened to match,
  * because the word naming the act is noise in the venue column too. Keywords only go from the
- * front: "בכורה קולדפליי" keeps its shape, since a keyword in the middle of a name is usually
+ * front: "בכורה הלהקה" keeps its shape, since a keyword in the middle of a name is usually
  * part of it. A title made entirely of these words is left alone rather than stored blank.
  */
 export function cleanTitle(event: CalendarEvent, verdict: MatchVerdict, rule?: CalendarRule): string {

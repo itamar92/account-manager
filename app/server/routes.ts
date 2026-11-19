@@ -2,27 +2,28 @@ import express, { Router } from 'express';
 import { randomBytes } from 'crypto';
 import {
   db, uuid, sha256, hashPassword, getVatPercent, setSetting, getSetting, getMorningSyncDays,
-  getMetaCurrencyRate, getMetaSyncDays,
+  getMetaCurrencyRate, getMetaSyncDays, getBandName, getDefaultCommissionPercent,
 } from './db.js';
 import {
   createSession, currentSessionToken, destroySession, login, requireAuth, requireOwner,
   requireApiKey, loginRateLimit, clearLoginAttempts,
 } from './auth.js';
+import { detectedPrivate, refreshPrivate, setPrivate } from './showPrivacy.js';
 import { createInvoice, deleteInvoice, setInvoiceStatus, getInvoice } from './invoiceService.js';
 import { DOC_TYPE_LABELS, RECEIVABLE_DOC_TYPES_SQL, REVENUE_DOC_TYPES_SQL, isRevenueDoc } from './docTypes.js';
 import { BUSINESS_TYPE_LABELS, getBusinessDetails, setBusinessDetails } from './business.js';
 import {
   buildMorningDraft, buildPendingMorningDraft, issueWorksToMorning, morningStatus,
-  pullFromMorning, pushInvoiceToMorning,
+  pushInvoiceToMorning,
 } from './morningSync.js';
 import {
   expenseCategories, expenseStatusAudit, expensesStatus, expensesSummary, listExpenses,
   pullExpensesFromMorning,
 } from './morningExpenses.js';
-import { calendarStatus, isSyncPriced, previewRule, pullShowsFromCalendar } from './calendarSync.js';
+import { calendarStatus, isSyncPriced, previewRule } from './calendarSync.js';
 import {
-  adAnalysis, applyCampaignSpend, campaignDaily, deleteMapping, listCampaigns, metaStatus,
-  monthlyBreakdown, pullCampaignsFromMeta, setMapping,
+  adAnalysis, applyCampaignSpend, attributedSpendByEvent, campaignDaily, deleteMapping, listCampaigns, metaStatus,
+  monthlyBreakdown, setMapping,
 } from './metaSync.js';
 import {
   createRule, deleteRule, deleteOverride, getRule, listOverrides, listRules, setOverride,
@@ -41,9 +42,12 @@ import {
   ensureExpenseRow, eventLabel, expenseOutstanding, expenseRowForEvent, expenseTotal, getEvent,
   memberByName, moneyReceived, normalizeCommissionPercent, normalizePaymentStatus,
   reassignExpenseRow, settleFundTransfer,
-  PAID_EXPENSE_FIELDS,
+  EXPENSE_FIELDS, PAID_EXPENSE_FIELDS,
   recomputeEvent, syncExpenseLabel, type MemberKey,
-} from './moonlight.js';
+} from './band.js';
+import {
+  allCategories, categoryUsage, createCategory, deleteCategory, updateCategory,
+} from './expenseCategories.js';
 import {
   ASSIGNMENT_ROLES, assignmentsForEvent, attendeeEmails, autoAssignAll, deleteSupplier,
   isAssignmentRole, listSuppliers, missingRoles, setAssignment, supplierDebts,
@@ -74,14 +78,35 @@ import {
 import {
   isExpenseBasis, isPeriodKey, overview, recognitionRates, setRecognitionRates,
 } from './overview.js';
-import { listClients, listInvoices, listWorks, outstandingSql } from './queries.js';
+import { chargeableWorkSql, listClients, listInvoices, listWorks, outstandingSql, workToday } from './queries.js';
 import { agentStatus, ping as agentPing } from './agentClient.js';
 import { AgentConfigError, agentConfigView, saveAgentConfig } from './agentConfig.js';
+import { appIdentity, opsConfigured, parseStatus, runOps } from './opsClient.js';
+import { CredentialError, credentialsView, saveCredentials, testCredentials } from './serviceCredentials.js';
 import {
-  analyzeCampaigns, chat, chatHistory, clearChat, draftCampaign, lastReport,
+  analyzeCampaigns, chat, chatHistory, chooseDraftCreative, clearAnalysis, clearChat, clearShowAdvice,
+  dismissJob, draftCampaign, lastReport, listJobs, savedDrafts, showSummaries, trackJob,
 } from './campaignAdvisor.js';
+import { reviewCampaign } from './campaignReview.js';
+import { checkTickets, lastTicketCheck, recordTickets, setTicketLinks, ticketLinks } from './ticketCheck.js';
+import {
+  budgetToShekels, cancelAction, executeAction, listActions, OBJECTIVES, previewAction, PREVIEW_TTL_MINUTES,
+} from './metaActions.js';
+import {
+  fetchAdVideos, fetchCampaignAds, fetchCampaignAdSets, fetchCustomAudiences, fetchInstagramAccounts, fetchObject, fetchPixels, fetchPromotePages, isMetaConfigured,
+} from './metaClient.js';
+import { imagePath, storeImage } from './metaImages.js';
+import { pixelEmail, pixelOverview, setVenuePixel } from './metaPixel.js';
+import {
+  createTasks, deleteShowTasks, deleteTask, listTaskShows, remindNow, setTaskOwner, updateTask,
+} from './campaignTasks.js';
+import { mailStatus } from './mailer.js';
 import { quoteRouter } from './quoteRoutes.js';
 import { quoteFollowUps } from './quoteShow.js';
+import { tracked } from './syncHealth.js';
+import {
+  isNightlyEnabled, lastNightlyRun, setNightlyEnabled, syncCalendar, syncMeta, syncMorning,
+} from './nightlySync.js';
 
 /**
  * The follow-up conversation is a single shared thread rather than one per user: the owner is
@@ -142,7 +167,7 @@ function handle(fn: (req: any, res: any) => void) {
 
 /**
  * The date window a list is asking for. Every end is optional: the tables ask for one year,
- * optionally narrowed to one month within it, the moonlight summary can ask for any span, and
+ * optionally narrowed to one month within it, the band summary can ask for any span, and
  * callers that ask for nothing — the dashboard — keep getting everything.
  *
  * A month is only meaningful inside a year, so one sent without a year is ignored rather than
@@ -205,8 +230,18 @@ router.post('/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
+/**
+ * Who is logged in, and what the app calls itself and the band. The names ride along here so
+ * that every screen — the login page included, before anybody is logged in — can show them
+ * without a second request or an owner-only settings read.
+ */
 router.get('/auth/me', (req, res) => {
-  res.json({ user: req.user ?? null });
+  res.json({ user: req.user ?? null, branding: branding() });
+});
+
+const branding = () => ({
+  app_name: getSetting('app_name', 'Account Manager'),
+  band_name: getBandName(),
 });
 
 // ============ dashboard (owner) ============
@@ -231,9 +266,10 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
        WHERE doc_type IN (${RECEIVABLE_DOC_TYPES_SQL})
      ) WHERE owed > 0`
   ).get() as any;
+  // Only what is billable now — a calendar gig next month is not money waiting on anybody.
   const unpaidWorks = db.prepare(
-    "SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE status = 'unpaid'"
-  ).get() as any;
+    `SELECT COUNT(*) AS count, COALESCE(SUM(total),0) AS total FROM works WHERE ${chargeableWorkSql()}`
+  ).get(workToday()) as any;
 
   // Income against expenses, month by month — the chart's series and the profit cards are
   // the same numbers the דוחות page reports, so the two can never tell different stories.
@@ -253,7 +289,7 @@ router.get('/dashboard', requireOwner, handle((req, res) => {
      ORDER BY i.date DESC, i.created_at DESC LIMIT 8`
   ).all();
   // The band's follow-ups (money not yet in, suppliers not yet paid) live on the
-  // moonlight summary, not here — this dashboard keeps only the one headline figure.
+  // band summary, not here — this dashboard keeps only the one headline figure.
   const band = bandSummary();
   res.json({
     year,
@@ -318,8 +354,8 @@ export function inboxItems() {
   // several jobs, so it travels with the count.
   const unbilled = db.prepare(
     `SELECT w.id, w.total, c.name AS client_name FROM works w JOIN clients c ON c.id = w.client_id
-     WHERE w.status = 'unpaid'`
-  ).all() as any[];
+     WHERE ${chargeableWorkSql('w')}`
+  ).all(workToday()) as any[];
   const byClient = new Map<string, { count: number; total: number }>();
   for (const w of unbilled) {
     const entry = byClient.get(w.client_name) ?? { count: 0, total: 0 };
@@ -762,6 +798,36 @@ router.post('/works/bulk-client', requireOwner, handle((req, res) => {
   res.json({ updated, locked });
 }));
 
+/**
+ * Sets the status of works by hand: for jobs billed outside the app, which would otherwise sit
+ * as «לא חויב» forever with no invoice here to link them to — and back again to undo it.
+ *
+ * A work linked to an invoice is left alone and reported as locked: its status follows that
+ * invoice, and cancelling the invoice is what releases it.
+ */
+router.post('/works/bulk-status', requireOwner, handle((req, res) => {
+  const ids = bulkIds(req.body);
+  const status = req.body?.status;
+  if (!['unpaid', 'invoiced', 'paid'].includes(status))
+    return res.status(400).json({ error: 'status must be unpaid, invoiced or paid' });
+
+  const locked: string[] = [];
+  let updated = 0;
+  db.transaction(() => {
+    for (const id of ids) {
+      const work = db.prepare('SELECT * FROM works WHERE id = ?').get(id) as any;
+      if (!work) continue;
+      if (work.invoice_id) { locked.push(work.description); continue; }
+      if (work.status === status) continue;
+      db.prepare('UPDATE works SET status = ?, status_manual = ? WHERE id = ?')
+        .run(status, status === 'unpaid' ? 0 : 1, id);
+      updated++;
+    }
+  })();
+
+  res.json({ updated, locked });
+}));
+
 // ============ invoices (owner) ============
 router.get('/invoices', requireOwner, handle((req, res) => {
   res.json({
@@ -837,7 +903,7 @@ router.get('/expenses/status-audit', requireOwner, handle((_req, res) => {
   res.json(expenseStatusAudit());
 }));
 
-// ============ moonlight (owner + band members) ============
+// ============ band (owner + band members) ============
 /**
  * The two follow-up lists for the band: shows whose money has not arrived, and shows whose
  * suppliers have not been paid. Both are about shows that already happened — a gig next month
@@ -932,7 +998,7 @@ export function bandSummary(range: { from?: string; to?: string } = {}) {
     generalExpenses: sum(general, 'amount'),
     eventCount: events.length,
     upcomingEvents: events.filter((e) => e.date >= new Date().toISOString().slice(0, 10)).length,
-    // One bar per show, oldest first, for the moonlight dashboard's income/expenses/profit chart.
+    // One bar per show, oldest first, for the band dashboard's income/expenses/profit chart.
     perShow: events
       .slice()
       .sort((a, b) => a.date.localeCompare(b.date))
@@ -957,7 +1023,7 @@ export function bandSummary(range: { from?: string; to?: string } = {}) {
  * 3. A general expense the band's float (קופה) covered was borne by everybody, so it comes off
  *    each member's payout in equal parts.
  *
- * `paid` is what settled means for a general expense: the moonlight migration set it from the
+ * `paid` is what settled means for a general expense: the band migration set it from the
  * sheet's «הוחזר» columns, so a row already squared takes no further part in the division.
  * Both halves follow the selected range, as the rest of the summary does.
  */
@@ -1056,10 +1122,10 @@ export function bandDivision(range: { from?: string; to?: string } = {}) {
   };
 }
 
-// Price quotes — the one Moonlight area band members write to as well; see quoteRoutes.ts.
-router.use('/moonlight/quotes', quoteRouter);
+// Price quotes — the one band area band members write to as well; see quoteRoutes.ts.
+router.use('/band/quotes', quoteRouter);
 
-router.get('/moonlight/summary', requireAuth, handle((req, res) => {
+router.get('/band/summary', requireAuth, handle((req, res) => {
   res.json({ summary: bandSummary(dateRange(req.query)), fund: bandFund() });
 }));
 
@@ -1199,26 +1265,30 @@ export function bandFundExplain() {
   };
 }
 
-router.get('/moonlight/fund/explain', requireAuth, handle((_req, res) => {
+router.get('/band/fund/explain', requireAuth, handle((_req, res) => {
   res.json({ explain: bandFundExplain() });
 }));
 
 /** Records what the account actually holds. Empty clears it back to "nobody has said". */
-router.post('/moonlight/fund', requireOwner, handle((req, res) => {
+router.post('/band/fund', requireOwner, handle((req, res) => {
   const value = req.body?.actual;
   setSetting('band_fund_actual', value === null || value === '' ? '' : String(Number(value) || 0));
   res.json({ fund: bandFund() });
 }));
 
 /** The worked-out version of the summary's division figures — every step and its rows. */
-router.get('/moonlight/division', requireAuth, handle((req, res) => {
+router.get('/band/division', requireAuth, handle((req, res) => {
   res.json({ division: bandDivision(dateRange(req.query)) });
 }));
 
-router.get('/moonlight/events', requireAuth, handle((req, res) => {
+router.get('/band/events', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   const events = db
-    .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
+    .prepare(
+      `SELECT band_events.*,
+         EXISTS (SELECT 1 FROM meta_campaign_events m WHERE m.event_id = band_events.id) AS has_campaign
+       FROM band_events${where.sql} ORDER BY date`
+    )
     .all(...where.params) as any[];
   // Which roles are unstaffed travels with the show, because that is what the list is scanned
   // for — a gig three weeks out with nobody on sound is the row you are looking for.
@@ -1229,7 +1299,7 @@ router.get('/moonlight/events', requireAuth, handle((req, res) => {
  * Expense rows follow their show's date. Rows that never found a show stay in the list
  * whatever the filter says — they are the ones most in need of attention.
  */
-router.get('/moonlight/event-expenses', requireAuth, handle((req, res) => {
+router.get('/band/event-expenses', requireAuth, handle((req, res) => {
   const range = dateRange(req.query);
   const filters: string[] = [];
   const params: string[] = [];
@@ -1245,7 +1315,7 @@ router.get('/moonlight/event-expenses', requireAuth, handle((req, res) => {
   });
 }));
 
-router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
+router.get('/band/general-expenses', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   res.json({
     expenses: db.prepare(`SELECT * FROM band_general_expenses${where.sql} ORDER BY date DESC`).all(...where.params),
@@ -1260,7 +1330,7 @@ router.get('/moonlight/general-expenses', requireAuth, handle((req, res) => {
  * four lists separately and matching them up in the browser is how the old tabs worked, and
  * it is exactly what made a show's numbers something you had to assemble in your head.
  */
-router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
+router.get('/band/events/:id', requireAuth, handle((req, res) => {
   const event = getEvent(req.params.id);
   if (!event) return res.status(404).json({ error: 'event not found' });
   const expense = ensureExpenseRow(event);
@@ -1284,7 +1354,7 @@ router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
   ).all(event.id);
 
   res.json({
-    event: { ...withShares(event), label: eventLabel(event.venue, event.date) },
+    event: { ...withShares(event), label: eventLabel(event.venue, event.date), private_detected: detectedPrivate(event) },
     quotes,
     ticket_links: linksForShow(event.id),
     expenses: expense,
@@ -1301,41 +1371,41 @@ router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
  * The pages the finder looks on, its search words, sale pages found for dates with no show, and
  * the owner's gigs with other bands. Owner-only: those gigs come off the owner's own calendar.
  */
-router.get('/moonlight/ticket-sources', requireOwner, handle((_req, res) => {
+router.get('/band/ticket-sources', requireOwner, handle((_req, res) => {
   res.json({
     sources: listSources(), keywords: getKeywords(), unassigned: unassignedLinks(), calendar: calendarLinks(),
   });
 }));
 
-router.post('/moonlight/ticket-sources', requireOwner, handle((req, res) => {
+router.post('/band/ticket-sources', requireOwner, handle((req, res) => {
   res.json({ source: createSource(req.body) });
 }));
 
-router.put('/moonlight/ticket-sources/:id', requireOwner, handle((req, res) => {
+router.put('/band/ticket-sources/:id', requireOwner, handle((req, res) => {
   res.json({ source: updateSource(req.params.id, req.body) });
 }));
 
 // The links it found stay: they are still where the tickets are sold.
-router.delete('/moonlight/ticket-sources/:id', requireOwner, handle((req, res) => {
+router.delete('/band/ticket-sources/:id', requireOwner, handle((req, res) => {
   deleteSource(req.params.id);
   res.json({ ok: true });
 }));
 
-router.put('/moonlight/ticket-keywords', requireOwner, handle((req, res) => {
+router.put('/band/ticket-keywords', requireOwner, handle((req, res) => {
   res.json({ keywords: setKeywords(req.body?.keywords) });
 }));
 
 /** Searches now — every active source, or the one named. Takes a few seconds per source. */
-router.post('/moonlight/ticket-sources/run', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/ticket-sources/run', requireOwner, handleAsync(async (req, res) => {
   res.json({ result: await runTicketSearch({ sourceId: req.body?.source_id || undefined }) });
 }));
 
-router.post('/moonlight/events/:id/ticket-links', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/events/:id/ticket-links', requireOwner, handleAsync(async (req, res) => {
   res.json({ link: await addLinkByHand(req.params.id, req.body?.url) });
 }));
 
 /** Confirm, reject, or put on a show: { status } and/or { event_id }. */
-router.put('/moonlight/ticket-links/:id', requireOwner, handle((req, res) => {
+router.put('/band/ticket-links/:id', requireOwner, handle((req, res) => {
   res.json({ link: updateLink(req.params.id, req.body) });
 }));
 
@@ -1347,14 +1417,14 @@ router.put('/moonlight/ticket-links/:id', requireOwner, handle((req, res) => {
  * Only lines carrying an amount are touched — marking an empty line paid would say a supplier
  * who was never engaged has been settled with.
  */
-router.post('/moonlight/events/:id/pay-suppliers', requireOwner, handle((req, res) => {
+router.post('/band/events/:id/pay-suppliers', requireOwner, handle((req, res) => {
   const event = getEvent(req.params.id);
   if (!event) return res.status(404).json({ error: 'event not found' });
   const row = ensureExpenseRow(event);
   const paid = PAID_EXPENSE_FIELDS().filter((f) => Number(row[f]) > 0);
   if (paid.length) {
     db.prepare(
-      `UPDATE band_event_expenses SET ${paid.map((f) => `${f}_paid = 1`).join(', ')} WHERE id = ?`
+      `UPDATE band_event_expenses SET ${paid.map((f) => `"${f}_paid" = 1`).join(', ')} WHERE id = ?`
     ).run(row.id);
     // The flags are the fast way to settle a show; the payment rows are what the invoice
     // queue reads. Syncing here is what stops money paid the quick way from going untracked.
@@ -1386,10 +1456,10 @@ function showIncome(body: any, existing?: any): { pre: number; gross: number } {
   return { pre, gross };
 }
 
-// Writes to moonlight data are owner-only; band members are view-only.
+// Writes to band data are owner-only; band members are view-only.
 // `expenses`, `expenses_paid` and `profit` are never taken from the client: they are derived
 // from the show's expense row by recomputeEvent.
-router.post('/moonlight/events', requireOwner, handle((req, res) => {
+router.post('/band/events', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.venue || !b.date) return res.status(400).json({ error: 'venue and date are required' });
   const id = uuid();
@@ -1401,16 +1471,18 @@ router.post('/moonlight/events', requireOwner, handle((req, res) => {
   ).run(
     id, b.venue, b.date, b.tickets || 0, b.capacity || 0, income.pre, income.gross,
     b.receiver || null, b.invoice || null, b.has_commission ? 1 : 0,
-    b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT,
+    b.commission_percent != null ? normalizeCommissionPercent(b.commission_percent) : DEFAULT_COMMISSION_PERCENT(),
     b.paid_to_musicians ? 1 : 0,
     normalizePaymentStatus(b.payment_status) || 'waiting_report'
   );
   ensureExpenseRow(getEvent(id));
+  if (b.is_private !== undefined && b.is_private !== null) setPrivate(id, !!b.is_private);
+  else refreshPrivate(id);
   res.json({ event: recomputeEvent(id) });
 }));
 
 
-router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
+router.put('/band/events/:id', requireOwner, handle((req, res) => {
   const existing = getEvent(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'event not found' });
   const body = req.body || {};
@@ -1460,13 +1532,19 @@ router.put('/moonlight/events/:id', requireOwner, handle((req, res) => {
     setEventShares(req.params.id, { ...eventShares(req.params.id), ...patchedShares });
   }
 
+  // Private or not: true / false is the owner's decision, 'auto' (or null) hands it back to the
+  // detection. A rename can change what the detection reads, so it runs again either way.
+  if (body.is_private === 'auto' || body.is_private === null) setPrivate(req.params.id, null);
+  else if (body.is_private !== undefined) setPrivate(req.params.id, !!body.is_private);
+  else refreshPrivate(req.params.id);
+
   const updated = getEvent(req.params.id);
   ensureExpenseRow(updated);
   syncExpenseLabel(updated);
   res.json({ event: recomputeEvent(req.params.id) });
 }));
 
-router.delete('/moonlight/events/:id', requireOwner, handle((req, res) => {
+router.delete('/band/events/:id', requireOwner, handle((req, res) => {
   // Excluding is the default: deleting a synced show without it just invites the next sync
   // to put it straight back.
   const flag = req.query.exclude_from_calendar;
@@ -1478,7 +1556,7 @@ router.delete('/moonlight/events/:id', requireOwner, handle((req, res) => {
   res.json(result);
 }));
 
-router.post('/moonlight/events/bulk-delete', requireOwner, handle((req, res) => {
+router.post('/band/events/bulk-delete', requireOwner, handle((req, res) => {
   const ids = bulkIds(req.body);
   const exclude = !!req.body?.exclude_from_calendar;
   const run = db.transaction(() => {
@@ -1495,17 +1573,20 @@ router.post('/moonlight/events/bulk-delete', requireOwner, handle((req, res) => 
   res.json(run());
 }));
 
-/** The label and its link are owned by the show, so neither is editable here. */
-const EVENT_EXPENSE_MONEY = ['tickets', 'campaign', 'refreshments', 'design', 'other', 'expense_amount',
-  'akom', 'hall_fee', 'sound_company', 'bracelets', 'lightman', 'soundman', 'singer', 'vat_summary'] as const;
-const EVENT_EXPENSE_FLAGS = ['akom_paid', 'hall_fee_paid', 'sound_company_paid', 'bracelets_paid',
-  'lightman_paid', 'soundman_paid', 'singer_paid'] as const;
+/**
+ * The columns a client may write on an expense row: the ticket count, every cost line the band
+ * has defined, the VAT note, and each line's paid flag. The label and its link are owned by the
+ * show, so neither is editable here. Read per request, because the band can add a line at any
+ * time.
+ */
+const EVENT_EXPENSE_MONEY = (): string[] => ['tickets', ...EXPENSE_FIELDS(), 'vat_summary'];
+const EVENT_EXPENSE_FLAGS = (): string[] => EXPENSE_FIELDS().map((f) => `${f}_paid`);
 
 /**
  * Attaches an existing expense row to a show — the manual counterpart to the migration, for
  * the rows whose written-out name could not be matched to one automatically.
  */
-router.post('/moonlight/event-expenses/:id/assign', requireOwner, handle((req, res) => {
+router.post('/band/event-expenses/:id/assign', requireOwner, handle((req, res) => {
   const eventId = req.body?.event_id ? String(req.body.event_id) : null;
   res.json({ expense: reassignExpenseRow(req.params.id, eventId) });
 }));
@@ -1514,25 +1595,26 @@ router.post('/moonlight/event-expenses/:id/assign', requireOwner, handle((req, r
  * Empties a show's expense row, or deletes an unassigned one outright — see deleteExpenseRow
  * for why the two cases differ.
  */
-router.delete('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
+router.delete('/band/event-expenses/:id', requireOwner, handle((req, res) => {
   res.json(deleteExpenseRow(req.params.id));
 }));
 
-router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
+router.put('/band/event-expenses/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_event_expenses WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'expense row not found' });
   const body = req.body || {};
 
   const sets: string[] = [];
   const params: any[] = [];
-  for (const field of EVENT_EXPENSE_MONEY) {
+  for (const field of EVENT_EXPENSE_MONEY()) {
     if (body[field] === undefined) continue;
-    sets.push(`${field} = ?`);
+    sets.push(`"${field}" = ?`);
     params.push(Number(body[field]) || 0);
   }
-  for (const field of EVENT_EXPENSE_FLAGS) {
+  const flags = EVENT_EXPENSE_FLAGS();
+  for (const field of flags) {
     if (body[field] === undefined) continue;
-    sets.push(`${field} = ?`);
+    sets.push(`"${field}" = ?`);
     params.push(body[field] ? 1 : 0);
   }
   for (const field of ['status', 'paid_by'] as const) {
@@ -1561,7 +1643,7 @@ router.put('/moonlight/event-expenses/:id', requireOwner, handle((req, res) => {
   if (body.campaign_locked !== undefined && !body.campaign_locked) applyCampaignSpend();
   // Ticking one supplier's line paid on the show page is a payment like any other, so it gets
   // a payment row and joins the queue waiting for its invoice; un-ticking gives it back.
-  if (existing.event_id && EVENT_EXPENSE_FLAGS.some((f) => body[f] !== undefined)) {
+  if (existing.event_id && flags.some((f) => body[f] !== undefined)) {
     syncLinePayments(existing.event_id);
   }
   if (existing.event_id) recomputeEvent(existing.event_id);
@@ -1579,24 +1661,21 @@ function generalExpenseEvent(eventId: unknown): { event_id: string | null; event
   return { event_id: event.id, event: eventLabel(event.venue, event.date) };
 }
 
-router.post('/moonlight/general-expenses', requireOwner, handle((req, res) => {
+router.post('/band/general-expenses', requireOwner, handle((req, res) => {
   const b = req.body || {};
   if (!b.date || !b.description) return res.status(400).json({ error: 'date and description are required' });
   const id = uuid();
   const link = generalExpenseEvent(b.event_id);
   db.prepare(
-    `INSERT INTO band_general_expenses (id, date, description, event, event_id, paid_by, amount, paid,
-      amir, amir_returned, itamar, itamar_returned, yuval, yuval_returned, fund, fund_returned)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO band_general_expenses (id, date, description, event, event_id, paid_by, amount, paid)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    id, b.date, b.description, link.event, link.event_id, b.paid_by || null, b.amount || 0, b.paid ? 1 : 0,
-    b.amir || 0, b.amir_returned || null, b.itamar || 0, b.itamar_returned || null,
-    b.yuval || 0, b.yuval_returned || null, b.fund || 0, b.fund_returned || null
+    id, b.date, b.description, link.event, link.event_id, b.paid_by || null, b.amount || 0, b.paid ? 1 : 0
   );
   res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(id) });
 }));
 
-router.put('/moonlight/general-expenses/:id', requireOwner, handle((req, res) => {
+router.put('/band/general-expenses/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'expense not found' });
   const body = req.body || {};
@@ -1606,29 +1685,27 @@ router.put('/moonlight/general-expenses/:id', requireOwner, handle((req, res) =>
     ? generalExpenseEvent(body.event_id)
     : { event_id: existing.event_id, event: existing.event };
   db.prepare(
-    `UPDATE band_general_expenses SET date=?, description=?, event=?, event_id=?, paid_by=?, amount=?, paid=?,
-      amir=?, amir_returned=?, itamar=?, itamar_returned=?, yuval=?, yuval_returned=?, fund=?, fund_returned=?
+    `UPDATE band_general_expenses SET date=?, description=?, event=?, event_id=?, paid_by=?, amount=?, paid=?
      WHERE id=?`
   ).run(
     b.date, b.description, link.event, link.event_id, b.paid_by || null, Number(b.amount) || 0, b.paid ? 1 : 0,
-    b.amir || 0, b.amir_returned || null, b.itamar || 0, b.itamar_returned || null,
-    b.yuval || 0, b.yuval_returned || null, b.fund || 0, b.fund_returned || null, req.params.id
+    req.params.id
   );
   res.json({ expense: db.prepare('SELECT * FROM band_general_expenses WHERE id = ?').get(req.params.id) });
 }));
 
-router.delete('/moonlight/general-expenses/:id', requireOwner, handle((req, res) => {
+router.delete('/band/general-expenses/:id', requireOwner, handle((req, res) => {
   const result = db.prepare('DELETE FROM band_general_expenses WHERE id = ?').run(req.params.id);
   if (!result.changes) return res.status(404).json({ error: 'expense not found' });
   res.json({ deleted: 1 });
 }));
 
-// ---- moonlight follow-ups: the summary tab's dashboard cards ----
-router.get('/moonlight/follow-ups', requireAuth, handle((_req, res) => {
+// ---- band follow-ups: the summary tab's dashboard cards ----
+router.get('/band/follow-ups', requireAuth, handle((_req, res) => {
   res.json({ followUps: bandFollowUps() });
 }));
 
-// ---- moonlight staffing (שיבוצים): suppliers and who works each show ----
+// ---- band staffing (שיבוצים): suppliers and who works each show ----
 /**
  * Suppliers with what each is still owed, show by show — plus what they are booked for on
  * shows that have not happened yet, which is reported beside the debt rather than inside it.
@@ -1668,11 +1745,15 @@ function membersWithGaps() {
 }
 
 // ---- the band itself ----
-router.get('/moonlight/members', requireAuth, handle((_req, res) => {
-  res.json({ members: membersWithGaps(), business_types: BUSINESS_TYPES });
+router.get('/band/members', requireAuth, handle((_req, res) => {
+  res.json({
+    members: membersWithGaps(),
+    business_types: BUSINESS_TYPES,
+    default_commission_percent: getDefaultCommissionPercent(),
+  });
 }));
 
-router.post('/moonlight/members', requireOwner, handle((req, res) => {
+router.post('/band/members', requireOwner, handle((req, res) => {
   const { name, email, role, is_manager, business_type } = req.body || {};
   const trimmed = String(name ?? '').trim();
   if (!trimmed) return res.status(400).json({ error: 'שם חבר חובה' });
@@ -1705,7 +1786,7 @@ router.post('/moonlight/members', requireOwner, handle((req, res) => {
  * played is part of the band's history — their shares are money that was divided — so once
  * anything is recorded against them the answer is «לא פעיל», not deletion.
  */
-router.delete('/moonlight/members/:key', requireOwner, handle((req, res) => {
+router.delete('/band/members/:key', requireOwner, handle((req, res) => {
   const member = bandMemberByKey(req.params.key);
   if (!member) return res.status(404).json({ error: 'member not found' });
   if (listBandMembers().length <= 1) {
@@ -1736,7 +1817,7 @@ router.delete('/moonlight/members/:key', requireOwner, handle((req, res) => {
   res.json({ ok: true });
 }));
 
-router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
+router.put('/band/members/:key', requireOwner, handle((req, res) => {
   const existing = bandMemberByKey(req.params.key);
   if (!existing) return res.status(404).json({ error: 'member not found' });
   const b = { ...existing, ...(req.body || {}) };
@@ -1777,7 +1858,7 @@ router.put('/moonlight/members/:key', requireOwner, handle((req, res) => {
   res.json({ member: bandMemberByKey(req.params.key) });
 }));
 
-router.get('/moonlight/suppliers', requireAuth, handle((_req, res) => {
+router.get('/band/suppliers', requireAuth, handle((_req, res) => {
   res.json({ suppliers: suppliersWithDebts() });
 }));
 
@@ -1796,7 +1877,7 @@ function activateRoleFor(role: string) {
   if (existing && !existing.active) updateRole(role, { active: 1 });
 }
 
-router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
+router.post('/band/suppliers', requireOwner, handle((req, res) => {
   const { name, email, role, phone, notes, default_amount } = req.body || {};
   if (!name?.trim()) return res.status(400).json({ error: 'שם ספק חובה' });
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
@@ -1837,7 +1918,7 @@ router.post('/moonlight/suppliers', requireOwner, handle((req, res) => {
   res.json({ supplier: listSuppliers().find((s) => s.id === id) });
 }));
 
-router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
+router.put('/band/suppliers/:id', requireOwner, handle((req, res) => {
   const existing = db.prepare('SELECT * FROM band_suppliers WHERE id = ?').get(req.params.id) as any;
   if (!existing) return res.status(404).json({ error: 'supplier not found' });
   const b = { ...existing, ...(req.body || {}) };
@@ -1881,7 +1962,7 @@ router.put('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
   res.json({ supplier: listSuppliers().find((s) => s.id === req.params.id) });
 }));
 
-router.delete('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
+router.delete('/band/suppliers/:id', requireOwner, handle((req, res) => {
   deleteSupplier(req.params.id);
   res.json({ ok: true });
 }));
@@ -1890,7 +1971,7 @@ router.delete('/moonlight/suppliers/:id', requireOwner, handle((req, res) => {
  * The staffing board: every show in the range with who holds each role, what that role
  * costs on the show's expense row, and which required roles still have nobody.
  */
-router.get('/moonlight/assignments', requireAuth, handle((req, res) => {
+router.get('/band/assignments', requireAuth, handle((req, res) => {
   const where = rangeClause('date', dateRange(req.query));
   const events = db
     .prepare(`SELECT * FROM band_events${where.sql} ORDER BY date`)
@@ -1923,14 +2004,14 @@ router.get('/moonlight/assignments', requireAuth, handle((req, res) => {
 }));
 
 /** One staffing decision: who fills `role` on this show, or that it is not needed. */
-router.put('/moonlight/events/:id/assignments', requireOwner, handle((req, res) => {
+router.put('/band/events/:id/assignments', requireOwner, handle((req, res) => {
   const { role, supplier_id, not_needed } = req.body || {};
   if (!isAssignmentRole(role)) return res.status(400).json({ error: 'תפקיד לא חוקי' });
   res.json({ assignment: setAssignment(req.params.id, role, supplier_id || null, !!not_needed) });
 }));
 
 /** Re-matches every stored guest list — for after the supplier table is edited. */
-router.post('/moonlight/assignments/auto-match', requireOwner, handle((_req, res) => {
+router.post('/band/assignments/auto-match', requireOwner, handle((_req, res) => {
   res.json({ assigned: autoAssignAll() });
 }));
 
@@ -1947,7 +2028,7 @@ function payeeFromRequest(body: any): { kind: PayeeKind; id: string } | null {
 }
 
 /** Everybody the band can pay: the suppliers it hires and its own members. */
-router.get('/moonlight/payees', requireAuth, handle((_req, res) => {
+router.get('/band/payees', requireAuth, handle((_req, res) => {
   res.json({ payees: listPayees().map((p) => ({ ...p, key: keyOf(p) })) });
 }));
 
@@ -1958,7 +2039,7 @@ router.get('/moonlight/payees', requireAuth, handle((_req, res) => {
  * pays: one transfer to אבי covering the four gigs he did since the last one, and one to
  * אמיר covering his share of the same four.
  */
-router.get('/moonlight/payees/:kind/:id/open-lines', requireAuth, handle((req, res) => {
+router.get('/band/payees/:kind/:id/open-lines', requireAuth, handle((req, res) => {
   const payee = payeeFromRequest({
     payee_kind: req.params.kind, payee_id: req.params.id,
   });
@@ -1967,7 +2048,7 @@ router.get('/moonlight/payees/:kind/:id/open-lines', requireAuth, handle((req, r
 }));
 
 /** The address the pay dialog used before members could be paid; kept for old links. */
-router.get('/moonlight/suppliers/:id/open-lines', requireAuth, handle((req, res) => {
+router.get('/band/suppliers/:id/open-lines', requireAuth, handle((req, res) => {
   if (!db.prepare('SELECT id FROM band_suppliers WHERE id = ?').get(req.params.id)) {
     return res.status(404).json({ error: 'supplier not found' });
   }
@@ -1975,7 +2056,7 @@ router.get('/moonlight/suppliers/:id/open-lines', requireAuth, handle((req, res)
 }));
 
 /** Every recorded payment with what answers for it, plus the aged total still undocumented. */
-router.get('/moonlight/supplier-payments', requireAuth, handle((_req, res) => {
+router.get('/band/supplier-payments', requireAuth, handle((_req, res) => {
   res.json({ payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
 }));
 
@@ -1983,7 +2064,7 @@ router.get('/moonlight/supplier-payments', requireAuth, handle((_req, res) => {
  * Records one transfer against the lines it settles. The amount is the sum of those lines and
  * is never read off the request — see recordPayment.
  */
-router.post('/moonlight/supplier-payments', requireOwner, handle((req, res) => {
+router.post('/band/supplier-payments', requireOwner, handle((req, res) => {
   const { date, method, notes, lines } = req.body || {};
   const payee = payeeFromRequest(req.body);
   if (!payee) return res.status(400).json({ error: 'מקבל התשלום חובה' });
@@ -1993,7 +2074,7 @@ router.post('/moonlight/supplier-payments', requireOwner, handle((req, res) => {
   res.json({ payment: recordPayment({ payee, date, method, notes, lines }) });
 }));
 
-router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res) => {
+router.delete('/band/supplier-payments/:id', requireOwner, handle((req, res) => {
   deletePayment(req.params.id);
   res.json({ ok: true });
 }));
@@ -2007,7 +2088,7 @@ router.delete('/moonlight/supplier-payments/:id', requireOwner, handle((req, res
  * document dated four months out, the invoice that covers two transfers at once. No rule
  * reaches those, and the person holding the invoice does.
  */
-router.get('/moonlight/supplier-payments/:id/documents', requireAuth, handle((req, res) => {
+router.get('/band/supplier-payments/:id/documents', requireAuth, handle((req, res) => {
   res.json({ documents: searchDocuments(req.params.id, String(req.query.q || '')) });
 }));
 
@@ -2020,7 +2101,7 @@ router.get('/moonlight/supplier-payments/:id/documents', requireAuth, handle((re
  * already spoken for by another supplier is not overwritten by a link, and the person is told
  * the mapping did not take while the link itself stands.
  */
-router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, res) => {
+router.post('/band/supplier-payments/:id/docs', requireOwner, handle((req, res) => {
   const expenseId = String(req.body?.expense_id || '');
   if (!expenseId) return res.status(400).json({ error: 'מסמך חובה' });
   linkDocument(req.params.id, expenseId, 'user');
@@ -2050,7 +2131,7 @@ router.post('/moonlight/supplier-payments/:id/docs', requireOwner, handle((req, 
   });
 }));
 
-router.delete('/moonlight/supplier-payments/:id/docs/:expenseId', requireOwner, handle((req, res) => {
+router.delete('/band/supplier-payments/:id/docs/:expenseId', requireOwner, handle((req, res) => {
   unlinkDocument(req.params.id, req.params.expenseId);
   res.json({ payment: listPayments().find((p) => p.id === req.params.id) ?? null });
 }));
@@ -2061,7 +2142,7 @@ router.delete('/moonlight/supplier-payments/:id/docs/:expenseId', requireOwner, 
  * Sending no resolution is the reopen: a payment closed as «לא נדרשת חשבונית» that turns out
  * to have one after all goes back to waiting rather than needing to be re-recorded.
  */
-router.post('/moonlight/supplier-payments/:id/resolve', requireOwner, handle((req, res) => {
+router.post('/band/supplier-payments/:id/resolve', requireOwner, handle((req, res) => {
   const raw = req.body?.resolution;
   const resolution = raw == null || raw === ''
     ? null
@@ -2071,7 +2152,7 @@ router.post('/moonlight/supplier-payments/:id/resolve', requireOwner, handle((re
 }));
 
 /** Runs the matcher over everything Morning has sent since the last time. */
-router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, res) => {
+router.post('/band/supplier-payments/match', requireOwner, handle((_req, res) => {
   res.json({ ...runMatch(), payments: listPayments(), queue: invoiceQueue(getVatPercent()) });
 }));
 
@@ -2088,7 +2169,7 @@ router.post('/moonlight/supplier-payments/match', requireOwner, handle((_req, re
  * a member is a document like any other, and until this screen knows their business name it
  * cannot place theirs either.
  */
-router.get('/moonlight/supplier-names', requireAuth, handle((_req, res) => {
+router.get('/band/supplier-names', requireAuth, handle((_req, res) => {
   const payees = listPayees();
   res.json({
     payees: payees.map((p) => ({
@@ -2109,7 +2190,7 @@ router.get('/moonlight/supplier-names', requireAuth, handle((_req, res) => {
  * sitting in the table unmatched, and a mapping that only affected the future would leave the
  * person to go and link them one at a time anyway.
  */
-router.post('/moonlight/supplier-names', requireOwner, handle((req, res) => {
+router.post('/band/supplier-names', requireOwner, handle((req, res) => {
   const payee = payeeFromRequest(req.body);
   const alias = String(req.body?.alias || '');
   if (!payee) return res.status(400).json({ error: 'מקבל התשלום חובה' });
@@ -2118,7 +2199,7 @@ router.post('/moonlight/supplier-names', requireOwner, handle((req, res) => {
   res.json({ alias: created, ...runMatch() });
 }));
 
-router.delete('/moonlight/supplier-names/:id', requireOwner, handle((req, res) => {
+router.delete('/band/supplier-names/:id', requireOwner, handle((req, res) => {
   removeAlias(req.params.id);
   res.json({ ok: true });
 }));
@@ -2131,7 +2212,7 @@ router.delete('/moonlight/supplier-names/:id', requireOwner, handle((req, res) =
  * The counts are what a person needs before switching one off: a role with suppliers hired
  * under it and shows staffed on it is not a checkbox, it is part of the band's history.
  */
-router.get('/moonlight/supplier-roles', requireAuth, handle((_req, res) => {
+router.get('/band/supplier-roles', requireAuth, handle((_req, res) => {
   res.json({
     roles: allRoles().map((role) => ({ ...role, ...roleUsage(role.key) })),
   });
@@ -2144,9 +2225,36 @@ router.get('/moonlight/supplier-roles', requireAuth, handle((_req, res) => {
  * the set is fixed by what a show can cost — and switching one off is what "deleting" means
  * here, with every show that used it left exactly as it was.
  */
-router.put('/moonlight/supplier-roles/:key', requireOwner, handle((req, res) => {
+router.put('/band/supplier-roles/:key', requireOwner, handle((req, res) => {
   const { name, required, active } = req.body || {};
   res.json({ role: { ...updateRole(req.params.key, { name, required, active }), ...roleUsage(req.params.key) } });
+}));
+
+// ---- the cost lines of a show (שורות עלות) ----
+/**
+ * The cost lines a show carries, each with how many shows already hold money on it. Readable
+ * by the band, because every show page lists them; only the owner changes them.
+ */
+router.get('/band/expense-categories', requireAuth, handle((_req, res) => {
+  res.json({
+    categories: allCategories().map((category) => ({ ...category, ...categoryUsage(category.key) })),
+  });
+}));
+
+router.post('/band/expense-categories', requireOwner, handle((req, res) => {
+  const { name, settles } = req.body || {};
+  res.json({ category: createCategory({ name, settles }) });
+}));
+
+router.put('/band/expense-categories/:key', requireOwner, handle((req, res) => {
+  const { name, settles, active } = req.body || {};
+  const category = updateCategory(req.params.key, { name, settles, active });
+  res.json({ category: { ...category, ...categoryUsage(category.key) } });
+}));
+
+router.delete('/band/expense-categories/:key', requireOwner, handle((req, res) => {
+  deleteCategory(req.params.key);
+  res.json({ ok: true });
 }));
 
 // ====== integrations: Morning (Green Invoice) + Google Calendar + Meta ads (owner) ======
@@ -2163,21 +2271,15 @@ router.get('/integrations', requireOwner, handle((_req, res) => {
  */
 router.post('/integrations/morning/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullFromMorning({ days });
-  const expenses = await pullExpensesFromMorning({ days }).catch((err: any) => ({
-    error: err.message || 'משיכת ההוצאות נכשלה',
-  }));
-  // A document that has just arrived is the answer to a payment already waiting for it, so
-  // the match runs here rather than waiting to be asked for: the queue is shortest the moment
-  // after a sync, which is exactly when somebody is looking at it.
-  const matched = runMatch();
-  res.json({ result: { ...result, expenses, matched: matched.linked } });
+  // The same function the nightly run calls (server/nightlySync.ts), matching included: the
+  // queue is shortest the moment after a sync, which is exactly when somebody is looking at it.
+  res.json({ result: await syncMorning({ days }) });
 }));
 
 /** Pulls expenses only — what the הוצאות page's own sync button asks for. */
 router.post('/integrations/morning/expenses-sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullExpensesFromMorning({ days });
+  const result = await tracked('morning', () => pullExpensesFromMorning({ days }));
   res.json({ result: { ...result, matched: runMatch().linked } });
 }));
 
@@ -2235,7 +2337,13 @@ router.post('/invoices/:id/push-to-morning', requireOwner, handleAsync(async (re
 router.post('/integrations/calendar/sync', requireOwner, handleAsync(async (req, res) => {
   const monthsBack = req.body?.months_back != null ? parseInt(req.body.months_back, 10) : undefined;
   const monthsAhead = req.body?.months_ahead != null ? parseInt(req.body.months_ahead, 10) : undefined;
-  res.json({ result: await pullShowsFromCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
+  res.json({ result: await syncCalendar({ monthsBack, monthsAhead, ruleId: req.body?.rule_id }) });
+}));
+
+/** The nightly sync's switch (Settings → חיבורים). On unless switched off. */
+router.put('/integrations/nightly', requireOwner, handle((req, res) => {
+  setNightlyEnabled(req.body?.enabled !== false);
+  res.json({ enabled: isNightlyEnabled(), last_run: lastNightlyRun() });
 }));
 
 /** The calendars this account can read, for the rule's calendar picker. */
@@ -2252,8 +2360,9 @@ router.get('/integrations/calendar/calendars', requireOwner, handleAsync(async (
  */
 router.post('/integrations/meta/sync', requireOwner, handleAsync(async (req, res) => {
   const days = req.body?.days != null ? parseInt(req.body.days, 10) : undefined;
-  const result = await pullCampaignsFromMeta({ days });
-  res.json({ result: { ...result, applied: applyCampaignSpend() } });
+  // The same function the nightly run calls. The pixel's counts ride along, so the advisor's
+  // next run knows which clubs' sites carry it.
+  res.json({ result: await syncMeta({ days }) });
 }));
 
 /**
@@ -2290,7 +2399,7 @@ router.delete('/integrations/meta/campaigns/:id/mappings/:eventId', requireOwner
  * ticket and spend as a share of revenue. The band area's own read, so the period filter is
  * the same one every other list uses.
  */
-router.get('/moonlight/ad-analysis', requireAuth, handle((req, res) => {
+router.get('/band/ad-analysis', requireAuth, handle((req, res) => {
   res.json(adAnalysis(dateRange(req.query)));
 }));
 
@@ -2299,7 +2408,7 @@ router.get('/moonlight/ad-analysis', requireAuth, handle((req, res) => {
  * A campaign runs across months, so this is the view that reconciles an invoice against the
  * campaigns and shows behind it; `ad-analysis` partitions the same money by show instead.
  */
-router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
+router.get('/band/ad-monthly', requireAuth, handle((req, res) => {
   res.json(monthlyBreakdown(dateRange(req.query)));
 }));
 
@@ -2312,18 +2421,51 @@ router.get('/moonlight/ad-monthly', requireAuth, handle((req, res) => {
  * time, so a page load must never start one. Everybody in the band can read the report; only the
  * owner can spend a run on a new one.
  */
-router.get('/moonlight/campaign-analysis', requireAuth, handle((req, res) => {
+router.get('/band/campaign-analysis', requireAuth, handle((req, res) => {
   const range = dateRange(req.query);
   res.json({ report: lastReport('analysis', range), agent: agentStatus() });
 }));
 
 /** Spends a run: rebuilds the context from the current data and asks the agent for a verdict. */
-router.post('/moonlight/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
-  res.json({ report: await analyzeCampaigns(dateRange(req.query)) });
+router.post('/band/campaign-analysis', requireOwner, handleAsync(async (req, res) => {
+  const range = dateRange(req.query);
+  res.json({ report: await trackJob('analysis', { range }, () => analyzeCampaigns(range)) });
+}));
+
+/** Forgets this period's advice, so the tab is empty until a new one is asked for. */
+router.delete('/band/campaign-analysis', requireOwner, handle((req, res) => {
+  res.json(clearAnalysis(dateRange(req.query)));
+}));
+
+/**
+ * What the agent is working on right now, and the last run that failed. A page reloaded during a
+ * run reads this to keep waiting for the answer instead of offering to start it again.
+ */
+router.get('/band/campaign-jobs', requireAuth, handle((_req, res) => {
+  res.json({ jobs: listJobs() });
+}));
+
+/** Forgets a failed run once the page has shown its error. */
+router.delete('/band/campaign-jobs/:kind', requireOwner, handle((req, res) => {
+  dismissJob(req.params.kind);
+  res.json({ ok: true });
+}));
+
+/** Every show's newest plan, for the tab to open on the one you were working on. */
+router.get('/band/campaign-drafts', requireAuth, handle((_req, res) => {
+  res.json({ drafts: savedDrafts() });
+}));
+
+/**
+ * The shows the advisor's strip offers: each upcoming show with its last plan, status review and
+ * ticket check, what its campaigns spent, and what its club said about the pixel. A read only.
+ */
+router.get('/band/campaign-shows', requireAuth, handle((_req, res) => {
+  res.json({ shows: showSummaries(attributedSpendByEvent()) });
 }));
 
 /** The last campaign plan drafted for a show, if there is one. */
-router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) => {
+router.get('/band/campaign-draft/:eventId', requireAuth, handle((req, res) => {
   res.json({ report: lastReport('draft', {}, req.params.eventId) });
 }));
 
@@ -2334,25 +2476,243 @@ router.get('/moonlight/campaign-draft/:eventId', requireAuth, handle((req, res) 
  * typed into Ads Manager by a person, which is also why the whole history feeds it rather than
  * whatever period the tab happens to be showing.
  */
-router.post('/moonlight/campaign-draft', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/campaign-draft', requireOwner, handleAsync(async (req, res) => {
   const eventId = req.body?.event_id ? String(req.body.event_id) : '';
   if (!eventId) return res.status(400).json({ error: 'event_id is required' });
-  res.json({ report: await draftCampaign(eventId, String(req.body?.brief || '').slice(0, 2000)) });
+  const brief = String(req.body?.brief || '').slice(0, 2000);
+  res.json({ report: await trackJob('draft', { event_id: eventId, brief }, () => draftCampaign(eventId, brief)) });
+}));
+
+/**
+ * Starts a show over: every plan and status review of it is forgotten, and with `?tasks=1` its
+ * tasks too. Ticket checks and the club's links stay — they are facts, and the next plan uses them.
+ */
+router.delete('/band/campaign-draft/:eventId', requireOwner, handle((req, res) => {
+  const advice = clearShowAdvice(req.params.eventId);
+  const tasks = req.query?.tasks === '1' ? deleteShowTasks(req.params.eventId) : { deleted: 0 };
+  res.json({ deleted: advice.deleted, tasks_deleted: tasks.deleted });
+}));
+
+/**
+ * A show's campaign as it stands: the last status review, the last look at the club's ticket page,
+ * and the links that look starts from.
+ */
+router.get('/band/campaign-review/:eventId', requireAuth, handle((req, res) => {
+  const eventId = req.params.eventId;
+  res.json({ review: lastReport('review', {}, eventId), tickets: lastTicketCheck(eventId), links: ticketLinks(eventId) });
+}));
+
+/**
+ * Re-advises a campaign that is already running: the plan against what happened since, and one
+ * decision. `check_tickets` reads the club's ticket page first unless it was read in the last hours.
+ */
+router.post('/band/campaign-review', requireOwner, handleAsync(async (req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const note = String(req.body?.note || '').slice(0, 2000);
+  const check = req.body?.check_tickets !== false;
+  res.json(await trackJob('review', { event_id: eventId, message: note },
+    () => reviewCampaign(eventId, { note, checkTickets: check })));
+}));
+
+/** Looks the show up on the club's site. `note` is the answer to the question the last check asked. */
+router.post('/band/ticket-check', requireOwner, handleAsync(async (req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const note = String(req.body?.note || '').slice(0, 1000);
+  res.json({ tickets: await trackJob('tickets', { event_id: eventId, message: note }, () => checkTickets(eventId, note)) });
+}));
+
+/**
+ * Tickets sold so far, typed by hand: `{ event_id, sold, capacity?, note? }`. Saved as the show's
+ * newest ticket count and written to its tickets figure in the books.
+ */
+router.post('/band/tickets', requireOwner, handle((req, res) => {
+  const eventId = req.body?.event_id ? String(req.body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  res.json({ tickets: recordTickets(eventId, req.body ?? {}) });
+}));
+
+/** The club's site and the show's ticket page, typed by hand. An empty value clears it. */
+router.put('/band/ticket-links/:eventId', requireOwner, handle((req, res) => {
+  const body = req.body ?? {};
+  res.json({ links: setTicketLinks(req.params.eventId, { ticket_url: body.ticket_url, venue_site: body.venue_site }) });
+}));
+
+/** Keeps the headline or description chosen from a plan's alternatives. */
+router.put('/band/campaign-draft/:reportId/creative', requireOwner, handle((req, res) => {
+  const { field, value } = req.body ?? {};
+  res.json({ report: chooseDraftCreative(req.params.reportId, String(field ?? ''), String(value ?? '')) });
 }));
 
 /** The follow-up conversation. One thread per owner, which is all this app ever has. */
-router.get('/moonlight/campaign-chat', requireAuth, handle((req, res) => {
+router.get('/band/campaign-chat', requireAuth, handle((req, res) => {
   res.json({ messages: chatHistory(CAMPAIGN_CHAT_THREAD) });
 }));
 
-router.post('/moonlight/campaign-chat', requireOwner, handleAsync(async (req, res) => {
+router.post('/band/campaign-chat', requireOwner, handleAsync(async (req, res) => {
   const message = String(req.body?.message || '').trim();
   if (!message) return res.status(400).json({ error: 'message is required' });
-  res.json({ messages: await chat(CAMPAIGN_CHAT_THREAD, message.slice(0, 2000), dateRange(req.query)) });
+  const text = message.slice(0, 2000);
+  const range = dateRange(req.query);
+  res.json({ messages: await trackJob('chat', { range, message: text }, () => chat(CAMPAIGN_CHAT_THREAD, text, range)) });
 }));
 
-router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {
+router.delete('/band/campaign-chat', requireOwner, handle((_req, res) => {
   res.json(clearChat(CAMPAIGN_CHAT_THREAD));
+}));
+
+// ---- the advisor's actions in Meta: preview first, then confirm ----
+
+/** The actions previewed and carried out, newest first — the log of what the app did in Meta. */
+router.get('/band/meta-actions', requireAuth, handle((_req, res) => {
+  res.json({ actions: listActions(), preview_minutes: PREVIEW_TTL_MINUTES });
+}));
+
+/**
+ * Step one of every change: reads the target live from Meta and lays out «now → after». Nothing
+ * is sent to Meta here; the stored preview is the only thing the confirm below can carry out.
+ */
+router.post('/band/meta-actions/preview', requireOwner, handleAsync(async (req, res) => {
+  const body = req.body ?? {};
+  res.json({ preview: await previewAction(body.action, { source: body.source, source_id: body.source_id, event_id: body.event_id }) });
+}));
+
+/** Step two: carries out a preview the owner has just read, if Meta still matches it. */
+router.post('/band/meta-actions/:id/execute', requireOwner, handleAsync(async (req, res) => {
+  res.json({ action: await executeAction(req.params.id) });
+}));
+
+router.post('/band/meta-actions/:id/cancel', requireOwner, handle((req, res) => {
+  res.json({ action: cancelAction(req.params.id) });
+}));
+
+// ---- the campaign studio: what a new campaign is built from, and a campaign's ad sets and ads ----
+
+/**
+ * What the create wizard needs before it can offer a single choice: the pages the account may
+ * advertise for, its pixels, and the three goals. Read live, so a page added in Business Settings
+ * shows up without a sync.
+ */
+router.get('/band/meta/setup', requireOwner, handleAsync(async (_req, res) => {
+  if (!isMetaConfigured()) return res.json({ configured: false, pages: [], pixels: [], audiences: [], goals: OBJECTIVES });
+  // An account Meta will not list audiences for (a token without the scope) still gets a cold
+  // campaign; the wizard says why «hot» is not on offer.
+  const [pages, pixels, audiences, instagram, videos] = await Promise.all([
+    fetchPromotePages(),
+    fetchPixels(),
+    fetchCustomAudiences().then((list) => ({ list, error: null as string | null }), (err) => ({ list: [], error: String(err?.message || err) })),
+    // Only the Instagram engagement audience needs it; an account without one still works.
+    fetchInstagramAccounts().catch(() => []),
+    fetchAdVideos().catch(() => []),
+  ]);
+  res.json({
+    configured: true, pages, pixels, instagram_accounts: instagram, videos,
+    audiences: audiences.list, audiences_error: audiences.error, goals: OBJECTIVES,
+  });
+}));
+
+/**
+ * One campaign below the campaign level, read live: its budget and end date, its ad sets and its
+ * ads. Budgets in shekels, the same way every preview states them.
+ */
+router.get('/band/meta/campaigns/:id/structure', requireOwner, handleAsync(async (req, res) => {
+  const id = String(req.params.id);
+  const [campaign, adsets, ads] = await Promise.all([
+    fetchObject(id, 'id,name,status,effective_status,objective,daily_budget,lifetime_budget,start_time,stop_time'),
+    fetchCampaignAdSets(id),
+    fetchCampaignAds(id),
+  ]);
+  const money = (o: any) => ({ ...o, daily_budget: budgetToShekels(o.daily_budget), lifetime_budget: budgetToShekels(o.lifetime_budget) });
+  res.json({ campaign: money(campaign), adsets: adsets.map(money), ads });
+}));
+
+/**
+ * The image a new ad will carry, kept by the app until the campaign is confirmed — nothing reaches
+ * Meta before the preview has been read (`metaImages.ts`).
+ */
+router.post('/band/meta/images', requireOwner, handle((req, res) => {
+  const image = storeImage(req.body?.data, req.body?.type);
+  res.json({ image: { ...image, url: `/api/band/meta/images/${image.id}` } });
+}));
+
+router.get('/band/meta/images/:id', requireOwner, handle((req, res) => {
+  const found = imagePath(req.params.id);
+  if (!found) return res.status(404).json({ error: 'not found' });
+  res.type(found.type).sendFile(found.file);
+}));
+
+// ---- the pixel, and the clubs whose ticket pages should carry it ----
+
+/** The pixel as last read, and every club with a show coming up. `?refresh=1` reads Meta again. */
+router.get('/band/pixel', requireOwner, handleAsync(async (req, res) => {
+  res.json(await pixelOverview({ refresh: req.query?.refresh === '1' }));
+}));
+
+/** What the owner recorded about a club: asked, installed, declined, and who to write to. */
+router.put('/band/pixel/venue', requireOwner, handle((req, res) => {
+  const body = req.body ?? {};
+  res.json({ venue: setVenuePixel(String(body.venue ?? ''), body) });
+}));
+
+/** The request to a club, composed for the owner's own mail app. Nothing is sent from here. */
+router.get('/band/pixel/email', requireOwner, handle((req, res) => {
+  res.json({ email: pixelEmail(String(req.query?.venue ?? '')) });
+}));
+
+// ---- campaign tasks: the advisor's follow-ups, with email reminders ----
+
+/** Every show with tasks or an owner, plus whether email is set up — the band reads along. */
+router.get('/band/campaign-tasks', requireAuth, handle((req, res) => {
+  res.json({
+    shows: listTaskShows({ all: req.query?.all === '1' }),
+    mail: mailStatus(),
+    done_links: Boolean(process.env.PUBLIC_BASE_URL?.trim()),
+  });
+}));
+
+/**
+ * Adds tasks to a show: `{ event_id, tasks: [{ title, detail, due_date }] }`, or one task's
+ * fields at the top level. `report_id` marks them as accepted from that advisor draft.
+ */
+router.post('/band/campaign-tasks', requireOwner, handle((req, res) => {
+  const body = req.body || {};
+  const eventId = body.event_id ? String(body.event_id) : '';
+  if (!eventId) return res.status(400).json({ error: 'event_id is required' });
+  const inputs = Array.isArray(body.tasks) ? body.tasks : [body];
+  const reportId = body.report_id ? String(body.report_id) : null;
+  res.json({ tasks: createTasks(eventId, inputs, { source: reportId ? 'ai' : 'manual', reportId }) });
+}));
+
+/** Clears a show's tasks to start its list again — all of them, or with `?open=1` the open ones. */
+router.delete('/band/campaign-tasks/show/:eventId', requireOwner, handle((req, res) => {
+  res.json(deleteShowTasks(req.params.eventId, { openOnly: req.query?.open === '1' }));
+}));
+
+/** Who on the band gets this show's reminders. `member_key: null` clears it. */
+router.put('/band/campaign-tasks/owner/:eventId', requireOwner, handle((req, res) => {
+  const key = req.body?.member_key ? String(req.body.member_key) : null;
+  res.json(setTaskOwner(req.params.eventId, key));
+}));
+
+/**
+ * Edits a task. The band can tick a task done — it is usually one of them who did it — but only
+ * the owner rewrites, re-dates or deletes one.
+ */
+router.put('/band/campaign-tasks/:id', requireAuth, handle((req, res) => {
+  const body = req.body || {};
+  const patch = req.user.role === 'owner' ? body : { done: body.done };
+  res.json({ task: updateTask(req.params.id, patch) });
+}));
+
+router.delete('/band/campaign-tasks/:id', requireOwner, handle((req, res) => {
+  deleteTask(req.params.id);
+  res.json({ ok: true });
+}));
+
+/** Sends this task's reminder now, whatever its date — also how the email setup is tested. */
+router.post('/band/campaign-tasks/:id/remind', requireOwner, handleAsync(async (req, res) => {
+  res.json(await remindNow(req.params.id));
 }));
 
 /**
@@ -2361,7 +2721,7 @@ router.delete('/moonlight/campaign-chat', requireOwner, handle((_req, res) => {
  * — without spending a real analysis to find out which of those is broken.
  */
 router.post('/integrations/agent/ping', requireOwner, handleAsync(async (_req, res) => {
-  res.json({ result: await agentPing() });
+  res.json({ result: await tracked('agent', () => agentPing()) });
 }));
 
 // ---- calendar rules: which events to draw, for band and for personal ----
@@ -2427,6 +2787,8 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     settings: {
       vat_percent: getVatPercent(),
       app_name: getSetting('app_name', 'Account Manager'),
+      band_name: getBandName(),
+      band_commission_percent: getDefaultCommissionPercent(),
       morning_sync_days: getMorningSyncDays(),
       vat_report_frequency: getVatFrequency(),
       tax_credit_points: getCreditPoints(),
@@ -2437,6 +2799,7 @@ router.get('/settings', requireOwner, handle((_req, res) => {
     business_types: Object.entries(BUSINESS_TYPE_LABELS).map(([value, label]) => ({ value, label })),
     integrations: {
       morning: morningStatus(), calendar: calendarStatus(), meta: metaStatus(), agent: agentStatus(),
+      nightly: { enabled: isNightlyEnabled(), last_run: lastNightlyRun() },
     },
     calendar_rules: listRules(),
     users: db.prepare('SELECT id, email, name, role, created_at FROM users ORDER BY role, name').all(),
@@ -2446,11 +2809,18 @@ router.get('/settings', requireOwner, handle((_req, res) => {
 
 router.post('/settings', requireOwner, handle((req, res) => {
   const {
-    vat_percent, app_name, morning_sync_days, vat_report_frequency, tax_credit_points,
-    meta_sync_days, meta_currency_rate,
+    vat_percent, app_name, band_name, band_commission_percent, morning_sync_days, vat_report_frequency,
+    tax_credit_points, meta_sync_days, meta_currency_rate,
   } = req.body || {};
   if (vat_percent != null) setSetting('vat_percent', String(vat_percent));
-  if (app_name) setSetting('app_name', app_name);
+  if (app_name) setSetting('app_name', String(app_name).trim().slice(0, 60));
+  if (band_name != null) setSetting('band_name', String(band_name).trim().slice(0, 60));
+  if (band_commission_percent != null) {
+    const percent = parseFloat(band_commission_percent);
+    if (!Number.isFinite(percent) || percent < 0 || percent > 100)
+      return res.status(400).json({ error: 'אחוז דמי ההפקה חייב להיות בין 0 ל-100' });
+    setSetting('band_commission_percent', String(percent));
+  }
   if (morning_sync_days != null) {
     // Bounded at both ends: a zero or negative window would ask Morning for a range that ends
     // before it starts and quietly sync nothing, and five years is well past any real backfill.
@@ -2511,6 +2881,64 @@ router.post('/settings/agent', requireOwner, handle((req, res) => {
     res.json({ agent: saveAgentConfig(req.body || {}), status: agentStatus() });
   } catch (err) {
     if (err instanceof AgentConfigError) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
+}));
+
+// ---- Settings → שרת: restart / redeploy the container from the UI (opsClient.ts, deploy/ops.sh) ----
+
+/** This process: its build and start time. No SSH — the page polls it to see a restart land. */
+router.get('/admin/server/identity', requireOwner, handle((_req, res) => {
+  res.json({ ...appIdentity(), configured: opsConfigured() });
+}));
+
+/** What the host says: a job running or not, how the last one ended, the checkout's commit. */
+router.get('/admin/server/status', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ ...appIdentity(), status: parseStatus(await runOps('status')) });
+}));
+
+router.get('/admin/server/logs', requireOwner, handleAsync(async (_req, res) => {
+  res.json({ logs: await runOps('logs') });
+}));
+
+/**
+ * Starts the job and answers at once: ops.sh detaches it and waits a few seconds before touching
+ * the container, so this response gets out before the process that sends it is stopped.
+ */
+router.post('/admin/server/:action(restart|redeploy)', requireOwner, handleAsync(async (req, res) => {
+  const action = req.params.action as 'restart' | 'redeploy';
+  await runOps(action);
+  console.log(`[ops] ${action} requested by ${req.user?.email || 'owner'}`);
+  res.json({ ok: true, action, ...appIdentity() });
+}));
+
+/**
+ * The keys of the services the app syncs with (Morning, Meta, Google Calendar, mail), as the
+ * settings form sees them: IDs in full, secrets only as "saved, ending in …". serviceCredentials.ts.
+ */
+router.get('/settings/credentials', requireOwner, handle((_req, res) => {
+  res.json({ services: credentialsView() });
+}));
+
+/**
+ * Saves one service's keys and tests them on the spot. Only typed fields are written (an empty box
+ * means "unchanged"); `clear` forgets a saved key so `.env` applies again.
+ */
+router.post('/settings/credentials/:service', requireOwner, handleAsync(async (req, res) => {
+  try {
+    res.json(await saveCredentials(req.params.service, req.body || {}));
+  } catch (err) {
+    if (err instanceof CredentialError) { res.status(err.status).json({ error: err.message }); return; }
+    throw err;
+  }
+}));
+
+/** Tests the keys now in effect without changing anything. */
+router.post('/settings/credentials/:service/test', requireOwner, handleAsync(async (req, res) => {
+  try {
+    res.json({ test: await testCredentials(req.params.service) });
+  } catch (err) {
+    if (err instanceof CredentialError) { res.status(err.status).json({ error: err.message }); return; }
     throw err;
   }
 }));

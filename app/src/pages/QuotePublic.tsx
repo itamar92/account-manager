@@ -7,7 +7,7 @@ import type { QuoteTotals } from '../../server/quoteMath';
 import { whatsappUrl } from '../../server/quoteShare';
 import { QuoteDocument, type QuoteDocumentQuote } from '../quotes/QuoteDocument';
 import { SignaturePad, type SignaturePadHandle } from '../quotes/SignaturePad';
-import { israelDateTime, quoteDate, type LogoPosition, type QuoteBranding } from './moonlight/quotes';
+import { israelDateTime, quoteDate, type LogoPosition, type QuoteBranding } from './band/quotes';
 
 /** What /api/public/quotes/:token answers — see server/quoteLink.ts. */
 interface PublicView {

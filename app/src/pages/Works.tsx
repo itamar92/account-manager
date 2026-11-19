@@ -1,12 +1,22 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { get, post, put, del, nis } from '../api';
+import { SyncButton } from '../SyncButton';
 import {
   Button, Card, Input, Modal, StatusBadge, DataTable, FilterBar, PageHeader, PeriodSelect,
   SearchInput, filterClass, textMatch, usePeriodFilter,
 } from '../ui';
 import { PeriodInvoiceModal } from './PeriodInvoiceModal';
 import { MorningIssueModal } from './MorningIssueModal';
+
+const STATUS_LABELS: Record<string, string> = { unpaid: 'לא חויב', invoiced: 'בחשבונית', paid: 'שולם' };
+/** The same colours StatusBadge uses, for the status picker that stands in for it. */
+const STATUS_STYLES: Record<string, string> = {
+  unpaid: 'bg-warn-soft text-warn-ink',
+  upcoming: 'bg-soft text-muted',
+  invoiced: 'bg-moon-soft text-moon',
+  paid: 'bg-pos-soft text-pos',
+};
 
 export function Works() {
   const [works, setWorks] = useState<any[]>([]);
@@ -24,6 +34,7 @@ export function Works() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [assignTo, setAssignTo] = useState('');
+  const [markAs, setMarkAs] = useState('');
   const [periodOpen, setPeriodOpen] = useState(false);
   // The works waiting on an issue dialog. There is no invoice behind them — issuing is
   // what creates one.
@@ -124,6 +135,25 @@ export function Works() {
     } catch (err: any) { setError(err.message); }
   };
 
+  /**
+   * Sets the status by hand — for jobs billed outside the app (an invoice made straight in
+   * Morning), which have no invoice here to link them to. Works already on an invoice follow
+   * it and are reported back as locked.
+   */
+  const setStatus = async (ids: string[], status: string, ask = true) => {
+    if (!ids.length) return;
+    if (ask && !confirm(`לסמן ${ids.length} עבודות כ«${STATUS_LABELS[status]}»?`)) return;
+    setError('');
+    setNotice('');
+    try {
+      const d = await post('/works/bulk-status', { ids, status });
+      setSelected(new Set());
+      if (ask) setNotice(`${d.updated} עבודות סומנו כ«${STATUS_LABELS[status]}»`);
+      if (d.locked?.length) setError(`${d.locked.length} עבודות לא שונו — הסטטוס שלהן נקבע לפי החשבונית שהן מקושרות אליה`);
+      load();
+    } catch (err: any) { setError(err.message); }
+  };
+
   const closeModal = () => {
     setOpen(false);
     setEditing(null);
@@ -175,17 +205,21 @@ export function Works() {
     } catch (err: any) { setError(err.message); }
   };
 
+  // Only jobs whose date has arrived need billing; future calendar jobs are counted apart.
   const unbilledTotal = works
-    .filter((w) => w.status === 'unpaid')
+    .filter((w) => w.status === 'unpaid' && !w.upcoming)
     .reduce((sum, w) => sum + (Number(w.total) || 0), 0);
+  const upcomingCount = works.filter((w) => w.upcoming).length;
 
   return (
     <div className="space-y-4">
       <PageHeader
         title="עבודות"
-        sub={<><span className="num">{works.length}</span> עבודות מוצגות · <span className="num text-warn">{nis(unbilledTotal)}</span> טרם חויבו</>}
+        sub={<><span className="num">{works.length}</span> עבודות מוצגות · <span className="num text-warn">{nis(unbilledTotal)}</span> טרם חויבו{upcomingCount > 0 && <> · <span className="num">{upcomingCount}</span> עתידיות</>}</>}
         actions={
           <>
+            {/* The calendar rules are what draw most works here, so the pull sits with them. */}
+            <SyncButton service="calendar" onError={setError} onDone={setNotice} reload={load} />
             {/* A month's work billed in one document — the way most clients here are invoiced. */}
             <Button variant="ghost" onClick={() => setPeriodOpen(true)}>חשבונית תקופתית</Button>
             <Button onClick={() => { setEditing(null); setOpen(true); }}>+ עבודה חדשה</Button>
@@ -200,7 +234,8 @@ export function Works() {
         </select>
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className={filterClass}>
           <option value="">כל הסטטוסים</option>
-          <option value="unpaid">לא חויב</option>
+          <option value="unpaid">לא חויב (מועד עבר)</option>
+          <option value="upcoming">עתידי</option>
           <option value="invoiced">בחשבונית</option>
           <option value="paid">שולם</option>
         </select>
@@ -210,7 +245,7 @@ export function Works() {
       </FilterBar>
 
       {error && <div className="text-sm text-neg bg-neg-soft rounded-xl px-4 py-2.5">{error}</div>}
-      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5">{notice}</div>}
+      {notice && <div className="text-sm text-pos bg-pos-soft rounded-xl px-4 py-2.5 whitespace-pre-line">{notice}</div>}
 
       {/* Sticky: the actions belong next to the rows you are ticking, however far down the
           table you have scrolled — not at the top of a page you have to scroll back to. */}
@@ -229,6 +264,16 @@ export function Works() {
               >
                 <option value="">שיוך ללקוח אחר…</option>
                 {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select
+                value={markAs}
+                onChange={(e) => { const v = e.target.value; setMarkAs(''); if (v) setStatus([...selected], v); }}
+                className="bg-soft border border-line rounded-xl px-3 py-2 text-sm"
+                title="לעבודות שחויבו מחוץ לאפליקציה"
+              >
+                <option value="">סימון סטטוס…</option>
+                <option value="invoiced">חויב (חשבונית קיימת)</option>
+                <option value="paid">שולם</option>
               </select>
               <Button variant="danger" onClick={deleteSelected}>מחיקת הנבחרות</Button>
               <Button onClick={startInvoice} disabled={!canInvoice}>צור חשבונית</Button>
@@ -292,10 +337,25 @@ export function Works() {
             {
               key: 'status', header: 'סטטוס', sortValue: (w) => w.status,
               render: (w) => (
-                <>
-                  <StatusBadge status={w.status} />
-                  {w.invoice_number && <span className="text-xs text-faint mr-1">#{w.invoice_number}</span>}
-                </>
+                <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                  {w.invoice_id ? (
+                    // On an invoice: the invoice decides the status.
+                    <StatusBadge status={w.status} />
+                  ) : (
+                    <select
+                      value={w.status}
+                      onChange={(e) => setStatus([w.id], e.target.value, false)}
+                      title="שינוי סטטוס ידני — לעבודה שחויבה מחוץ לאפליקציה"
+                      className={`rounded-full px-2.5 py-1 text-[12.5px] font-semibold border-0 cursor-pointer ${STATUS_STYLES[w.upcoming ? 'upcoming' : w.status]}`}
+                    >
+                      <option value="unpaid">{w.upcoming ? 'עתידי' : 'לא חויב'}</option>
+                      <option value="invoiced">בחשבונית</option>
+                      <option value="paid">שולם</option>
+                    </select>
+                  )}
+                  {w.invoice_number && <span className="text-xs text-faint">#{w.invoice_number}</span>}
+                  {!!w.status_manual && !w.invoice_id && <span className="text-xs text-faint" title="הסטטוס סומן ידנית">ידני</span>}
+                </div>
               ),
             },
             {

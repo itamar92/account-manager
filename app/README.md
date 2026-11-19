@@ -1,8 +1,10 @@
 # Account Manager — Web App
 
-Unified accounting dashboard replacing the Google Sheets workbook: personal freelance
-accounting (clients → works → invoices) + Moonlight Finance (band) in one app, with an
-external API for the Morning app / client management system.
+Unified accounting dashboard: a small business's books (clients → works → invoices →
+Israeli VAT and income tax) and a second set of books for a sub-business — a band, by
+default — in one app, with an external API and a read-only MCP server for AI agents.
+The main README at the repository root is the place to start; this file is the detailed
+design of the web app.
 
 ## Stack
 
@@ -29,20 +31,28 @@ Docker + Cloudflare Tunnel on an Oracle Always Free VM.
 
 ### Environment (optional, `.env`)
 
+The Morning, Google Calendar, Meta and SMTP credentials below can also be entered in
+**Settings → חיבורים → «מפתחות שירותים»** (`server/credentials.ts`): saved there they are encrypted,
+win over the variables here, and are tested against the service on save.
+
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `PORT` | 3000 | server port |
 | `DATA_DIR` | `app/data` | where the SQLite file lives |
-| `SEED_OWNER_PASSWORD` | `changeme123` | initial owner password |
-| `SEED_BAND_PASSWORD` | `moonlight123` | initial band members password |
+| `SEED_OWNER_EMAIL` / `SEED_OWNER_NAME` | `owner@example.com` / `בעל/ת העסק` | the owner account created on first run |
+| `SEED_OWNER_PASSWORD` | `changeme123` | its initial password (required in production) |
 | `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET` | — | Morning API credentials; without them the Morning sync is disabled |
 | `GREEN_INVOICE_BASE_URL` | production API | point at `https://sandbox.d.greeninvoice.co.il/api/v1` to test the write path |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs `calendar.readonly`, and `calendar.events` too for quotes to create their «אופציה» events — see `deploy/README.md` |
+| `GREEN_INVOICE_TOKEN_URL` | `https://api.morning.co/idp/v1/oauth/token` (sandbox: `https://api.sandbox.morning.dev/idp/v1/oauth/token`) | where the key is exchanged for an access token. Morning moved this off the API host in its 2026 update; the old `/account/token` answers 404. Override only if Morning moves it again |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REFRESH_TOKEN` | — | OAuth credentials for the calendar sync; without them it is disabled. The token needs only `calendar.readonly`: a quote's «אופציה» event is saved in Google from a filled-in link, not written by the app |
 | `GOOGLE_CALENDAR_ID` | `primary` | calendar holding the shows (also settable in the UI) |
-| `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token (`ads_read`) and the ad account; without them the Meta sync is disabled |
+| `META_ACCESS_TOKEN` / `META_AD_ACCOUNT_ID` | — | Meta Ads system-user token and the ad account; without them the Meta sync is disabled. `ads_read` is enough for the sync; the campaign advisor's actions (pause, daily budget, end date, create a pixel) also need `ads_management` on the same token |
 | `META_API_VERSION` | `v25.0` | Graph API version |
 | `META_GRAPH_URL` | `https://graph.facebook.com` | base URL override, for pointing the sync at a stub |
 | `APP_SECRET_KEY` | a generated `secret.key` beside the database | encrypts the secrets saved from the UI (the agent's SSH key). See below |
+| `SMTP_USER` / `SMTP_PASS` | — | Gmail address and app password for campaign-task reminder emails; without them no reminder is sent |
+| `SMTP_FROM` / `SMTP_HOST` / `SMTP_PORT` | `<band name> <SMTP_USER>` / `smtp.gmail.com` / `465` | sender and server overrides for those emails |
+| `PUBLIC_BASE_URL` | the address the app was opened at | base of client quote links, and of the «סימון כבוצע» link in reminder emails (no link without it) |
 
 The `AGENT_SSH_*` variables below are now the **fallback** for **Settings → סוכן AI**, which is
 where the agent's connection details are normally entered. Anything saved in that form wins;
@@ -55,18 +65,22 @@ a field left empty there falls back to these, so an existing deployment keeps wo
 | `AGENT_SSH_PASSPHRASE` | — | the key's passphrase, if it has one |
 | `AGENT_SSH_HOST_KEY` | — | the agent host's public key, from `ssh-keyscan`. **Required in production** |
 | `AGENT_COMMAND` | `claude -p --output-format json` | the fixed command run on that machine; the prompt goes to its stdin |
-| `AGENT_TIMEOUT_MS` | `120000` | how long a single run may take before the connection is dropped |
+| `AGENT_TIMEOUT_MS` | `300000` | how long a single run may take before the connection is dropped — above the wrapper's own 110 s (290 s with the Meta connector) |
 
-## Seeded users
+## Users and roles
 
-| Email | Role | Access |
-|-------|------|--------|
-| `itamar92@gmail.com` | owner | everything |
-| `amir@moonlight.band`, `yuval@moonlight.band`, `guy@moonlight.band` | band | `/moonlight` only, read-only — except הצעות מחיר, which they edit too |
+First run creates **one owner account** from `SEED_OWNER_EMAIL` / `SEED_OWNER_NAME` /
+`SEED_OWNER_PASSWORD` and nothing else — no clients, no shows, no band members. The owner
+is also seeded as the band's first (and only) member and its manager. Invoices and expenses
+arrive from Morning, shows from Google Calendar, and the rest is typed in.
 
-**Change the default passwords** (or set the `SEED_*` env vars before first run).
-First run also imports `../invoices_2026.csv` (Green Invoice export) and the Moonlight
-Finance data as the initial dataset.
+| Role | Access |
+|------|--------|
+| `owner` | everything |
+| `band` | `/band` only, read-only — except הצעות מחיר, which they edit too |
+
+**Change the default password** on a laptop install (production refuses to start without
+`SEED_OWNER_PASSWORD`). Band members get a login from **Settings → משתמשים**.
 
 Members are editable in **Settings → משתמשים**: name, email, role, and a new password —
 left blank, the existing password stands, so details can be corrected without resetting
@@ -93,15 +107,15 @@ cannot demote yourself.
   next sync would recreate both it and its works; and uninvoiced works are only deleted
   along with it when the caller asks (`?delete_works=1`), which the UI does after saying
   how many.
-- **Moonlight private area**: `/moonlight` is visible to `band` users, but every personal
+- **Band private area**: `/band` is visible to `band` users, but every personal
   accounting route/API is owner-only (enforced server-side, not just in the router).
-- **A show is one page** (`/moonlight/shows/:id`). Its income, its twelve cost lines, who is
+- **A show is one page** (`/band/shows/:id`). Its income, its twelve cost lines, who is
   staffed on it, and how its profit divides all live there and are edited in place —
-  `GET /api/moonlight/events/:id` returns the lot in one request. The three tables this
+  `GET /api/band/events/:id` returns the lot in one request. The three tables this
   replaced (הכנסות / הוצאות הופעות / שיבוצים) meant one gig's numbers had to be assembled by
   reading across three tabs. What stayed at list level is what genuinely spans shows: the
   summary, the supplier ledger, costs belonging to no show, and ad spend.
-- **Deleting an expense row** (`DELETE /api/moonlight/event-expenses/:id`) means two
+- **Deleting an expense row** (`DELETE /api/band/event-expenses/:id`) means two
   different things, because every show owns exactly one row. A row assigned to a show is
   **emptied** — its amounts go, the empty row stays behind to type into, and the show's
   totals are recomputed (`{deleted: 0, cleared: 1}`). A row assigned to nothing — a leftover
@@ -152,11 +166,11 @@ cannot demote yourself.
 
 ### The shell — two workspaces, one app
 
-The app is split into a **business** side and a **Moonlight** side, switched from the pill in
+The app is split into a **business** side and a **band** side, switched from the pill in
 the header. They are separate books, so they get separate navigation and separate accent
 colours: the switch sets `data-ws` on `<html>`, and every accent, canvas and border in
 `src/index.css` hangs off that one attribute — no component knows which workspace it is being
-shown in. Band members only ever see the Moonlight side, enforced server-side as before.
+shown in. Band members only ever see the band side, enforced server-side as before.
 
 Colours are named for what they are for rather than what they are (`bg-surface`, `text-muted`,
 `border-line`, `text-pos` / `text-warn` / `text-neg`), so a page never hard-codes a palette.
@@ -268,13 +282,13 @@ set in **Settings → דוחות מס** (2.25 by default).
 
 ### Filtering by period
 
-Every dated list — works, invoices, expenses and all four Moonlight tabs — filters by year and,
+Every dated list — works, invoices, expenses and all four band tabs — filters by year and,
 within it, by a single month. A month is only meaningful inside a year, so the month select is
 disabled while the year is "כל השנים" and the server ignores a month sent without one: "March"
 of no particular year is not a period. Both selects go through one `dateRange` on the server, so
 every list narrows the same way and there is one place where a period is turned into dates.
 
-### Moonlight — how the division is worked out
+### The band — how the division is worked out
 
 The band's summary shows what each member is owed **and how that figure was reached**, laid out
 in the three steps their spreadsheet has always used, because the point is that the total can be
@@ -285,8 +299,8 @@ checked rather than trusted:
    that is a refund, not a share of anything;
 3. **minus** an equal part of what the band's float (קופה) covered, since everybody bore it.
 
-`paid` on a general expense is what settled means here — the moonlight migration set it from the
-sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/moonlight/division`
+`paid` on a general expense is what settled means here — the band migration set it from the
+sheet's «הוחזר» columns — so a row already squared takes no further part. `GET /api/band/division`
 returns each step with the rows behind it.
 
 The card always shows two figures per member: **חלק ברווח**, their share once the shared costs
@@ -300,37 +314,63 @@ list of exactly which expenses were refunded and which the float paid — so no 
 unaccounted for. The shared costs come off before the refunds go back on, so both of the figures
 on the card appear in the working as lines of it.
 
-### Moonlight — the producer fee
+### The band — the producer fee
 
-`computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, going to
-איתמר and אמיר in equal halves, and the rest is shared equally by all four. The percentage is the
-**whole** fee, so 20% nets 30/30/20/20 and 40% nets 35/35/15/15. It is stored per show, because
-what the fee is worth is a decision about that show, and it is set with the stepper on the show
-page beside the tick that turns it on. With the fee off (or at 0%) it is a plain
-quarter each; a row set to manual keeps whatever was typed on it.
+`computeDivision` splits a show's profit: `commission_percent` of it is the producer fee, shared
+equally by the members marked **manager** in the roster, and the rest is shared equally by every
+active member. The percentage is the **whole** fee, so in a band of four with two managers 20%
+nets 30/30/20/20; in a band with one owner-manager it is simply the owner's cut before the equal
+split. It is stored per show, because what the fee is worth is a decision about that show, and it
+is set with the stepper on the show page beside the tick that turns it on. With the fee off (or at
+0%) it is an equal share each; a row set to manual keeps whatever was typed on it.
 
-The default is **20% (30/30/20/20)**. It was a fixed 40% before, so a one-time migration stamps
-`commission_percent = 40` on shows already marked «שולם לנגנים» — their profit has changed hands
-under the old figure, and the boot recompute would otherwise silently re-divide it while leaving
-the percentage on the row unable to explain the shares beside it. Every show still open takes the
-new default, which is the point of changing it.
+The default percentage a new show starts with is **Settings → כללי → דמי הפקה ברירת מחדל** (20%
+out of the box).
 
-### Moonlight — price quotes (הצעות מחיר)
+### The band — the roster and the name
 
-Moonlight → הצעות מחיר is where a show is sold before it exists. The full design is in
+The roster lives in **הלהקה → ספקים וחברים**: name, email, instrument, whether the member is a
+manager, and what kind of business they run (which decides what their share costs the band once
+they invoice for it). A fresh database has one member, the owner. The band's name is
+**Settings → כללי → שם הלהקה** and is used everywhere the second set of books is named: the
+workspace switch, the inbox, the quote templates, the reminder emails and the advisor prompt.
+
+### The band — the cost lines of a show
+
+The lines a show's costs are typed into are **data**, managed in **ספקים וחברים → שורות עלות
+בהופעה** (`GET/POST/PUT/DELETE /api/band/expense-categories`). The app ships with twelve —
+lighting, sound, singer, PA company, hall, wristbands, royalties, campaign, refreshments, design,
+other, extra — and a band that pays a roadie or rents a van adds a line and every show page lists
+it from then on. A line can be renamed, switched off (it stays visible on shows that carry an
+amount on it), and marked **משולמת בנפרד**: settled separately after the show, so it carries an
+open/paid state, as opposed to a card payment that is over when it is typed. Built-in lines can
+be switched off but not deleted; a line the band added can be deleted while no show holds an
+amount on it.
+
+Underneath, each line is a column on `band_event_expenses` (`<key>` and `<key>_paid`), added by
+`ALTER TABLE` when the line is created, so every existing reader of the expense row — totals,
+supplier payments, the Meta sync, the MCP tools — works unchanged. Every line is also a supplier
+role in waiting (`band_supplier_roles`), switched off until the band says it hires somebody for
+it. The `campaign` line is where the Meta Ads sync writes a show's ad spend.
+
+### The band — price quotes (הצעות מחיר)
+
+הלהקה → הצעות מחיר is where a show is sold before it exists. The full design is in
 [`../docs/QUOTES-DESIGN.md`](../docs/QUOTES-DESIGN.md).
 
 - **Templates** hold the usual quote: the intro, the lines and the terms. «הצעה חדשה» asks only
   for the client, the date and the price. The price goes into the template's first line, and
   `{client_name}` / `{event_date}` in the title and intro are filled in. A template is a
   `band_quotes` row with `is_template = 1`, edited in the same editor as a quote.
-- **The built-in template** is Moonlight's own quote, moved over from the Google Doc the band
-  used to send (`server/quoteTemplates.ts`). It is added once, on the first start, and «תבניות»
-  can add a fresh copy at any time.
+- **The built-in templates** (`server/quoteTemplates.ts`) are a standard show quote and two
+  versions for a show far from home, written for a live band in Israel with the band's name
+  filled in from the settings. They are added once, on the first start, and «תבניות» can add a
+  fresh copy at any time; every word is editable once a copy exists.
 - **Money** is worked out by `server/quoteMath.ts`, the one file the server saves with and the
   editor previews with. A quote's prices are either before VAT or including it, and the discount
   comes off before VAT. The VAT rate is frozen on the quote when it is made.
-- **Numbers** run per year: `ML-2026-001`. Validity is set in days in the quote settings, and a
+- **Numbers** run per year: `Q-2026-001`, the prefix being **קידומת מספור** in the quote
+  settings. Validity is set in days in the quote settings, and a
   quote with a client expires at the end of its last day, Israel time. Expiry is worked out, never
   stored.
 - **Branding** (quote settings → מיתוג, חתימה): a logo, two colours (header and accent; the
@@ -348,9 +388,9 @@ Moonlight → הצעות מחיר is where a show is sold before it exists. The 
   Google's invitations to the members and any suppliers chosen, and the sync makes the show from
   it. When the client signs, the quote's price goes into that show if it has none
   (`server/quoteShow.ts`), and the quote offers to take «אופציה» off the event. Several shows on
-  the date, a price that differs, or an event still «אופציה» is a follow-up on the Moonlight
+  the date, a price that differs, or an event still «אופציה» is a follow-up on the band
   summary and in the inbox, settled from the quote's «יומן והופעה» card.
-- **Who edits:** every logged-in user, band members included. This is the one Moonlight area
+- **Who edits:** every logged-in user, band members included. This is the one band area
   where the band writes, and the router says so (`server/quoteRoutes.ts`). A signed or cancelled
   quote is closed to edits and is copied (שכפול) instead.
 
@@ -399,7 +439,7 @@ books and can only be credited.
 ## Integrations
 
 Both are owner-only, run on demand from **Settings → חיבורים** (the calendar sync also has
-a button on the Moonlight shows page), and report their configuration status in the UI so
+a button on the band shows page), and report their configuration status in the UI so
 a missing credential is visible rather than silent.
 
 ### Morning (Green Invoice)
@@ -525,12 +565,12 @@ freelance client is another rule, not a code change.
 
 **Matching is title-only unless you opt in**, because descriptions carry running orders —
 `17:30-19:30 בלנס / 20:30 הופעה` — that contain the keyword while saying nothing about
-whose show it is. Against the real calendar, searching descriptions pulled four Karni Band
-gigs into the band rule.
+whose show it is. Against a real calendar, searching descriptions pulled four gigs played with
+another band into the band rule.
 
 An event is included when a keyword matches **or** the organiser is listed. The organiser
 path exists because an invitation you didn't create often doesn't carry the keyword at
-all — a gig from `udi@karni-band.com` is just titled `קרניבנד חוליו איגלסיאס בפרדסיה`.
+all — a gig from `booker@other-band.example` is just titled `להקה אחרת — ערב מחווה בפרדסיה`.
 Because that same organiser also sends rehearsals, ignore words are checked first and beat
 both include rules.
 
@@ -562,7 +602,7 @@ defaults use stems for this reason.
    column too. Only leading occurrences go, since a keyword in the middle of a name is
    usually part of it.
 
-So a rule keyed on `קולדפליי` stores `הופעה קולדפליי גריי תל אביב` as **`גריי תל אביב`**. A
+So a rule keyed on `הלהקה` stores `הופעה הלהקה גריי תל אביב` as **`גריי תל אביב`**. A
 title made entirely of these words keeps its original text rather than being stored blank,
 and the preview shows the name each row would actually be stored under.
 
@@ -587,7 +627,7 @@ which ignore word caught it, or declined. Pass `:id` as `draft` with a `rule` bo
 a rule that hasn't been saved yet.
 
 Everything about a rule is editable while the app runs, and a change takes effect on the
-next preview or sync. Deciding that Karni Band rehearsals are billable after all is just
+next preview or sync. Deciding that another band's rehearsals are billable after all is just
 clearing `חזר` out of that rule's ignore words — no redeploy, no migration.
 
 ### Manual overrides — when a rule gets one wrong
@@ -596,7 +636,7 @@ Rules are patterns, so they will always be slightly wrong at the edges. Any sing
 can be pinned by hand, and **a manual decision beats every rule**:
 
 - **אל תמשוך / לא הופעה / לא עבודה** — never draw this event again. Available on a preview
-  row, on a synced show in Moonlight, and on a synced work in the works list.
+  row, on a synced show in the band workspace, and on a synced work in the works list.
 - **משוך בכל זאת** — always draw this event for this rule, whatever the keywords say. Pinned
   to one rule, so it cannot leak into another.
 
@@ -626,8 +666,9 @@ Settings, each with an undo.
 ### Meta Ads → what a show's promotion cost
 
 Ad spend per show, pulled from the Meta Marketing API. It fills a column the band's books
-already had: **קמפיין** on each show's expense row, typed by hand until now. **Moonlight →
-פרסום** is where the result is read and where the mapping is done.
+already had: **קמפיין** on each show's expense row, typed by hand until now. **מרכז קמפיינים →
+הוצאות וחיובים** is where the result is read, and the mapping is done there or on a campaign's
+panel.
 
 Setup is a system-user token, described in [`.env.example`](../.env.example) — reading your own
 ad account with `ads_read` needs no App Review, so it is about fifteen minutes of Business
@@ -696,10 +737,74 @@ at all rather than putting dollars in a shekel column.
 | `GET /api/integrations/meta/campaigns/:id/daily` | one campaign's daily spend curve |
 | `POST /api/integrations/meta/campaigns/:id/mappings` | map to a show `{event_id, weight?}` |
 | `DELETE /api/integrations/meta/campaigns/:id/mappings/:eventId` | unmap (the show keeps its figure) |
-| `GET /api/moonlight/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
-| `GET /api/moonlight/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
+| `GET /api/band/ad-analysis?year=&month=` | cost per show: spend, cost per ticket, share of revenue |
+| `GET /api/band/ad-monthly?year=&month=` | spend per calendar month (per invoice), with the campaigns and shows behind each |
 
-## יועץ קמפיינים — the AI advisor (Moonlight → יועץ קמפיינים)
+## מרכז קמפיינים — the campaign studio (`/campaigns`)
+
+The band's campaigns are run from one place that works as an app of its own: an ink rail on a
+desktop and a bottom tab bar on a phone, outside the books' shell, with «חזרה לספרים» as the way back.
+It replaced the two sidebar entries «קמפיינים» and «יועץ קמפיינים»; `/band/ads` and `/band/campaignAi`
+redirect into it. Sections:
+
+- **החלטות** (the first screen) — everything waiting for a yes, most urgent first: a campaign still
+  spending after its show (pause), a paused campaign whose show is near (activate), the agent's
+  proposed changes, due and overdue tasks, shows within 30 days with no campaign (create, from the
+  plan if there is one), and spend no show claims (map to the suggested show). Above it, the period's
+  spend, active campaigns, cost per ticket and unattributed spend.
+- **קמפיינים** — every campaign with filters (active / paused / unmapped / archive) and a workspace
+  per campaign, read live from Meta: its budget and end date, its ad sets and ads. From there:
+  pause / activate (campaign, ad set or ad), daily budget (campaign or ad set), end date, rename,
+  archive, map and unmap shows, and the daily spend curve.
+- **הופעות ותוכניות**, **יועץ AI**, **משימות**, **הוצאות וחיובים**, **פיקסל, קהלים ויומן** — the advisor's
+  show views, the period's verdict and the chat, the campaign tasks, the spend tables and the pixel
+  panel with the log of changes, as before.
+
+**Every change in Meta is the same preview → confirm** (`metaActions.ts`), whether the agent proposed it
+or the owner typed it: the change is shown as «עכשיו → אחרי» against the target read live, and only a
+confirmed preview is sent. Delete is **archive** (`ARCHIVED`): it stops spending, keeps the history
+and the shows' figures, and cannot be switched back on from the app.
+
+**Creating a campaign (קמפיין חדש).** A four-step wizard — show and goal, audience and budget, the ad,
+review — opened from the rail, from a show with no campaign, or from a plan («יצירת הקמפיין ב-Meta…»,
+which fills budget, dates and copy from it). Goals are sales (`OUTCOME_SALES`, optimising for the
+pixel's Purchase; needs a pixel), traffic to the ticket page (`OUTCOME_TRAFFIC`, landing page views)
+and awareness (`OUTCOME_AWARENESS`, reach). The audience step chooses **קהל קר** (prospecting: Israel
+by age, the creative finds the people) or **קהל חם** (retargeting: one or more of the account's saved
+custom audiences — ticket-page visitors, video viewers, page engagers — read live from
+`/customaudiences`; lookalikes are not offered there, since they are new people). Any campaign can
+exclude saved audiences, and one whose name says it is buyers (רוכשים / purchasers) is excluded by
+default. The preview blocks an audience that is not in the account or a hot campaign with none, and
+warns when an audience is not ready or the hot audiences add up to fewer than 1,000 people. Interests
+and a radius around the venue are set afterwards in Ads Manager.
+
+**Saved audiences can be created from the app** (`create_audience`, studio only, the same preview →
+confirm), inside the wizard's hot step — the new one is ticked on creation — and under «פיקסל, קהלים
+ויומן → קהלים שמורים». Presets: ticket-page visitors (30 days, minus buyers), started checkout and did
+not finish (30 days, minus buyers), Instagram engagers and Facebook page engagers (180 days), and
+ticket buyers (90 days, for exclusion), and video viewers — one or more videos from the ad account's
+library (`/advideos`, i.e. videos that were used in ads or uploaded there; organic posts are not in it)
+watched to a chosen depth: 3 seconds, 25%, 50% (default), 75% or to the end (`event_sources: video`,
+`video_watched` … `video_completed`, up to 365 days). Website audiences are built from the pixel's events
+(`rule` with `event_sources: pixel`, up to 180 days) and fill only from sites that run the pixel;
+Instagram (`ig_business`, `ig_business_profile_all`) and page (`page`, `page_engaged`) audiences go back
+up to 365 days. Every audience is created with `prefill`, so it is built from the days that already
+passed; Meta takes up to about half an hour, and until then the size is unknown. The image is kept by the app (`metaImages.ts`, in the data directory)
+until the confirm, so nothing reaches the ad account before the preview has been read. Confirming
+uploads the image and creates, in order, the campaign (**paused**), one ad set (daily budget, start,
+end of the end date in Israel time), the creative and the ad; the ad set and ad are created active
+inside the paused campaign, so switching the campaign on is the single change that starts spending,
+and it is offered right after. A failure half-way names what was already created. The new campaign
+is written to the synced list and mapped to its show at once.
+
+| Method & path | Purpose |
+|---|---|
+| `GET /api/band/meta/setup` | the pages the account may advertise for, its pixels, its saved audiences, the goals |
+| `GET /api/band/meta/campaigns/:id/structure` | one campaign live: budget, ad sets, ads |
+| `POST /api/band/meta/images` | keep a new ad's image (`{data}` as a data: URL, JPG/PNG ≤ 8MB) |
+| `POST /api/band/meta-actions/preview` | `action.type` is also `rename` (`new_name`), `archive`, and `create_campaign` (`spec`, studio only) |
+
+## יועץ קמפיינים — the AI advisor (מרכז קמפיינים → יועץ AI)
 
 The פרסום tab says what a show's promotion **cost**. This one asks whether it was worth it:
 a verdict on the period, findings tied to specific shows and campaigns, ranked suggestions, a
@@ -721,20 +826,118 @@ Three properties are deliberate and worth keeping:
   the app refuses to connect in production.
 - **Nothing the agent says takes effect.** It reads a JSON extract — shows, tickets, revenue,
   campaigns, spend curves — and returns text. It gets no database handle, no Meta token and no
-  write path, and the member division is deliberately not in the extract it is sent.
+  write path, and the member division is deliberately not in the extract it is sent. A change it
+  recommends may also come back as a structured action, which only the app can carry out, and only
+  after the owner has seen it previewed (below).
+
+**Meta's own connector, optionally.** Where the agent host has Meta's Ads Manager MCP server
+signed in and its read tools named (`deploy/README.md`, «Meta's Ads Manager connector»), the
+agent may also look below the campaign — ad sets, ads, audiences, conversions — before it judges.
+The prompt says so on every run (`LIVE_META_TOOLS` in `campaignAdvisor.ts`) as "if you have these
+tools", because only the host decides whether it does. The host allows those reads one tool at a
+time and refuses everything else, and the prompt repeats that nothing in the account is to be
+changed; the extract stays the authority on which show a campaign was for and what it cost.
 
 Reports are stored, so opening the tab paints the last one instead of spending a minute on a page
 load; a run happens only when the owner presses the button. Band members read along.
 
+**Starting over.** «ניקוי הייעוץ» forgets the period's general advice (and «ייעוץ חדש» asks for a
+fresh one); «התחלה מחדש» on a plan forgets every plan and status review of that show — and, if
+ticked, its tasks — so the show starts from nothing. A show's task list can also be cleared from
+the tasks panel. Ticket checks and the club's links are kept: they are facts, not advice.
+
+**Re-advising a running campaign (בדיקת מצב וכרטיסים).** For a show whose campaign is already
+running, the agent gets the plan, the show's tasks and which are done, the campaigns tied to the
+show with their daily spend, what the club's ticket page said, and the previous review, and
+returns where the campaign stands against the plan, one recommended decision with the threshold
+for the next check, the alternatives and when to pick them, and any missing tasks to accept
+(`campaignReview.ts`).
+
+**Tickets typed by hand (`recordTickets`, `POST /api/band/tickets`).** The show header's «עדכון ידני» —
+and a line in the studio's decision feed for a show within two weeks whose last count is a week old
+or missing — takes tickets sold so far and, optionally, the hall's capacity and where the number came
+from. It is saved as the show's newest ticket count (a `tickets` report marked `source: manual`), so
+the cards, the status review and the advisor read it the same way as a check of the club's site, and
+it is written to the show's tickets figure in the books, which cost per ticket divides by.
+
+**Ticket status from the club's site.** The ticket check (`ticketCheck.ts`) is the one run that may
+browse: the agent searches for the club's official site and the show's ticket page and reports
+what the page says — available, last tickets, sold out, a count if one is shown, the price — with
+the sentence it read. Its prompt carries only the band's name and the show (venue, date, city),
+never the books, and the agent host runs it with the two web tools and nothing else
+(`AM_AGENT_WEB` in `deploy/claude-agent.sh`). When it cannot find the club or the show it asks; the
+answer — the club's site (kept per venue, `venue_websites`), the show's page
+(`band_events.ticket_url`) or a sentence — feeds the next check. A link the agent found is saved
+only where none was known. The last check of every upcoming show is also in the context of every
+other advisor run.
+
+**Actions in Meta — preview first, then confirm (`metaActions.ts`).** Where a recommendation is
+one click — pause or switch on a campaign, ad set or ad, set a daily budget, set an end date, create
+the account's pixel — the analysis, the status review and the chat answer carry it as an `action`
+beside the text (`{type, level, id, daily_budget?, end_date?, reason}`), and the tab lists it under
+the answer with «תצוגה מקדימה». Two steps that cannot be merged:
+
+1. **Preview** reads the target live from Meta — its real name, status, budget and end date, and
+   which ad account it is in — and lays the change out as «now → after», with warnings (a raise of
+   more than 20% restarts learning; the campaign's show is over; the budget is set at the other
+   level) and blockers (not the band's account, already in that state, a typo-sized budget). The
+   preview is stored with the state it was computed from. Nothing is sent to Meta.
+2. **Confirm** carries out only a stored preview, by the owner, within 15 minutes, and only after
+   reading the target again: if anything the preview showed has changed — in Ads Manager, or by an
+   earlier action — nothing is sent and the owner is asked to look again. A double press sends once.
+
+Writes go out with the sync's own `META_ACCESS_TOKEN`, so that token needs `ads_management` as well
+as `ads_read`. With `ads_read` only, every preview still works and confirming is refused by Meta with
+a message naming the missing permission; the preview is then the instruction for Ads Manager. To
+check a token, paste it into Meta's Access Token Debugger and read its scopes. To add the permission:
+Business Settings → Users → System users → the app's system user (with the ad account on *Full
+access*) → Generate token for the same Meta app with `ads_management` and `ads_read`, replace
+`META_ACCESS_TOKEN` in `deploy/.env` and restart. If Meta refuses to create a pixel with it, create
+one in Events Manager instead — the panel reads whichever pixel the account has. Every preview and its outcome is kept (`meta_actions`)
+and listed under «פיקסל, קהלים ויומן». The agent never proposes a new campaign: those are built by
+the owner in the studio's wizard (below), which goes through the same two steps.
+
+**The pixel and the clubs (`metaPixel.ts`, «פיקסל ומעקב מכירות»).** Tickets are sold on the
+club's site, so Meta only learns of a purchase if the club's ticketing system runs the band's
+pixel. The panel shows the account's pixel and what it received over 28 days by event (PageView →
+ViewContent → InitiateCheckout → Purchase), and, for every club with a show coming up, two things
+kept apart: what the club said (asked / installed / declined, with its contact and ticketing
+system) and whether the pixel actually **fires on the club's ticket site** — read from the
+pixel's per-site counts against the host of the show's ticket page, nobody's word. With no pixel
+on the account it offers to create one (an action like the others). «מייל למועדון» composes the
+request to the club — the pixel id, the show's page, where ticketing systems take a pixel id, the
+four events and what the club gets and does not give away — editable, and opened in the owner's own
+Gmail or mail app; nothing is sent by the app, and the club is marked «ביקשנו».
+
+The same reading goes to the advisor (`tracking` in the context, refreshed by every Meta sync), and
+its prompt (`TRACKING_GUIDE`) turns it into ads: where the pixel fires on a club's site, a sales
+campaign optimised for Purchase once there are roughly 30 a week (InitiateCheckout or ViewContent
+until then) and a last-week retargeting audience of ticket-page visitors minus buyers; where it does
+not, landing-page views and a request to the club. A plan carries this as its «מעקב מכירות» block.
+
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/moonlight/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
-| `POST /api/moonlight/campaign-analysis?year=&month=` | spend a run: analyse the period afresh (owner) |
-| `GET /api/moonlight/campaign-draft/:eventId` | the last campaign plan drafted for a show |
-| `POST /api/moonlight/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
-| `GET /api/moonlight/campaign-chat` | the follow-up thread |
-| `POST /api/moonlight/campaign-chat` | ask a follow-up `{message}` (owner) |
-| `DELETE /api/moonlight/campaign-chat` | clear the thread (owner) |
+| `GET /api/band/campaign-analysis?year=&month=` | the last stored report for the period — no SSH |
+| `POST /api/band/campaign-analysis?year=&month=` | spend a run: analyse the period afresh (owner) |
+| `GET /api/band/campaign-draft/:eventId` | the last campaign plan drafted for a show |
+| `POST /api/band/campaign-draft` | draft a plan `{event_id, brief?}` (owner) |
+| `DELETE /api/band/campaign-analysis?year=&month=` | forget the period's general advice (owner) |
+| `DELETE /api/band/campaign-draft/:eventId[?tasks=1]` | start a show over: its plans and reviews, and its tasks if asked (owner) |
+| `GET /api/band/campaign-review/:eventId` | the last status review, the last ticket check and the ticket links |
+| `POST /api/band/campaign-review` | re-advise a running campaign `{event_id, note?, check_tickets?}` (owner) |
+| `POST /api/band/ticket-check` | read the club's ticket page `{event_id, note?}` (owner) |
+| `PUT /api/band/ticket-links/:eventId` | the club's site and the show's ticket page `{venue_site?, ticket_url?}` (owner) |
+| `DELETE /api/band/campaign-tasks/show/:eventId[?open=1]` | clear a show's tasks, or only the open ones (owner) |
+| `GET /api/band/campaign-chat` | the follow-up thread |
+| `POST /api/band/campaign-chat` | ask a follow-up `{message}` (owner); answers may carry proposed `tasks` |
+| `DELETE /api/band/campaign-chat` | clear the thread (owner) |
+| `GET /api/band/meta-actions` | the actions previewed and carried out, and whether writing is configured |
+| `POST /api/band/meta-actions/preview` | read the target live and store a preview `{action, source?, source_id?, event_id?}` (owner) |
+| `POST /api/band/meta-actions/:id/execute` | carry out a stored preview if Meta still matches it (owner) |
+| `POST /api/band/meta-actions/:id/cancel` | drop a preview (owner) |
+| `GET /api/band/pixel[?refresh=1]` | the pixel as last read (or read afresh) and every club with a show coming up (owner) |
+| `PUT /api/band/pixel/venue` | what a club said `{venue, status?, contact_email?, platform?, note?}` (owner) |
+| `GET /api/band/pixel/email?venue=` | the request to the club, composed for the owner's mail app (owner) |
 | `POST /api/integrations/agent/ping` | connectivity test: opens the session, asks the agent its version |
 | `GET /api/settings/agent` | the stored connection details, minus the secrets (owner) |
 | `POST /api/settings/agent` | save them (owner) |
@@ -757,6 +960,98 @@ and SHA256 fingerprint, and a key is validated with ssh2's own parser on save, s
 paste or a missing passphrase is caught there rather than by a failed analysis a minute later.
 
 Setting the agent host up is in [`../deploy/README.md`](../deploy/README.md).
+
+### Campaign tasks and reminder emails
+
+A drafted plan ends in dated follow-ups — launch day: check the ad was approved; a week in:
+compare spend to tickets sold; a week before the show: raise the daily budget if sales are slow;
+the day after: make sure the campaign stopped. The draft returns them as `tasks`, and the tab
+offers them as a checklist; nothing becomes a task until the owner ticks it and presses «הוספה»,
+so «nothing the agent says takes effect» still holds. Tasks can also be typed by hand.
+
+The follow-up chat does the same: when a question is about what to do (or an answer recommends
+dated actions for an upcoming show), the reply carries `tasks`, each naming its show. They are
+listed under the answer per show, with the same checklist and owner picker. The agent is told
+which tasks are already open so it proposes what is missing, and a task naming a show that is
+not upcoming is dropped. The proposals are stored with the message (`ai_chat_messages.tasks`),
+and an accepted task's `report_id` is the draft or chat message it came from, which is how a
+plan or answer opened again knows its tasks were already taken.
+
+Each show has **one owner**, a band member, and every reminder for that show goes to their
+email from the band roster. The scheduler (`campaignTasks.ts`, started by `server.ts`) looks every
+10 minutes and sends from 09:00 Israel time: a task gets its first email on its due date and
+another every 2 days while it stays open, all of one person's due tasks in a single email.
+Moving a task's date restarts its reminders.
+
+Each email carries a **«סימון כבוצע»** link (`/api/public/campaign-tasks/:token`) so a member
+without a login can close the task. The link opens a page with a button; only the button's POST
+closes it, so a mail scanner previewing the link changes nothing. The token closes that one
+task and nothing else. The link needs `PUBLIC_BASE_URL` — the scheduler has no request to take an
+address from.
+
+Sending is Gmail SMTP with an app password (`SMTP_USER`, `SMTP_PASS`; see `deploy/.env.example`).
+Without them tasks still work and the tab says that emails are off.
+
+**Past ad copy.** The Meta sync also reads every ad's text, headline and description
+(`meta_ads`) — the same `ads_read` token, no new scope. The advisor gets the most recent distinct
+copy beside the campaign figures, and drafts a headline and description, plus alternatives, in
+the band's own voice, preferring the wording of campaigns that sold tickets cheaply. If that read
+fails, the spend sync still lands and the result carries a warning.
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/band/campaign-tasks` | shows with their tasks and owner, and whether email is configured |
+| `POST /api/band/campaign-tasks` | add tasks `{event_id, tasks: [{title, detail?, due_date}], report_id?}` (owner) |
+| `PUT /api/band/campaign-tasks/:id` | edit `{title?, detail?, due_date?, done?}` — the band may only set `done` |
+| `DELETE /api/band/campaign-tasks/:id` | delete a task (owner) |
+| `PUT /api/band/campaign-tasks/owner/:eventId` | set the show's owner `{member_key}` (owner) |
+| `POST /api/band/campaign-tasks/:id/remind` | send this task's reminder now (owner) |
+
+## התראות — push notifications to the home-screen app
+
+The bell in the header (every login) turns on push notifications for the device it is tapped
+on, chooses which kinds to receive, and lists what is due right now. On an iPhone, Web Push
+reaches only a site added to the home screen (Safari → Share → «הוסף למסך הבית», iOS 16.4+);
+the panel says so when opened in a Safari tab. Android and desktop browsers work directly.
+
+Nothing is stored as a to-do: every notification is worked out from the books when it is due
+(`server/notifications.ts`), and `notification_log` only records what was sent so a condition
+that holds all week is one notification, or one every few days for the kinds that repeat.
+Several of one kind fold into a single notification. Sent between 09:00 and 21:00 Israel time.
+
+| Kind | When | Who |
+|------|------|-----|
+| סוף חודש | last day of the month, if there are unbilled works | owner |
+| משימות קמפיין | on the due date, again every 2 days while open | owner + the member who owns the show |
+| ספק בלי חשבונית | a payment 7+ days old with no document, weekly | owner |
+| תשלומים לרשויות | מע"מ 5 days / 1 day before and when late (latest unticked period only); annual return 30/7/1 days before; optional מקדמות and monthly ביטוח לאומי | owner |
+| לקוחות באיחור | Sunday digest of overdue client invoices | owner |
+| הצעת מחיר נחתמה | as soon as a quote is signed | owner |
+| צוות חסר | 10 days before a show with a required role unassigned | everyone |
+| כסף מהופעה | Sunday digest of shows 14+ days past with money not received | owner |
+| צפי לחוב מס | monthly, while the running year projects a balance of ₪1,000+ beyond withholding and מקדמות (once the year's declared side is filled in) | owner |
+| תקלה בחיבורים | a connection that fails a sync or the daily probe (every 3 days until it recovers); a connected service not synced for 7 days (Meta: 3, while a campaign is active) | owner |
+
+### Nightly sync
+
+At 03:00 Israel time (`server/nightlySync.ts`) the server runs the Morning, Google Calendar and
+Meta syncs for every connected service, one after another — the same functions the Settings
+buttons call, payment matching and campaign attribution included. Once per night; a server that
+was down at 03:00 catches up on its first tick before 07:00. One service failing does not stop
+the others. Settings → חיבורים has the switch (on by default) and a line per service saying what
+last night's run did.
+
+Besides the nightly run, a sync still happens when somebody presses the button, so a token
+that expires between runs would otherwise go unnoticed until then. `server/syncHealth.ts` keeps one record per service (Morning, Google
+Calendar, Meta, the AI agent): the sync routes record success or failure, and from 08:00 each
+day the scheduler probes every connected service that has not already synced successfully that day (the nightly
+run usually has) with its client's own `ping` (no data is
+read; a failure is retried once half a minute later before it counts). The probe runs only
+while an owner has a device subscribed with this category on.
+
+The VAPID keys are generated on first use (private half sealed with the app secret) unless
+`VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` are set. The inbox count is also shown as the badge on
+the home-screen icon where the platform supports it.
 
 ## MCP server (`/mcp`) — read-only access for AI agents
 
@@ -781,12 +1076,12 @@ Every tool calls the same reader the browser's own screens call (`queries.ts`, `
 | `list_invoices` | Issued documents, with document type and whether each counts as revenue |
 | `list_expenses` | Expenses with categories and the input-VAT summary |
 | `get_tax_report` | מע"מ and income tax for a year |
-| `moonlight_shows` | The band's shows: tickets, fee, expenses, profit, division |
-| `moonlight_summary` | Band totals, what each member is owed, and the follow-up lists |
-| `moonlight_assignments` | Staffing per show, suppliers, and what each is owed |
-| `moonlight_ad_analysis` | Ad spend per show against tickets and revenue |
-| `moonlight_campaigns` | Meta campaigns, their mappings, and daily spend curves |
-| `moonlight_campaign_advice` | The last stored verdict from the in-app advisor |
+| `band_shows` | The band's shows: tickets, fee, expenses, profit, division |
+| `band_summary` | Band totals, what each member is owed, and the follow-up lists |
+| `band_assignments` | Staffing per show, suppliers, and what each is owed |
+| `band_ad_analysis` | Ad spend per show against tickets and revenue |
+| `band_campaigns` | Meta campaigns, their mappings, and daily spend curves |
+| `band_campaign_advice` | The last stored verdict from the in-app advisor |
 
 Results are capped at 500 rows per call (`truncated: true` says when the cap bit), so one broad
 question cannot pull the whole database into a context window.
@@ -811,7 +1106,7 @@ attached. Add to `claude_desktop_config.json`:
       "command": "node",
       "args": ["/absolute/path/to/account-manager/app/bin/mcp-bridge.mjs"],
       "env": {
-        "AM_URL": "https://im-tools.org/mcp",
+        "AM_URL": "https://<your-domain>/mcp",
         "AM_API_KEY": "am_…"
       }
     }
@@ -824,7 +1119,7 @@ Restart Claude Desktop; the tools appear in the connector list. Point `AM_URL` a
 whatsoever — every protocol decision lives in `server/mcpServer.ts`, so adding a tool changes the
 server and the bridge keeps working untouched.
 
-Any client that can send a header can skip the bridge and POST straight to `https://im-tools.org/mcp`.
+Any client that can send a header can skip the bridge and POST straight to `https://<your-domain>/mcp`.
 
 ### Protocol notes
 

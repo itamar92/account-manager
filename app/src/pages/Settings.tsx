@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { clsx } from 'clsx';
-import { Bot, Building2, CalendarCheck, Key, Percent, Plug, Settings2, Users } from 'lucide-react';
+import { Bot, Building2, CalendarCheck, Key, Percent, Plug, Server, Settings2, Users } from 'lucide-react';
 import { get, post, put, del } from '../api';
-import { Button, Card, Input, Modal, Empty, PageHeader } from '../ui';
+import { Button, Card, Input, Modal, Empty, PageHeader, Switch } from '../ui';
 import { CalendarRules } from './CalendarRules';
 import { AgentSettings } from './AgentSettings';
+import { ServerSettings } from './ServerSettings';
+import { ServiceCredentials } from './ServiceCredentials';
 import { CreditPointsCalculator } from './CreditPointsCalculator';
+import { refreshIntegrations, syncSummary, type SyncService } from '../sync';
 
 /** The drawers of the filing cabinet, in the order they are needed when setting the app up. */
 const SECTIONS = [
@@ -17,6 +20,7 @@ const SECTIONS = [
   { key: 'vat', label: 'מע"מ ומס', icon: Percent },
   { key: 'users', label: 'משתמשים', icon: Users },
   { key: 'api', label: 'מפתחות API', icon: Key },
+  { key: 'server', label: 'שרת', icon: Server },
 ] as const;
 
 type Section = typeof SECTIONS[number]['key'];
@@ -24,17 +28,19 @@ type Section = typeof SECTIONS[number]['key'];
 const SECTION_TITLES: Record<Section, string> = {
   general: 'כללי', business: 'פרטי העסק', connections: 'חיבורים', agent: 'סוכן AI',
   calendar: 'כללי יומן', vat: 'מע"מ ומס', users: 'משתמשים והרשאות', api: 'מפתחות API',
+  server: 'שרת',
 };
 
 const SECTION_SUBS: Record<Section, string> = {
-  general: 'מע"מ וטווח הסנכרון מ-Morning',
+  general: 'שמות, מע"מ, דמי הפקה וטווח הסנכרון מ-Morning',
   business: 'פרטי העוסק כפי שהם מופיעים על מסמכים',
-  connections: 'מקורות הנתונים והסוכן — הרצה ידנית ובדיקת חיבור',
+  connections: 'מקורות הנתונים, המפתחות שלהם והסוכן — הרצה ידנית ובדיקת חיבור',
   agent: 'חיבור ה-SSH ליועץ הקמפיינים — שרת, משתמש ומפתח',
   calendar: 'כללים שקובעים אילו אירועים נמשכים, ולאן',
   vat: 'תדירות דיווח ומחשבון נקודות הזיכוי',
   users: 'מי נכנס לאפליקציה ומה הוא רואה',
   api: 'גישה לאפליקציות חיצוניות ולסוכני AI',
+  server: 'הפעלה מחדש ועדכון גרסה, בלי להתחבר לשרת',
 };
 
 /**
@@ -46,7 +52,11 @@ const amount = (value: unknown) => Math.round(Number(value) || 0).toLocaleString
 export function Settings() {
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState('');
-  const [sec, setSec] = useState<Section>('general');
+  // A notification about a broken connection links to ?section=connections.
+  const [sec, setSec] = useState<Section>(() => {
+    const wanted = new URLSearchParams(window.location.search).get('section');
+    return SECTIONS.some((s) => s.key === wanted) ? (wanted as Section) : 'general';
+  });
   const [newKey, setNewKey] = useState<any>(null);
   const [keyName, setKeyName] = useState('');
   const [userModal, setUserModal] = useState(false);
@@ -55,6 +65,9 @@ export function Settings() {
   const [editUser, setEditUser] = useState<any | null>(null);
   const [vat, setVat] = useState('');
   const [syncDays, setSyncDays] = useState('90');
+  const [appName, setAppName] = useState('');
+  const [bandName, setBandName] = useState('');
+  const [commission, setCommission] = useState('20');
   const [generalSaved, setGeneralSaved] = useState('');
   const [vatFrequency, setVatFrequency] = useState('bimonthly');
   const [creditPoints, setCreditPoints] = useState('2.25');
@@ -72,6 +85,9 @@ export function Settings() {
         setData(d);
         setVat(String(d.settings.vat_percent));
         setSyncDays(String(d.settings.morning_sync_days));
+        setAppName(String(d.settings.app_name ?? ''));
+        setBandName(String(d.settings.band_name ?? ''));
+        setCommission(String(d.settings.band_commission_percent ?? 20));
         setVatFrequency(d.settings.vat_report_frequency);
         setCreditPoints(String(d.settings.tax_credit_points));
         setMetaRate(String(d.settings.meta_currency_rate));
@@ -80,35 +96,16 @@ export function Settings() {
       .catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
-  const runSync = async (which: 'morning' | 'calendar' | 'meta') => {
+  const runSync = async (which: SyncService) => {
     setSyncing(which);
     setError('');
     setSyncResult('');
     try {
       const d = await post(`/integrations/${which}/sync`);
-      const r = d.result;
-      setSyncResult(
-        which === 'morning'
-          ? `Morning: ${r.fetched} מסמכים (${r.from} – ${r.to}) · ${r.created} חדשים · ${r.updated} עודכנו` +
-            (r.expenses?.error
-              ? `\n· הוצאות: ${r.expenses.error}`
-              : `\n· הוצאות: ${r.expenses.fetched} · ${r.expenses.created} חדשות · ${r.expenses.updated} עודכנו` +
-                ` · ${r.expenses.reported} מסומנות כדווחו`)
-          : which === 'meta'
-          ? `Meta: ${r.campaigns} קמפיינים (${r.from} – ${r.to}) · ${amount(r.spend)} ${r.currency}` +
-            `\n· ${r.applied.written} הופעות עודכנו · ${r.applied.unchanged} ללא שינוי` +
-            (r.applied.locked ? ` · ${r.applied.locked} עם סכום ידני (לא נדרסו)` : '') +
-            (r.applied.settled
-              ? ` · ${r.applied.settled} שולמו לנגנים (מוקפאות${r.applied.settled_stale ? `, מתוכן ${r.applied.settled_stale} עם הוצאה שגדלה מאז` : ''})`
-              : '') +
-            (r.applied.unmapped_campaigns
-              ? `\n· ${r.applied.unmapped_campaigns} קמפיינים ללא שיוך להופעה — ${amount(r.applied.unmapped_spend)} ₪ ממתינים לשיוך ב-Moonlight → פרסום`
-              : '') +
-            (r.warning ? `\n⚠ ${r.warning}` : '')
-          : `יומן: ${r.matched} תואמים · ${r.created} חדשים · ${r.updated} עודכנו · ${r.linked} שויכו` +
-            (r.rules ?? []).map((x: any) => `\n· ${x.ruleName}: ${x.matched} תואמים${x.error ? ` — שגיאה: ${x.error}` : ''}`).join('')
-      );
+      setSyncResult(syncSummary(which, d.result));
       load();
+      // The buttons on the data pages read the same status, so they learn of this run too.
+      refreshIntegrations();
     } catch (err: any) { setError(err.message); }
     finally { setSyncing(''); }
   };
@@ -174,7 +171,10 @@ export function Settings() {
     setError('');
     setGeneralSaved('');
     try {
-      await post('/settings', { vat_percent: parseFloat(vat), morning_sync_days: parseInt(syncDays, 10) });
+      await post('/settings', {
+        vat_percent: parseFloat(vat), morning_sync_days: parseInt(syncDays, 10),
+        app_name: appName, band_name: bandName, band_commission_percent: parseFloat(commission),
+      });
       setGeneralSaved('ההגדרות נשמרו');
       load();
     } catch (err: any) { setError(err.message); }
@@ -253,12 +253,20 @@ export function Settings() {
           כך שהרחבת הטווח וסנכרון חוזר היא הדרך לתקן שורות ישנות שנמשכו בעבר.
         </p>
         {generalSaved && <div className="text-sm text-pos mb-3">{generalSaved}</div>}
-        <div className="grid gap-3 md:grid-cols-3 items-end max-w-xl">
+        <div className="grid gap-3 md:grid-cols-2 max-w-xl">
+          <Input label="שם האפליקציה" value={appName} onChange={(e) => setAppName(e.target.value)} />
+          <Input label="שם הלהקה (העסק המשני)" value={bandName} onChange={(e) => setBandName(e.target.value)} />
           <Input label='מע"מ (%)' type="number" step="0.1" value={vat} onChange={(e) => setVat(e.target.value)} />
+          <Input label="דמי הפקה ברירת מחדל (%)" type="number" step="1" min="0" max="100" value={commission}
+            onChange={(e) => setCommission(e.target.value)} />
           <Input label="טווח סנכרון מ-Morning (ימים)" type="number" min="1" max="1825" value={syncDays}
             onChange={(e) => setSyncDays(e.target.value)} />
-          <Button variant="ghost" onClick={saveGeneral}>שמירה</Button>
+          <div className="flex items-end"><Button variant="ghost" onClick={saveGeneral}>שמירה</Button></div>
         </div>
+        <p className="text-xs text-faint mt-3">
+          שם הלהקה מופיע בכל מסך של האזור השני, בתבניות הצעות המחיר, במיילי התזכורת ובפנייה ליועץ הקמפיינים.
+          דמי ההפקה הם אחוז הרווח שעובר למנהלי הלהקה לפני החלוקה השווה — ניתן לשנות בכל הופעה בנפרד.
+        </p>
       </Card>
       )}
 
@@ -337,8 +345,8 @@ export function Settings() {
       {sec === 'connections' && (
       <Card>
         <p className="text-xs text-faint mb-4">
-          משיכת מסמכים מ-Morning ומשיכת הופעות מיומן Google. המפתחות של שלושת המקורות האלה נמצאים בקובץ{' '}
-          <code dir="ltr" className="text-accent">.env</code>; פרטי החיבור של סוכן ה-AI נמצאים בלשונית «סוכן AI».
+          משיכת מסמכים מ-Morning, הופעות מיומן Google וקמפיינים מ-Meta. המפתחות שלהם נמצאים בכרטיס
+          «מפתחות שירותים» למטה; פרטי החיבור של סוכן ה-AI נמצאים בלשונית «סוכן AI».
         </p>
 
         {syncResult && (
@@ -347,11 +355,16 @@ export function Settings() {
           </div>
         )}
 
+        <NightlySync
+          nightly={data.integrations.nightly}
+          onChange={(nightly) => setData({ ...data, integrations: { ...data.integrations, nightly } })}
+        />
+
         <div className="grid gap-3 md:grid-cols-2">
           <IntegrationRow
             title="Morning (חשבונית ירוקה)"
             configured={data.integrations.morning.configured}
-            missingHint="חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET"
+            missingHint="חסר מפתח API — ראו «מפתחות שירותים» למטה"
             lastSync={data.integrations.morning.last_sync}
             detail={`${data.integrations.morning.synced_invoices} מסמכים · ${data.integrations.morning.synced_expenses} הוצאות · טווח ${data.integrations.morning.sync_days} ימים`}
             busy={syncing === 'morning'}
@@ -360,7 +373,7 @@ export function Settings() {
           <IntegrationRow
             title="Google Calendar — הופעות"
             configured={data.integrations.calendar.configured}
-            missingHint="חסרים GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN"
+            missingHint="חסרים פרטי OAuth — ראו «מפתחות שירותים» למטה"
             lastSync={data.integrations.calendar.last_sync}
             detail={`${data.integrations.calendar.rules_enabled}/${data.integrations.calendar.rules_total} כללים פעילים · ${data.integrations.calendar.synced_events} הופעות · ${data.integrations.calendar.synced_works} עבודות`}
             busy={syncing === 'calendar'}
@@ -369,7 +382,7 @@ export function Settings() {
           <IntegrationRow
             title="Meta Ads — קמפיינים"
             configured={data.integrations.meta.configured}
-            missingHint="חסרים META_ACCESS_TOKEN / META_AD_ACCOUNT_ID"
+            missingHint="חסרים טוקן ומזהה חשבון — ראו «מפתחות שירותים» למטה"
             lastSync={data.integrations.meta.last_sync}
             detail={
               `${data.integrations.meta.campaigns} קמפיינים · ${data.integrations.meta.mapped_campaigns} משויכים` +
@@ -425,20 +438,34 @@ export function Settings() {
 
         <p className="text-xs text-faint mt-4">
           סנכרון Meta מושך את הקמפיינים וההוצאה היומית שלהם, ומזין את עמודת «קמפיין» של כל הופעה
-          שקמפיין שויך אליה. השיוך עצמו נעשה ב-Moonlight → פרסום, ידנית: שם של קמפיין נכתב לבני
+          שקמפיין שויך אליה. השיוך עצמו נעשה ב-הלהקה → פרסום, ידנית: שם של קמפיין נכתב לבני
           אדם, וקמפיין שקידם כמה הופעות לא ניתן לפצל לפי שום כלל אוטומטי.
         </p>
       </Card>
       )}
 
+      {sec === 'connections' && (
+      <Card>
+        <h2 className="font-medium mb-1">מפתחות שירותים</h2>
+        <p className="text-xs text-faint mb-4 leading-relaxed">
+          כשמפתח בוטל או הוחלף: צרו חדש בשירות עצמו, הדביקו אותו כאן ולחצו «שמירה ובדיקה» — האפליקציה
+          תבדוק מול השירות מיד, בלי הפעלה מחדש. המפתחות נשמרים מוצפנים, והסודות לא נשלחים חזרה לדפדפן.
+          מה שנשמר כאן גובר על קובץ <code dir="ltr">.env</code>; שדה שלא נשמר בו דבר ממשיך לקחת את הערך מהקובץ.
+        </p>
+        <ServiceCredentials onChanged={load} />
+      </Card>
+      )}
+
       {sec === 'agent' && <AgentSettings onSaved={load} onError={setError} />}
+
+      {sec === 'server' && <ServerSettings onError={setError} />}
 
       {sec === 'calendar' && <CalendarRules onChange={load} onError={setError} />}
 
       {sec === 'users' && (
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-faint">חברי להקה (role: band) רואים רק את אזור Moonlight</p>
+          <p className="text-xs text-faint">חברי להקה (role: band) רואים רק את אזור הלהקה</p>
           <Button onClick={openNewUser}>+ משתמש</Button>
         </div>
         <div className="divide-y divide-line">
@@ -516,7 +543,7 @@ export function Settings() {
             <span className="block text-sm text-muted mb-1">תפקיד</span>
             <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}
               className="w-full bg-soft border border-line rounded-xl px-3 py-2 text-sm">
-              <option value="band">חבר להקה (Moonlight בלבד)</option>
+              <option value="band">חבר להקה (אזור הלהקה בלבד)</option>
               <option value="owner">בעלים (גישה מלאה)</option>
             </select>
           </label>
@@ -573,6 +600,53 @@ function IntegrationRow({
           {busy ? busyLabel : actionLabel}
         </Button>
       </div>
+    </div>
+  );
+}
+
+const NIGHTLY_LABELS: Record<string, string> = { morning: 'Morning', calendar: 'יומן', meta: 'Meta' };
+
+/**
+ * The nightly run's switch and what it did last time — the line that answers "is this data from
+ * this morning?" without opening anything.
+ */
+function NightlySync({ nightly, onChange }: {
+  nightly: { enabled: boolean; last_run: null | { date: string; finished_at: string; services: Array<{ service: string; ok: boolean; summary: string }> } };
+  onChange: (nightly: any) => void;
+}) {
+  const [error, setError] = useState('');
+  const toggle = (enabled: boolean) => {
+    setError('');
+    onChange({ ...nightly, enabled });
+    put('/integrations/nightly', { enabled }).then(onChange).catch((e) => {
+      setError(e.message);
+      onChange({ ...nightly });
+    });
+  };
+  const run = nightly.last_run;
+  return (
+    <div className="rounded-xl border border-line p-4 mb-4 space-y-2">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-ink">סנכרון לילי אוטומטי</p>
+          <p className="text-xs text-faint">כל לילה ב-03:00 — Morning, יומן Google ו-Meta, בדיוק כמו כפתורי הסנכרון למטה</p>
+        </div>
+        <Switch checked={nightly.enabled} onChange={toggle} label={nightly.enabled ? 'פעיל' : 'כבוי'} />
+      </div>
+      {run && (
+        <div className="text-xs text-muted space-y-0.5">
+          <p className="text-faint">
+            ריצה אחרונה: {new Date(run.finished_at).toLocaleString('he-IL', { dateStyle: 'short', timeStyle: 'short' })}
+          </p>
+          {run.services.length === 0 && <p>אין חיבורים מוגדרים לסנכרן.</p>}
+          {run.services.map((s) => (
+            <p key={s.service} className={s.ok ? '' : 'text-neg-ink'}>
+              {s.ok ? '✓' : '⚠'} {NIGHTLY_LABELS[s.service] ?? s.service}: {s.summary}
+            </p>
+          ))}
+        </div>
+      )}
+      {error && <p className="text-xs text-neg-ink">{error}</p>}
     </div>
   );
 }

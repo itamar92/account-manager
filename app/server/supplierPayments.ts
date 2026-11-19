@@ -18,7 +18,7 @@
  * shekels rather than a count of chores.
  */
 import { db, uuid, getSetting, setSetting } from './db.js';
-import { expenseRowForEvent, recomputeEvent } from './moonlight.js';
+import { expenseRowForEvent, recomputeEvent } from './band.js';
 import { allRoles, isAssignmentRole, roleName, roleNames } from './supplierRoles.js';
 import {
   keyOf, listPayees, payeeColumns, payeeKey, payeeRef, payeesByKey,
@@ -189,8 +189,8 @@ function applyPaidFlags(eventId: string, roles: AssignmentRole[], paid: boolean)
 /**
  * Keeps «שולם לנגנים» saying what the member payments now say.
  *
- * The flag is one bit for a whole show, which is all it ever was: it cannot record that אמיר
- * has been paid and יובל has not. The payment lines can, so they are the truth and the flag is
+ * The flag is one bit for a whole show, which is all it ever was: it cannot record that one
+ * member has been paid and another has not. The payment lines can, so they are the truth and the flag is
  * their summary — on when every share of the show is covered, off while any is outstanding.
  * Keeping it in step matters because the show page, the follow-up lists and the summary all
  * still read it.

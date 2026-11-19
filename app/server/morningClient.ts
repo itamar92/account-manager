@@ -1,12 +1,39 @@
 /**
  * Green Invoice (Morning) REST client.
  *
- * Credentials come from the environment — `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET`,
- * the same pair `scripts/build_havila.py` uses. Set `GREEN_INVOICE_BASE_URL` to the
- * sandbox host to try the write path without issuing real documents.
+ * Credentials are `GREEN_INVOICE_ID` / `GREEN_INVOICE_SECRET`, as saved in Settings → חיבורים or,
+ * failing that, from the environment (see credentials.ts) — the same pair `scripts/build_havila.py`
+ * uses. They are exchanged for an access token at Morning's identity service (TOKEN_URL below).
+ * Set `GREEN_INVOICE_BASE_URL` to the sandbox host to try the write path without issuing real
+ * documents.
  */
 
-const BASE_URL = process.env.GREEN_INVOICE_BASE_URL || 'https://api.greeninvoice.co.il/api/v1';
+import { credential } from './credentials.js';
+
+/**
+ * Where documents, expenses and clients are read and written. Unchanged by Morning's 2026 update,
+ * except that the old `www.greeninvoice.co.il/api` host is now blocked — a base URL still pointing
+ * there is moved to the `api.` host rather than left to fail.
+ */
+const BASE_URL = (process.env.GREEN_INVOICE_BASE_URL || 'https://api.greeninvoice.co.il/api/v1')
+  .trim()
+  .replace(/\/+$/, '')
+  .replace('://www.greeninvoice.co.il/', '://api.greeninvoice.co.il/');
+
+/**
+ * Where an access token is issued — no longer on the API host.
+ *
+ * Morning's 2026 infrastructure update retired `POST /account/token` (it now answers 404 to every
+ * key, valid or not, which is what "Morning auth failed (404)" was) and moved token issuing to an
+ * OAuth client-credentials endpoint on its identity service. The same API key ID and secret are
+ * used, as `client_id` / `client_secret`. The sandbox has its own identity host, chosen when the
+ * base URL is the sandbox's; `GREEN_INVOICE_TOKEN_URL` overrides both.
+ */
+const TOKEN_URL = process.env.GREEN_INVOICE_TOKEN_URL?.trim() || (
+  BASE_URL.includes('sandbox')
+    ? 'https://api.sandbox.morning.dev/idp/v1/oauth/token'
+    : 'https://api.morning.co/idp/v1/oauth/token'
+);
 
 export interface MorningDocument {
   id: string;
@@ -66,30 +93,61 @@ function morningFailure(method: string, path: string, status: number, body: stri
 }
 
 export function isMorningConfigured(): boolean {
-  return Boolean(process.env.GREEN_INVOICE_ID && process.env.GREEN_INVOICE_SECRET);
+  return Boolean(credential('GREEN_INVOICE_ID') && credential('GREEN_INVOICE_SECRET'));
 }
 
 // Tokens are valid for a while; cache until shortly before expiry to avoid re-auth per call.
 let cachedToken: { token: string; expiresAt: number } | null = null;
 
+/**
+ * The token and when it stops working, from whichever shape the identity service answers in.
+ *
+ * Documented: `accessToken` and `expiresAt` (unix seconds). Also read, so a change of spelling on
+ * Morning's side is not another outage: the OAuth-standard `access_token` / `expires_in` (seconds
+ * from now) and the retired endpoint's `token` / `expires` (unix seconds).
+ */
+export function parseTokenResponse(body: any, now = Date.now()): { token: string; expiresAt: number } {
+  const token = body?.accessToken ?? body?.access_token ?? body?.token;
+  if (!token || typeof token !== 'string') throw new MorningError('Morning לא החזיר טוקן גישה בתשובה לבקשת הכניסה');
+  const epoch = Number(body?.expiresAt ?? body?.expires);
+  const ttl = Number(body?.expires_in);
+  const expiresAt = Number.isFinite(epoch) && epoch > 0
+    ? epoch * 1000
+    : Number.isFinite(ttl) && ttl > 0 ? now + ttl * 1000 : now + 50 * 60_000;
+  return { token, expiresAt };
+}
+
 async function getToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > Date.now() + 30_000) return cachedToken.token;
   if (!isMorningConfigured())
-    throw new MorningError('Morning לא מוגדר — חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET', 503);
+    throw new MorningError('Morning לא מוגדר — הזינו את מפתח ה-API בהגדרות → חיבורים', 503);
 
-  const res = await fetch(`${BASE_URL}/account/token`, {
+  const id = credential('GREEN_INVOICE_ID');
+  const secret = credential('GREEN_INVOICE_SECRET');
+  const res = await fetch(TOKEN_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id: process.env.GREEN_INVOICE_ID, secret: process.env.GREEN_INVOICE_SECRET }),
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    // The OAuth fields are what the identity service reads; `id`/`secret` ride along as the old
+    // endpoint spelled them, which costs nothing and is what a working client was verified with.
+    body: JSON.stringify({ grant_type: 'client_credentials', client_id: id, client_secret: secret, id, secret }),
   });
-  if (!res.ok) throw new MorningError(`Morning auth failed (${res.status}): ${await res.text()}`, 502);
+  if (!res.ok) {
+    const text = await res.text();
+    // 400/401/403: the key was refused — wrong, revoked or from the other environment. Anything
+    // else (a 404, a 5xx) is the endpoint itself, and saying "check your key" would mislead.
+    if ([400, 401, 403].includes(res.status)) {
+      const failure = morningFailure('POST', TOKEN_URL, res.status, text);
+      throw new MorningError(
+        `Morning דחה את מפתח ה-API (${res.status}) — בדקו את מזהה המפתח והסוד, ושהמפתח לא בוטל. ${failure.message}`,
+        422,
+        failure.code
+      );
+    }
+    throw new MorningError(`שירות הכניסה של Morning החזיר ${res.status} (${TOKEN_URL})${text.trim() ? `: ${text.trim().slice(0, 200)}` : ''}`, 502);
+  }
 
-  const body = (await res.json()) as { token?: string; expires?: number };
-  if (!body.token) throw new MorningError('Morning auth returned no token');
-  // `expires` is a unix timestamp in seconds; fall back to 50 minutes if absent.
-  const expiresAt = body.expires ? body.expires * 1000 : Date.now() + 50 * 60_000;
-  cachedToken = { token: body.token, expiresAt };
-  return body.token;
+  cachedToken = parseTokenResponse(await res.json().catch(() => null));
+  return cachedToken.token;
 }
 
 /** Drops the cached token — used by tests and after an auth-related failure. */

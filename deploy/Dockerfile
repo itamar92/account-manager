@@ -22,9 +22,11 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
+ARG GIT_SHA=
 ENV NODE_ENV=production \
     PORT=3000 \
-    DATA_DIR=/data
+    DATA_DIR=/data \
+    APP_VERSION=${GIT_SHA}
 
 RUN mkdir -p /data && chown node:node /data
 
@@ -32,11 +34,6 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server ./server
 COPY --from=build /app/server.ts /app/package.json ./
-
-# First-run seed reads ../../invoices_2026.csv relative to server/, which resolves
-# to /invoices_2026.csv from /app/server. Without it the app still starts, just
-# with no imported invoice history.
-COPY invoices_2026.csv /invoices_2026.csv
 
 USER node
 EXPOSE 3000

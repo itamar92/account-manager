@@ -14,7 +14,7 @@ const { BUILTIN_TEMPLATES } = await import('./quoteTemplates.js');
 const USER = 'test-user';
 
 before(() => {
-  db.prepare("INSERT INTO users (id, email, name, password_hash, role) VALUES (?, 'amir@test', 'אמיר', 'x', 'band')").run(USER);
+  db.prepare("INSERT INTO users (id, email, name, password_hash, role) VALUES (?, 'member@test', 'דנה', 'x', 'band')").run(USER);
 });
 
 const expectError = (fn: () => unknown, status: number) =>
@@ -59,7 +59,7 @@ test('a quote from a template takes its content and only the client, date and pr
   }, USER);
   const { quote, items } = q.getQuote(id);
 
-  assert.match(quote.quote_number, /^ML-\d{4}-\d{3}$/);
+  assert.match(quote.quote_number, /^Q-\d{4}-\d{3}$/);
   assert.equal(quote.is_template, 0);
   assert.equal(quote.status, 'draft');
   assert.equal(quote.title, 'הופעה בחתונה של דנה ורון');
@@ -184,8 +184,8 @@ test('templates are not quotes: they are listed apart', () => {
   assert.ok(q.listTemplates().length > 0);
 });
 
-test('the built-in template is Moonlight\'s own quote, with the show priced per quote and sound included', () => {
-  const id = q.createBuiltinTemplate('moonlight', USER);
+test('the built-in template is the standard show quote, with the show priced per quote and sound included', () => {
+  const id = q.createBuiltinTemplate('standard', USER);
   const { quote, items } = q.getQuote(id);
   assert.equal(quote.is_template, 1);
   assert.equal(quote.prices_include_vat, 0);
@@ -224,10 +224,10 @@ test('a quote made from a template keeps the template\'s place and length unless
 
 test('each built-in template is put in place once, and deleting one does not bring it back', () => {
   const defaultBefore = q.quoteSettings().default_template_id;
-  // An install that already had Moonlight's own template gets only the ones added since.
+  // An install that already had the band's own template gets only the ones added since.
   setSetting('quote_builtin_template_seeded', '1');
   const ids = q.seedBuiltinTemplates();
-  assert.deepEqual(ids.map((id) => q.getQuote(id).quote.template_name), ['מונלייט — אילת, ברכב', 'מונלייט — אילת, בטיסה']);
+  assert.deepEqual(ids.map((id) => q.getQuote(id).quote.template_name), ['הלהקה — אילת, ברכב', 'הלהקה — אילת, בטיסה']);
   // There were templates already, so the one somebody chose stays the default.
   assert.equal(q.quoteSettings().default_template_id, defaultBefore);
   q.deleteQuote(ids[0]);
@@ -256,8 +256,8 @@ test('an Eilat show by car charges the road as a line of its own; by plane the p
 });
 
 test('a built-in template\'s terms are all headings and lists, so each lays out as a section', () => {
-  for (const template of Object.values(BUILTIN_TEMPLATES)) {
-    for (const line of template.terms.split('\n').filter((l) => l.trim())) {
+  for (const make of Object.values(BUILTIN_TEMPLATES)) {
+    for (const line of make().terms.split('\n').filter((l) => l.trim())) {
       assert.ok(line.startsWith('• ') || (line.endsWith(':') && line.length <= 60), line);
     }
   }

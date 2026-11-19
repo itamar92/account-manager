@@ -12,9 +12,10 @@
  */
 import { db, uuid, getMetaCurrencyRate, getMetaSyncDays, getSetting, setSetting } from './db.js';
 import {
-  fetchAccount, fetchCampaigns, fetchDailyCampaignInsights, isMetaConfigured,
+  fetchAccount, fetchAds, fetchCampaigns, fetchDailyCampaignInsights, isMetaConfigured,
+  type MetaAdCopy,
 } from './metaClient.js';
-import { eventLabel, recomputeEvent } from './moonlight.js';
+import { eventLabel, recomputeEvent } from './band.js';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -34,6 +35,8 @@ export interface MetaPullResult {
   to: string;
   /** Filled in by `applyCampaignSpend`, which every sync runs straight afterwards. */
   applied?: ApplyResult;
+  /** How many ads' copy was read for the campaign advisor. */
+  ads?: number;
   /** Set when the account is not billed in shekels and no rate has been configured. */
   warning?: string;
 }
@@ -142,12 +145,89 @@ export async function pullCampaignsFromMeta(options: { days?: number } = {}): Pr
     from,
     to,
   };
+  const warnings: string[] = [];
   if (account.currency !== 'ILS' && getMetaCurrencyRate() === 1) {
-    result.warning =
+    warnings.push(
       `חשבון הפרסום מחויב ב-${account.currency} ולא הוגדר שער המרה — ` +
-      'הסכומים לא נכתבו לעמודת «קמפיין». הגדירו meta_currency_rate בהגדרות.';
+      'הסכומים לא נכתבו לעמודת «קמפיין». הגדירו meta_currency_rate בהגדרות.'
+    );
   }
+
+  // The ad copy is for the advisor and nothing else, so failing to read it must not fail a sync
+  // whose spend figures already landed — it is reported beside the result instead.
+  try {
+    result.ads = storeAds(await fetchAds());
+  } catch (err) {
+    warnings.push(`נוסחי המודעות לא נקראו: ${(err as Error).message}`);
+  }
+
+  if (warnings.length) result.warning = warnings.join(' · ');
   return result;
+}
+
+/**
+ * Replaces the stored copy of every ad Meta returned. Ads Meta no longer returns are kept: a
+ * deleted ad's wording is still what that campaign ran, and the advisor learns from history.
+ */
+function storeAds(ads: MetaAdCopy[]): number {
+  const upsert = db.prepare(
+    `INSERT INTO meta_ads (id, campaign_id, name, status, primary_text, headline, description,
+       call_to_action, link_url, created_time, synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       campaign_id = excluded.campaign_id, name = excluded.name, status = excluded.status,
+       primary_text = excluded.primary_text, headline = excluded.headline,
+       description = excluded.description, call_to_action = excluded.call_to_action,
+       link_url = excluded.link_url, created_time = excluded.created_time,
+       synced_at = excluded.synced_at`
+  );
+  const now = new Date().toISOString();
+  db.transaction(() => {
+    for (const ad of ads) {
+      upsert.run(
+        ad.id, ad.campaign_id, ad.name, ad.status, ad.primary_text, ad.headline, ad.description,
+        ad.call_to_action, ad.link_url, ad.created_time, now
+      );
+    }
+  })();
+  return ads.length;
+}
+
+/**
+ * The distinct wording each campaign ran, newest first — the material the advisor writes a new ad
+ * from. How each campaign did is joined in the prompt by `campaign_id`, from the campaign rows
+ * the advisor already gets. Identical copy across an ad set's placements is collapsed to one.
+ */
+export function pastAdCopy(limit = 40) {
+  const rows = db
+    .prepare(
+      `SELECT a.campaign_id, c.name AS campaign_name, c.objective,
+              COALESCE(c.last_spend_date, c.first_spend_date, a.created_time) AS ran_until,
+              a.primary_text, a.headline, a.description, a.call_to_action
+       FROM meta_ads a LEFT JOIN meta_campaigns c ON c.id = a.campaign_id
+       WHERE COALESCE(a.primary_text, a.headline, a.description) IS NOT NULL
+       ORDER BY ran_until DESC`
+    )
+    .all() as any[];
+
+  const seen = new Set<string>();
+  const out: any[] = [];
+  for (const row of rows) {
+    const key = [row.campaign_id, row.primary_text, row.headline, row.description].join('\u0000');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      campaign_id: row.campaign_id,
+      campaign_name: row.campaign_name,
+      objective: row.objective,
+      primary_text: row.primary_text,
+      headline: row.headline,
+      description: row.description,
+      call_to_action: row.call_to_action,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------- attribution
@@ -378,7 +458,8 @@ export function suggestEventsForCampaign(campaignId: string, limit = 3): Mapping
 
   const nameTokens = new Set(tokens(campaign.name));
   const nameDates = datesInName(campaign.name);
-  const events = db.prepare('SELECT id, venue, date FROM band_events ORDER BY date DESC').all() as any[];
+  // A private show runs no campaign, so it is never suggested for one.
+  const events = db.prepare('SELECT id, venue, date FROM band_events WHERE COALESCE(is_private, 0) = 0 ORDER BY date DESC').all() as any[];
 
   const scored = events.map((event) => {
     const venueTokens = tokens(event.venue);
@@ -522,7 +603,7 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
 
   const events = db
     .prepare(
-      `SELECT e.id, e.venue, e.date, e.tickets, e.amount_pre_vat, e.profit, e.paid_to_musicians,
+      `SELECT e.id, e.venue, e.date, e.tickets, e.amount_pre_vat, e.profit, e.paid_to_musicians, e.is_private,
               x.id AS expense_id, x.campaign AS campaign_on_row, x.campaign_locked
        FROM band_events e LEFT JOIN band_event_expenses x ON x.event_id = e.id${where}
        ORDER BY e.date DESC`
@@ -554,7 +635,12 @@ export function adAnalysis(range: { from?: string; to?: string } = {}): {
     }
   }
 
-  const rows: AdAnalysisRow[] = events.map((event) => {
+  // A private show sells no tickets and runs no campaign: counting its fee would only dilute the
+  // spend-to-revenue figures. It stays in only if money was spent on it anyway.
+  const counted = events.filter((event) =>
+    !event.is_private || (attributed.get(event.id)?.spend ?? 0) > 0 || Number(event.campaign_on_row) > 0);
+
+  const rows: AdAnalysisRow[] = counted.map((event) => {
     const totals = attributed.get(event.id);
     const adSpend = totals?.spend ?? 0;
     const tickets = Number(event.tickets) || 0;

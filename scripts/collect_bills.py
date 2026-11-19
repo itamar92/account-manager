@@ -64,11 +64,11 @@ def collect_hotmobile(pw):
 
 def collect_water(pw):
     cfg = CONFIG["providers"]["water"]
-    print(f"Water (Mei HH): stub. portal={cfg['portal']} — verify URL manually first.")
+    print(f"Water: stub. portal={cfg['portal']} — verify URL manually first.")
 
 def collect_arnona(pw):
     cfg = CONFIG["providers"]["arnona"]
-    print(f"Arnona (Hod Hasharon): stub. portal={cfg['portal']}")
+    print(f"Arnona (municipality): stub. portal={cfg['portal']}")
 
 COLLECTORS = {
     "iec": collect_iec,

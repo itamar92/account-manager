@@ -250,7 +250,7 @@ export function CalendarRules({ onChange, onError }: {
               />
               <Input
                 label="מיילים של מארגנים (מופרדים בפסיק)" dir="ltr" value={rule.organizers}
-                onChange={(e) => save(rule, { organizers: e.target.value })} placeholder="udi@karni-band.com"
+                onChange={(e) => save(rule, { organizers: e.target.value })} placeholder="booker@example.com"
               />
               <Input
                 label="מילות התעלמות (מופרדות בפסיק)" value={rule.ignore_words}
@@ -300,7 +300,7 @@ export function CalendarRules({ onChange, onError }: {
 
             <div className="text-xs text-faint mt-2">
               השם שיישמר מנוקה אוטומטית ממילים כמו «הופעה», «מופע», «גיג», «show» ו«gig», וממילות
-              המפתח של הכלל שבתחילת הכותרת — «הופעה קולדפליי גריי תל אביב» יישמר כ«גריי תל אביב».
+              המפתח של הכלל שבתחילת הכותרת — «הופעה הלהקה גריי תל אביב» יישמר כ«גריי תל אביב».
               שם שתערכו ידנית לא יידרס בסנכרון הבא.
             </div>
 
@@ -371,7 +371,7 @@ function ClientField({ value, clients, onChange }: {
     return (
       <div className="flex gap-2">
         <input
-          value={value} onChange={(e) => onChange(e.target.value)} placeholder="קרניבנד"
+          value={value} onChange={(e) => onChange(e.target.value)} placeholder="להקה אחרת"
           className={field} autoFocus={typing}
         />
         {clients.length > 0 && (

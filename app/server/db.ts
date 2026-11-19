@@ -240,13 +240,12 @@ CREATE TABLE IF NOT EXISTS band_events (
   has_commission INTEGER NOT NULL DEFAULT 0,
   commission_amount REAL NOT NULL DEFAULT 0,
   paid_to_musicians INTEGER NOT NULL DEFAULT 0,
-  amir REAL NOT NULL DEFAULT 0,
-  itamar REAL NOT NULL DEFAULT 0,
-  yuval REAL NOT NULL DEFAULT 0,
-  guy REAL NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- One row per show, one column per cost line. The twelve columns below are the built-in cost
+-- lines; a line added from the UI (band_expense_categories) is a column added to this table
+-- at runtime, with its own <key>_paid flag. See server/expenseCategories.ts.
 CREATE TABLE IF NOT EXISTS band_event_expenses (
   id TEXT PRIMARY KEY,
   event TEXT NOT NULL,
@@ -277,11 +276,27 @@ CREATE TABLE IF NOT EXISTS band_general_expenses (
   event TEXT,
   paid_by TEXT,
   amount REAL NOT NULL DEFAULT 0,
-  amir REAL NOT NULL DEFAULT 0, amir_returned TEXT,
-  itamar REAL NOT NULL DEFAULT 0, itamar_returned TEXT,
-  yuval REAL NOT NULL DEFAULT 0, yuval_returned TEXT,
-  fund REAL NOT NULL DEFAULT 0, fund_returned TEXT,
+  -- Set once the member who fronted the expense (or the band's float) has been squared.
+  paid INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The cost lines a show can carry, as the band defines them. Each row is a column on
+-- band_event_expenses (amount) plus a <key>_paid flag. «settles» marks a line paid separately
+-- after the show — it carries a paid/open state — as opposed to one settled the moment it is
+-- typed (a card payment). «builtin» rows shipped with the app and cannot be deleted, only
+-- renamed or switched off; a line added later can be deleted while no show carries an amount
+-- on it. The key is generated and never shown: renaming a line changes nothing underneath.
+--
+-- The «campaign» line is special in one way: it is where the Meta Ads sync writes a show's
+-- ad spend (see metaSync.ts), so it is the one line that can be locked against the sync.
+CREATE TABLE IF NOT EXISTS band_expense_categories (
+  key TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  settles INTEGER NOT NULL DEFAULT 0,
+  active INTEGER NOT NULL DEFAULT 1,
+  builtin INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0
 );
 
 -- The band's regular suppliers: who answers to each email, and in what role. The role keys
@@ -370,15 +385,8 @@ CREATE INDEX IF NOT EXISTS idx_band_supplier_aliases_supplier
 -- member_key is what ties a row here to that member's shares in band_event_shares. It is
 -- generated once and never changes, so a member can be renamed without orphaning a single
 -- show they played.
--- What each member takes home from one show. This is the authoritative division: it replaced
--- the amir/itamar/yuval/guy columns on band_events, which is what capped the band at exactly
--- those four people. A row per member per show means the roster can grow, shrink, or be
--- renamed without touching the schema.
---
--- The old columns are still on band_events and are deliberately left there: they are the
--- source the backfill read from, and freezing them rather than dropping them keeps a way back
--- if a division ever looks wrong. Nothing writes them any more — moonlight_shares_v1 in
--- settings marks the moment they stopped being the truth.
+-- What each member takes home from one show. This is the authoritative division: a row per
+-- member per show means the roster can grow, shrink, or be renamed without touching the schema.
 CREATE TABLE IF NOT EXISTS band_event_shares (
   event_id TEXT NOT NULL,
   member_key TEXT NOT NULL,
@@ -610,10 +618,10 @@ CREATE INDEX IF NOT EXISTS idx_meta_campaign_daily_date ON meta_campaign_daily(d
 -- period selector has moved on.
 CREATE TABLE IF NOT EXISTS ai_campaign_reports (
   id TEXT PRIMARY KEY,
-  kind TEXT NOT NULL,                     -- 'analysis' (a period) | 'draft' (one show)
+  kind TEXT NOT NULL,                     -- 'analysis' (a period) | 'draft' | 'review' | 'tickets' (one show)
   range_from TEXT,
   range_to TEXT,
-  event_id TEXT,                          -- the show a draft is for; null for an analysis
+  event_id TEXT,                          -- the show a draft, review or ticket check is for
   request TEXT NOT NULL,                  -- JSON: what was asked
   response TEXT NOT NULL,                 -- JSON: what came back, already parsed and validated
   duration_ms INTEGER,
@@ -633,7 +641,106 @@ CREATE TABLE IF NOT EXISTS ai_chat_messages (
 CREATE INDEX IF NOT EXISTS idx_ai_reports_kind ON ai_campaign_reports(kind, created_at);
 CREATE INDEX IF NOT EXISTS idx_ai_chat_thread ON ai_chat_messages(thread_id, created_at);
 
--- ---------- Moonlight quotes (docs/QUOTES-DESIGN.md) ----------
+-- The ads underneath the campaigns, for what they *said*. Spend is read at campaign level and
+-- stays there; this table exists so the advisor can write a new ad in the voice of the old ones
+-- and see which wording sat on the campaigns that sold tickets cheaply.
+CREATE TABLE IF NOT EXISTS meta_ads (
+  id TEXT PRIMARY KEY,                    -- Meta's ad id
+  campaign_id TEXT NOT NULL,
+  name TEXT,
+  status TEXT,
+  primary_text TEXT,                      -- the body above the image or video
+  headline TEXT,
+  description TEXT,
+  call_to_action TEXT,
+  link_url TEXT,
+  created_time TEXT,
+  synced_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_ads_campaign ON meta_ads(campaign_id);
+
+-- ---------- campaign tasks ----------
+-- The follow-ups a campaign plan implies ("a week in, compare spend to tickets sold"), turned
+-- into dated rows somebody is reminded of by email. One owner per show rather than per task:
+-- a show's promotion is one person's job, and the reminders follow that person.
+CREATE TABLE IF NOT EXISTS campaign_task_owners (
+  event_id TEXT PRIMARY KEY,
+  member_key TEXT NOT NULL                -- band_members.member_key
+);
+
+CREATE TABLE IF NOT EXISTS campaign_tasks (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  detail TEXT,
+  due_date TEXT NOT NULL,                 -- YYYY-MM-DD, Israel time
+  done_at TEXT,                           -- NULL while open
+  source TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual','ai')),
+  report_id TEXT,                         -- the draft an AI task came from
+  -- Opens the one-click "done" page linked from the reminder email. It closes this task and
+  -- nothing else, so whoever the email was forwarded to can do no more than that.
+  done_token TEXT NOT NULL UNIQUE,
+  -- The Israel-time date of the last reminder sent, and how many went out. The scheduler sends
+  -- on the due date and every REMINDER_REPEAT_DAYS after while the task stays open.
+  last_reminded_on TEXT,
+  reminders_sent INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_campaign_tasks_event ON campaign_tasks(event_id, due_date);
+CREATE INDEX IF NOT EXISTS idx_campaign_tasks_due ON campaign_tasks(done_at, due_date);
+
+-- The official site of each club, by venue name as the shows table writes it. A venue hosts many
+-- shows, so its site is typed (or found by the advisor) once and every later ticket check of a show
+-- there starts from it.
+CREATE TABLE IF NOT EXISTS venue_websites (
+  venue TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Whether each club's ticket page carries the band's Meta pixel — the only way a campaign can
+-- learn who bought a ticket. Per venue, like its site: the pixel goes into the club's ticketing
+-- system once and serves every show there. 'installed' is what the club said; whether the pixel
+-- actually fires on their site is read from Meta, not stored.
+CREATE TABLE IF NOT EXISTS venue_pixel (
+  venue TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'none' CHECK (status IN ('none','requested','installed','declined')),
+  contact_email TEXT,                     -- who at the club the request goes to
+  platform TEXT,                          -- the ticketing system the club sells through
+  note TEXT,
+  requested_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- The advisor's actions on the ad account. Every row starts as a preview: the live state of the
+-- target as read from Meta, and the change, exactly as the owner was shown it. Only that row can be
+-- carried out, only by the owner pressing confirm, and only while the target still reads as it did
+-- — so nothing reaches Meta that a person did not see first, and the table doubles as the log.
+CREATE TABLE IF NOT EXISTS meta_actions (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,                     -- pause | activate | set_daily_budget | set_end_date | create_pixel
+  level TEXT,                             -- campaign | adset | ad (null for create_pixel)
+  target_id TEXT,
+  target_name TEXT,
+  action TEXT NOT NULL,                   -- JSON: the action as proposed
+  preview TEXT NOT NULL,                  -- JSON: what the owner was shown
+  state TEXT NOT NULL,                    -- JSON: the live fields the preview was computed from
+  status TEXT NOT NULL DEFAULT 'previewed'
+    CHECK (status IN ('previewed','executing','done','failed','cancelled')),
+  source TEXT,                            -- review | analysis | chat | pixel — where it was proposed
+  source_id TEXT,                         -- the report or chat message
+  event_id TEXT,
+  result TEXT,                            -- JSON: what Meta answered
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  executed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_actions_created ON meta_actions(created_at);
+
+-- ---------- band quotes (docs/QUOTES-DESIGN.md) ----------
 -- A price quote for a show. A template is a row of the same table with is_template = 1: the
 -- usual intro, lines and terms, with no client, number or validity of its own, so it is
 -- edited in the same editor and a new quote is a copy of it with three fields filled in.
@@ -644,7 +751,7 @@ CREATE TABLE IF NOT EXISTS band_quotes (
   id TEXT PRIMARY KEY,
   is_template INTEGER NOT NULL DEFAULT 0,
   template_name TEXT,
-  quote_number TEXT UNIQUE,               -- ML-2026-001; NULL on a template
+  quote_number TEXT UNIQUE,               -- Q-2026-001; NULL on a template
   public_token TEXT UNIQUE,               -- the client's link; set when first sent
   status TEXT NOT NULL DEFAULT 'draft'
     CHECK (status IN ('draft','sent','viewed','signed','cancelled')),
@@ -739,6 +846,62 @@ CREATE TABLE IF NOT EXISTS band_quote_files (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- ---------- push notifications ----------
+-- One row per browser (or home-screen app) that agreed to receive notifications. The endpoint
+-- is the push service's address for that one install, and the two keys are what the payload is
+-- encrypted to; none of it is a secret worth more than the ability to send that device a ping.
+-- What the owner decided about one show on the show boards (server/showBoard.ts), keyed
+-- 'show:<band_events.id>' or 'work:<works.id>'. Everything is optional: NULL means "whatever the
+-- calendar says". A band show's ticket link is band_events.ticket_url, shared with the ticket check;
+-- a work has nowhere else to keep one, so it lives here.
+CREATE TABLE IF NOT EXISTS show_board_items (
+  item_key TEXT PRIMARY KEY,
+  public_title TEXT,
+  ticket_url TEXT,
+  hidden INTEGER NOT NULL DEFAULT 0,
+  call_time TEXT,
+  soundcheck_time TEXT,
+  parking TEXT,
+  notes TEXT,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_success_at TEXT,
+  failures INTEGER NOT NULL DEFAULT 0
+);
+
+-- Which categories each user wants. A JSON object of category → boolean; a category it does
+-- not mention takes its default, so a new kind of notification needs no migration.
+CREATE TABLE IF NOT EXISTS notification_prefs (
+  user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  prefs TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- What was already sent, so a condition that holds all week is one notification and not one
+-- every ten minutes. The key names the occurrence ("vat:2026-P5:d5"); a rule that repeats reads
+-- the last sent_on for its key.
+CREATE TABLE IF NOT EXISTS notification_log (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  category TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  url TEXT,
+  sent_on TEXT NOT NULL,                  -- YYYY-MM-DD, Israel time
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (user_id, key, sent_on)
+);
+CREATE INDEX IF NOT EXISTS idx_notification_log_recent ON notification_log(user_id, created_at);
+
 CREATE INDEX IF NOT EXISTS idx_band_quote_items_quote ON band_quote_items(quote_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_band_quotes_list ON band_quotes(is_template, created_at);
 
@@ -787,6 +950,9 @@ addColumnIfMissing('band_events', 'attendees', 'TEXT');
 // because that is a decision about the show; 20 (the default) nets the band's 30/30/20/20.
 addColumnIfMissing('band_events', 'commission_percent', 'REAL NOT NULL DEFAULT 20');
 addColumnIfMissing('works', 'description_locked', 'INTEGER NOT NULL DEFAULT 0');
+// 1 when the owner set the status by hand — a job billed outside the app (an invoice made in
+// Morning directly, or before the app existed) that no invoice here is linked to.
+addColumnIfMissing('works', 'status_manual', 'INTEGER NOT NULL DEFAULT 0');
 // What Morning says a document still has outstanding (its `amountOpened`). A tax invoice is
 // settled by a receipt raised against it, which closes it in Morning without changing anything
 // about the invoice itself — so what is still owed is a figure to be read rather than inferred.
@@ -818,6 +984,46 @@ addColumnIfMissing('band_event_expenses', 'campaign_locked', 'INTEGER NOT NULL D
 // can be read as a proportion ("318 מתוך 420") instead of a bare number, which is the only way
 // to tell a full small room from an empty large one. 0 means nobody has said.
 addColumnIfMissing('band_events', 'capacity', 'INTEGER NOT NULL DEFAULT 0');
+// The show's own ticket page on the club's site. Where the advisor's ticket check goes first; filled
+// in by hand, or by the check itself the first time it finds the page.
+addColumnIfMissing('band_events', 'ticket_url', 'TEXT');
+// A private show — a wedding, a company event, anything booked by a client rather than sold to
+// the public. It has no tickets, no campaign and no אקו"ם, so nothing asks for them. Worked out
+// (server/showPrivacy.ts) from a quote behind the show or the word «פרטי» on the calendar, until
+// somebody sets it by hand: `private_locked` is that decision, and the detection leaves it alone.
+addColumnIfMissing('band_events', 'is_private', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('band_events', 'private_locked', 'INTEGER NOT NULL DEFAULT 0');
+// What the calendar event last said: its title or description mentions «פרטי». Kept so the
+// detection can be re-run between syncs (a quote unlinked, say) without asking Google again.
+addColumnIfMissing('band_events', 'calendar_private', 'INTEGER NOT NULL DEFAULT 0');
+// What the show board reads off the calendar event: when it starts (HH:MM, Israel time — NULL for
+// an all-day event) and the event's description, which is where the call time, the sound check
+// and the parking are written. The description is parsed for those lines only; the rest of it
+// (fees, contacts) never leaves the database. See server/showBoard.ts.
+addColumnIfMissing('band_events', 'start_time', 'TEXT');
+addColumnIfMissing('band_events', 'calendar_description', 'TEXT');
+// The event's title exactly as the calendar has it. The stored name drops the rule's keywords
+// («קולדפליי» off «קולדפליי זאפה»), which is right for the books and wrong for a public page.
+addColumnIfMissing('band_events', 'calendar_summary', 'TEXT');
+// The same for a calendar work, plus the rule that drew it — the public board lists the works of
+// the personal rules the owner picks — and whether its event said «פרטי».
+addColumnIfMissing('works', 'start_time', 'TEXT');
+addColumnIfMissing('works', 'calendar_rule_id', 'TEXT');
+addColumnIfMissing('works', 'calendar_private', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('works', 'calendar_summary', 'TEXT');
+// The region a show is filed under on the public board, when the owner corrects the guess.
+addColumnIfMissing('show_board_items', 'region', 'TEXT');
+// Which act the show is (Disco Train, a tribute…), when the owner corrects the guess.
+addColumnIfMissing('show_board_items', 'act', 'TEXT');
+// When the doors open (what fans see) and when the band goes on, typed for one show — a private
+// event's own hours, or a club night that runs differently from the club's usual ones.
+addColumnIfMissing('show_board_items', 'doors_time', 'TEXT');
+addColumnIfMissing('show_board_items', 'stage_time', 'TEXT');
+// Tasks the advisor proposed in a chat reply, as a JSON array of { event_id, title, detail,
+// due_date }. Proposals only: they become campaign_tasks rows when the owner accepts them.
+addColumnIfMissing('ai_chat_messages', 'tasks', 'TEXT');
+// The Meta changes an answer proposed — previewed and confirmed one by one (metaActions.ts).
+addColumnIfMissing('ai_chat_messages', 'actions', 'TEXT');
 // A supplier's standing fee, pre-filled onto the cost line of every show they are staffed on.
 // 0 (the default, and what every supplier entered before this column had) means nobody has
 // said what they charge, and the cost line is left to be typed by hand as before.
@@ -833,7 +1039,7 @@ addColumnIfMissing('band_suppliers', 'default_amount', 'REAL NOT NULL DEFAULT 0'
 // them can be added from the screen that noticed it was missing and can never point at two
 // suppliers at once. The `aliases` column is frozen rather than dropped: it is what the
 // migration read from, and keeping it is the way back if a mapping ever looks wrong. Nothing
-// reads it any more — moonlight_supplier_aliases_v1 in settings marks when it stopped being
+// reads it any more — the supplier-aliases migration flag in settings marks when it stopped being
 // the truth.
 addColumnIfMissing('band_suppliers', 'tax_id', 'TEXT');
 addColumnIfMissing('band_suppliers', 'morning_supplier_id', 'TEXT');
@@ -986,6 +1192,27 @@ export function getVatPercent(): number {
   return parseFloat(getSetting('vat_percent', '18'));
 }
 
+/** What the sub-business is called until somebody names it — the band is the default kind. */
+export const DEFAULT_BAND_NAME = 'הלהקה';
+
+/**
+ * The name of the band (or whatever the second set of books is for), as the UI, the quote
+ * templates, the advisor prompt and the reminder emails show it. Set in Settings → כללי.
+ */
+export function getBandName(): string {
+  return getSetting('band_name', '').trim() || DEFAULT_BAND_NAME;
+}
+
+/**
+ * The producer fee a new show starts with, as a percentage of its profit. 20% with two
+ * managers in a band of four nets 30/30/20/20; with one owner-manager it is the owner's cut.
+ * Set in Settings → כללי; each show can still override it.
+ */
+export function getDefaultCommissionPercent(): number {
+  const percent = parseFloat(getSetting('band_commission_percent', '20'));
+  return Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 20;
+}
+
 /** How far back each Morning pull looks, in days. */
 export function getMorningSyncDays(): number {
   return parseInt(getSetting('morning_sync_days', '90'), 10) || 90;
@@ -1110,6 +1337,41 @@ function seedSupplierRoles() {
 }
 
 seedSupplierRoles();
+
+/**
+ * The cost lines the app ships with — the twelve columns band_event_expenses is created with.
+ * Seeded once; from then on the band owns the list (server/expenseCategories.ts). The seven
+ * «settles» lines are the ones paid to somebody after the show and so carry an open/paid state.
+ */
+function seedExpenseCategories() {
+  const seeded = db.prepare('SELECT COUNT(*) AS n FROM band_expense_categories').get() as { n: number };
+  if (seeded.n) return;
+  const insert = db.prepare(
+    'INSERT INTO band_expense_categories (key, name, settles, active, builtin, sort_order) VALUES (?, ?, ?, 1, 1, ?)'
+  );
+  const rows: Array<[string, string, number]> = [
+    ['lightman', 'תאורן', 1],
+    ['soundman', 'סאונדמן', 1],
+    ['singer', 'זמר/ת', 1],
+    ['sound_company', 'חברת הגברה', 1],
+    ['hall_fee', 'שכירות אולם', 1],
+    ['bracelets', 'צמידים', 1],
+    ['akom', 'אקו"ם', 1],
+    ['campaign', 'קמפיין', 0],
+    ['refreshments', 'כיבוד', 0],
+    ['design', 'עיצוב', 0],
+    ['other', 'אחר', 0],
+    ['expense_amount', 'הוצאה נוספת', 0],
+  ];
+  // A database that renamed a role before the categories table existed keeps that name.
+  const roleName = db.prepare('SELECT name FROM band_supplier_roles WHERE key = ?');
+  rows.forEach(([key, name, settles], i) => {
+    const role = roleName.get(key) as { name: string } | undefined;
+    insert.run(key, role?.name || name, settles, i);
+  });
+}
+
+seedExpenseCategories();
 
 /**
  * Rewrites the supplier tables that were shaped around exactly four roles and exactly one kind
@@ -1365,14 +1627,14 @@ db.exec(`
     ON band_event_ticket_links(url, event_date);
   CREATE INDEX IF NOT EXISTS idx_ticket_links_event ON band_event_ticket_links(event_id);
 `);
-// A source is either a page selling Moonlight among others — read for the band's search words
+// A source is either a page selling the band among others — read for the band's search words
 // and matched to its shows — or another band's own site, where every dated link is a show and
 // only the dates on the owner's own calendar are kept (all_shows = 1, match_to = 'calendar').
 // calendar_words are what that band's entries in the calendar say, when not the city or hall.
 addColumnIfMissing('ticket_sources', 'all_shows', 'INTEGER NOT NULL DEFAULT 0');
 addColumnIfMissing('ticket_sources', 'match_to', "TEXT NOT NULL DEFAULT 'shows'");
 addColumnIfMissing('ticket_sources', 'calendar_words', 'TEXT');
-// The calendar entry a link was kept for, when it belongs to a gig rather than a Moonlight show.
+// The calendar entry a link was kept for, when it belongs to a gig rather than a band show.
 addColumnIfMissing('band_event_ticket_links', 'calendar_event_id', 'TEXT');
 addColumnIfMissing('band_event_ticket_links', 'calendar_title', 'TEXT');
 

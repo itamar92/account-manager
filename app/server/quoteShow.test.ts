@@ -27,7 +27,7 @@ const expectError = (fn: () => unknown, status: number) =>
 function sentQuote(date: string, extra: Record<string, unknown> = {}) {
   const id = q.createBlankQuote({ client_name: 'עדן', event_date: date, event_location: 'קיסריה', ...extra }, USER);
   q.updateQuote(id, { prices_include_vat: false, items: [{ name: 'הופעה', quantity: 1, unit_price: 10000 }] }, USER);
-  link.sendQuote(id, USER, 'https://im-tools.org');
+  link.sendQuote(id, USER, 'https://example.com');
   return id;
 }
 
@@ -61,7 +61,7 @@ test('a show arriving from the quote\'s own calendar event after the signature s
   const id = sentQuote('2031-01-20');
   db.prepare("UPDATE band_quotes SET calendar_event_id = 'evt-late', calendar_event_title = 'אופציה - הופעה' WHERE id = ?").run(id);
   sign(id);
-  const showId = addShow('2031-01-20', 'אופציה - קולדפליי', 0, 'evt-late');
+  const showId = addShow('2031-01-20', 'אופציה - הלהקה', 0, 'evt-late');
   shows.linkQuotesByCalendar();
   const { quote } = q.getQuote(id);
   assert.equal(quote.show_id, showId);
@@ -139,17 +139,17 @@ test('a signature is news until the band opens it', () => {
 
 test('a signed quote whose event still says «אופציה» is raised until the title is changed', () => {
   const id = sentQuote('2031-09-10');
-  db.prepare("UPDATE band_quotes SET calendar_event_id = 'evt-opt', calendar_event_title = 'אופציה - הופעה קולדפליי' WHERE id = ?").run(id);
+  db.prepare("UPDATE band_quotes SET calendar_event_id = 'evt-opt', calendar_event_title = 'אופציה - הופעה הלהקה' WHERE id = ?").run(id);
   sign(id);
   assert.ok(shows.quoteFollowUps().stillOption.some((m) => m.id === id));
-  db.prepare("UPDATE band_quotes SET calendar_event_title = 'הופעה קולדפליי' WHERE id = ?").run(id);
+  db.prepare("UPDATE band_quotes SET calendar_event_title = 'הופעה הלהקה' WHERE id = ?").run(id);
   assert.ok(!shows.quoteFollowUps().stillOption.some((m) => m.id === id));
 });
 
 test('«אופציה» comes off a title with whatever dash followed it', () => {
-  assert.ok(shows.isOptionTitle('אופציה - הופעה קולדפליי אירוע חברה קיסריה'));
-  assert.ok(!shows.isOptionTitle('הופעה קולדפליי'));
-  assert.equal(shows.withoutOption('אופציה - הופעה קולדפליי אירוע חברה קיסריה'), 'הופעה קולדפליי אירוע חברה קיסריה');
+  assert.ok(shows.isOptionTitle('אופציה - הופעה הלהקה אירוע חברה קיסריה'));
+  assert.ok(!shows.isOptionTitle('הופעה הלהקה'));
+  assert.equal(shows.withoutOption('אופציה - הופעה הלהקה אירוע חברה קיסריה'), 'הופעה הלהקה אירוע חברה קיסריה');
   assert.equal(shows.withoutOption('אופציה: הופעה'), 'הופעה');
   assert.equal(shows.withoutOption('אופציה הופעה'), 'הופעה');
 });

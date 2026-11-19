@@ -46,7 +46,7 @@ export function readableOnWhite(hex: string): string {
 
 /** A few starting points; the pickers beside them take any colour at all. */
 export const PALETTES: Array<{ name: string; primary: string; accent: string }> = [
-  { name: 'Moonlight', primary: '#241d3d', accent: '#6b45d6' },
+  { name: 'סגול', primary: '#241d3d', accent: '#6b45d6' },
   { name: 'לילה', primary: '#14161a', accent: '#3b5bdb' },
   { name: 'יין', primary: '#4a1d2f', accent: '#c2185b' },
   { name: 'יער', primary: '#1f3a2e', accent: '#2f9e6e' },

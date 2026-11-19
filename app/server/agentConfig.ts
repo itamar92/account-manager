@@ -24,7 +24,7 @@ import { decryptSecret, encryptSecret } from './secrets.js';
 const { utils } = ssh2;
 
 export const DEFAULT_COMMAND = 'claude -p --output-format json';
-export const DEFAULT_TIMEOUT_MS = 120_000;
+export const DEFAULT_TIMEOUT_MS = 300_000;
 export const DEFAULT_PORT = 22;
 
 /** Rejected input, not a broken server: routes.ts turns the status into the response code. */

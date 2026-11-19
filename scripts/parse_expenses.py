@@ -6,8 +6,12 @@ import re, json, sys
 from pathlib import Path
 from collections import defaultdict
 
-BILLS_ROOT = Path("/Volumes/Data/Dropbox/Docs Itamar/Docs Itamar - Buisness/חשבוניות - קבלות")
-YEAR = "2026"
+import os
+
+# The folder holding one sub-folder per year of receipt PDFs. Set BILLS_ROOT in .env or the
+# environment; it is a path on your own machine (a Dropbox folder, a NAS, anywhere).
+BILLS_ROOT = Path(os.getenv("BILLS_ROOT", str(Path(__file__).parent.parent / "bills")))
+YEAR = os.getenv("EXPENSES_YEAR", "2026")
 
 # deduction % per category (business use)
 DEDUCT = {
@@ -83,7 +87,7 @@ def main():
                 "file": f.name,
             })
     # write CSV + JSON
-    out = Path("/Volumes/Data/Dropbox/Docs Itamar/GitHub/account-manager/expenses_2026.json")
+    out = Path(__file__).parent.parent / f"expenses_{YEAR}.json"
     out.write_text(json.dumps(rows, ensure_ascii=False, indent=2))
     # summary
     by_cat = defaultdict(lambda: {"count":0, "nis":0.0, "ded":0.0})

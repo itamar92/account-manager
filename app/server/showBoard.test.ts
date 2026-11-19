@@ -1,0 +1,234 @@
+import { test, before } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'show-board-test-'));
+const { db, uuid } = await import('./db.js');
+const board = await import('./showBoard.js');
+const { refreshPrivate } = await import('./showPrivacy.js');
+
+before(() => {
+  db.prepare("INSERT INTO band_members (id, member_key, name, email, role, active) VALUES (?, 'm1', 'נגן א', 'a@test', 'גיטרה', 1)").run(uuid());
+  db.prepare("INSERT INTO band_members (id, member_key, name, email, role, active) VALUES (?, 'm2', 'נגן ב', 'b@test', 'תופים', 1)").run(uuid());
+});
+
+function addShow(fields: Record<string, unknown>) {
+  const id = uuid();
+  const row = { id, venue: 'מקום', date: '2099-01-01', ...fields };
+  const cols = Object.keys(row);
+  db.prepare(`INSERT INTO band_events (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...Object.values(row));
+  refreshPrivate(id);
+  return id;
+}
+
+test('the public name drops «הופעה» off the front and nothing else', () => {
+  assert.equal(board.publicTitle('הופעה קולדפליי זאפה תל אביב'), 'קולדפליי זאפה תל אביב');
+  assert.equal(board.publicTitle('הופעה - קולדפליי זאפה'), 'קולדפליי זאפה');
+  assert.equal(board.publicTitle("קרניבנד אלטון ג'ון בהיכל התרבות אייר פורט סיטי"), "קרניבנד אלטון ג'ון בהיכל התרבות אייר פורט סיטי");
+  assert.equal(board.publicTitle('הופעתו של'), 'הופעתו של');
+  assert.equal(board.publicTitle('הופעה'), 'הופעה');
+});
+
+test('a Google location splits into the place and its address', () => {
+  const place = board.splitLocation('Zappa Tel Aviv, Raoul Wallenberg St 24, Tel Aviv-Yafo, Israel')!;
+  assert.equal(place.name, 'Zappa Tel Aviv');
+  assert.equal(place.address, 'Raoul Wallenberg St 24, Tel Aviv-Yafo');
+  assert.match(place.waze_url, /^https:\/\/waze\.com\/ul\?q=/);
+  assert.equal(board.splitLocation('  ')?.name, undefined);
+  assert.equal(board.splitLocation('הרצל 5, חולון')!.name, 'הרצל 5, חולון');
+});
+
+test('arrival, sound check, stage and parking are read out of the description', () => {
+  const parsed = board.parseLogistics(
+    '<b>שכר: 5000</b><br>הגעה 17:30, בלאנס ב-18.15<br>עלייה לבמה 21:00<br>חניה: חניון הבימה, כניסה מדיזנגוף'
+  );
+  assert.deepEqual(parsed, {
+    call_time: '17:30', soundcheck_time: '18:15', doors_time: null, stage_time: '21:00', parking: 'חניון הבימה, כניסה מדיזנגוף',
+  });
+  assert.deepEqual(board.parseLogistics(null), { call_time: null, soundcheck_time: null, doors_time: null, stage_time: null, parking: null });
+  assert.equal(board.parseLogistics('פתיחת דלתות 20:15').doors_time, '20:15');
+  assert.equal(board.parseLogistics("סאונד צ'ק 19:00").soundcheck_time, '19:00');
+});
+
+test('venue reminders fire on the club name', () => {
+  const reminders = [{ keywords: 'זאפה, Gray', text: 'מיקרופון אלחוטי' }];
+  assert.deepEqual(board.remindersFor(reminders, 'קולדפליי זאפה הרצליה'), ['מיקרופון אלחוטי']);
+  assert.deepEqual(board.remindersFor(reminders, 'x', 'Gray Club, Tel Aviv'), ['מיקרופון אלחוטי']);
+  assert.deepEqual(board.remindersFor(reminders, 'בארבי'), []);
+});
+
+test('the public board hides private shows and needs its token', () => {
+  const open = addShow({ venue: 'זאפה תל אביב', calendar_summary: 'הופעה קולדפליי זאפה תל אביב', calendar_event_id: 'e1', date: '2099-02-01', start_time: '21:00' });
+  addShow({ venue: 'חתונה פרטית', date: '2099-02-02' });
+  addShow({ venue: 'עבר', date: '2000-01-01' });
+  assert.throws(() => board.publicBoard('nope'), /לא פעיל/);
+  const token = board.setBoardEnabled('public', true);
+  const view = board.publicBoard(token);
+  assert.deepEqual(view.shows.map((s) => s.title), ['קולדפליי זאפה תל אביב']);
+  // The calendar's 21:00 is the balance; fans are told when Zappa opens its doors.
+  assert.equal(view.shows[0].doors_time, '19:30');
+  assert.ok(!('time' in view.shows[0]));
+
+  board.updateBoardItem(`show:${open}`, { ticket_url: 'tickets.example.com/x', public_title: 'קולדפליי — זאפה' });
+  assert.equal(board.publicBoard(token).shows[0].ticket_url, 'https://tickets.example.com/x');
+  assert.equal(board.publicBoard(token).shows[0].title, 'קולדפליי — זאפה');
+  assert.throws(() => board.updateBoardItem(`show:${open}`, { ticket_url: 'javascript:alert(1)' }), /קישור/);
+
+  board.updateBoardItem(`show:${open}`, { hidden: true });
+  assert.equal(board.publicBoard(token).shows.length, 0);
+  board.setBoardEnabled('public', false);
+  assert.throws(() => board.publicBoard(token));
+});
+
+test('the crew board has private shows, the lineup, the logistics and the reminder', () => {
+  const id = addShow({
+    venue: 'אירוע פרטי בזאפה', date: '2099-03-01', attendees: JSON.stringify(['a@test']),
+    calendar_description: 'הגעה 18:00\nבלאנס 19:00\nחניה ברחוב',
+  });
+  const supplier = uuid();
+  db.prepare("INSERT INTO band_suppliers (id, name, role) VALUES (?, 'הגברה בע\"מ', 'sound_company')").run(supplier);
+  db.prepare("INSERT INTO band_event_assignments (id, event_id, role, supplier_id) VALUES (?, ?, 'sound_company', ?)").run(uuid(), id, supplier);
+  board.updateBoardItem(`show:${id}`, { call_time: '17:45', notes: 'לבוש שחור' });
+
+  const token = board.setBoardEnabled('crew', true);
+  const show = board.crewBoard(token).shows.find((s) => s.date === '2099-03-01')!;
+  assert.ok(show.is_private);
+  assert.equal(show.call_time, '17:45');
+  assert.equal(show.soundcheck_time, '19:00');
+  assert.equal(show.parking, 'חניה ברחוב');
+  assert.equal(show.sound_company, 'הגברה בע"מ');
+  assert.deepEqual(show.members, [{ name: 'נגן א', role: 'גיטרה' }]);
+  assert.deepEqual(show.reminders, ['להביא מיקרופון אלחוטי']);
+  assert.equal(show.notes, 'לבוש שחור');
+  // A private night at Zappa is not a Zappa club night: no doors, and the stage time is typed.
+  assert.equal(show.doors_time, null);
+  assert.equal(show.stage_time, null);
+});
+
+test('a show is filed under the region of its town', () => {
+  assert.equal(board.regionFor('Zappa Tel Aviv, Raoul Wallenberg St 24, Tel Aviv-Yafo, Israel'), 'מרכז');
+  assert.equal(board.regionFor('היכל התרבות, קריית אונו'), 'מרכז');
+  assert.equal(board.regionFor('קריית ביאליק'), 'צפון');
+  assert.equal(board.regionFor(null, 'זאפה הרצליה'), 'שרון');
+  assert.equal(board.regionFor('Eilat'), 'אילת');
+  assert.equal(board.regionFor('בארבי'), null);
+  const id = addShow({ venue: 'בארבי', date: '2099-05-01', location: 'Haifa' });
+  assert.equal(board.boardItems().find((i) => i.key === `show:${id}`)!.region, 'צפון');
+  board.updateBoardItem(`show:${id}`, { region: 'דרום' });
+  assert.equal(board.boardItems().find((i) => i.key === `show:${id}`)!.region, 'דרום');
+});
+
+test('a show is badged with its act: typed by hand first, then the calendar rules', () => {
+  db.prepare("INSERT INTO calendar_rules (id, name, target, keywords) VALUES (?, 'Coldplay', 'personal', 'קולדפליי, הופעה')").run(uuid());
+  const find = board.actFinder([{ name: 'Disco Train', keywords: 'דיסקו טריין' }]);
+  assert.equal(find('הופעה קולדפליי זאפה'), 'קולדפליי');
+  assert.equal(find('דיסקו טריין בגריי'), 'Disco Train');
+  assert.equal(find('Disco Train Gray'), 'Disco Train');
+  assert.equal(find('הופעה בבארבי'), null);
+  board.updateBoardSettings({ acts: [{ name: 'Disco Train', keywords: 'דיסקו' }] });
+  const id = addShow({ venue: 'גריי', calendar_summary: 'דיסקו גריי', date: '2099-06-01' });
+  const item = () => board.boardItems().find((i) => i.key === `show:${id}`)!;
+  assert.equal(item().act, 'Disco Train');
+  board.updateBoardItem(`show:${id}`, { act: 'אחר' });
+  assert.equal(item().act, 'אחר');
+  assert.equal(item().auto_act, 'Disco Train');
+});
+
+test('«אופציה» in the name is an unsigned hold: on the band board, off the public one', () => {
+  assert.ok(board.isOption('אופציה - הופעה הלהקה אירוע חברה קיסריה'));
+  assert.ok(board.isOption('חתונה בקיסריה (אופציה)'));
+  assert.ok(!board.isOption('אופציות בע"מ'));
+  assert.equal(board.withoutOptionWord('אופציה - אירוע חברה קיסריה'), 'אירוע חברה קיסריה');
+  assert.equal(board.withoutOptionWord('חתונה בקיסריה - אופציה'), 'חתונה בקיסריה');
+  const id = addShow({ venue: 'גריי מודיעין', calendar_summary: 'אופציה - הופעה גריי מודיעין', date: '2099-07-01' });
+  const item = board.boardItems().find((i) => i.key === `show:${id}`)!;
+  assert.ok(item.is_option && !item.on_public);
+  const crew = board.crewBoard(board.setBoardEnabled('crew', true)).shows.find((s) => s.date === '2099-07-01')!;
+  assert.equal(crew.status, 'option');
+  assert.equal(crew.title, 'גריי מודיעין');
+});
+
+test('works typed by hand are on the public board, unless their client is switched off', () => {
+  const client = uuid();
+  db.prepare("INSERT INTO clients (id, name) VALUES (?, 'לקוח הופעות')").run(client);
+  const handTyped = uuid();
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount) VALUES (?, ?, '2099-08-01', 'קרניבנד אלטון ג''ון בפתח תקווה', 0)").run(handTyped, client);
+  const calendarNoRule = uuid();
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, calendar_event_id) VALUES (?, ?, '2099-08-02', 'קרניבנד לאונרד כהן', 0, 'cal-x')").run(calendarNoRule, client);
+  board.updateBoardSettings({ personal_rules: ['some-other-rule'] }); // the retired setting no longer hides anything
+  const token = board.setBoardEnabled('public', true);
+  const titles = () => board.publicBoard(token).shows.map((s) => s.title);
+  assert.ok(titles().includes("קרניבנד אלטון ג'ון בפתח תקווה"));
+  assert.ok(titles().includes('קרניבנד לאונרד כהן'));
+  board.updateBoardSettings({ excluded_clients: [client] });
+  assert.ok(!titles().includes('קרניבנד לאונרד כהן'));
+  board.updateBoardSettings({ excluded_clients: [] });
+});
+
+test('works from any source are listed, and the same night twice is listed once', () => {
+  const client = uuid();
+  db.prepare("INSERT INTO clients (id, name) VALUES (?, 'לקוח אוטומציה')").run(client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, source, calendar_event_id) VALUES (?, ?, '2099-09-01', 'קרניבנד במכון ויצמן', 0, 'calendar', 'cal-y')").run(uuid(), client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, source) VALUES (?, ?, '2099-09-01', 'קרניבנד במכון ויצמן', 0, 'n8n')").run(uuid(), client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, source) VALUES (?, ?, '2099-09-02', 'קרניבנד בבית העם', 0, 'n8n')").run(uuid(), client);
+  const days = board.boardItems().filter((i) => i.date.startsWith('2099-09')).map((i) => i.date);
+  assert.deepEqual(days, ['2099-09-01', '2099-09-02']);
+});
+
+test('the calendar start is the balance; the club sets doors and stage; a private event keeps its own', () => {
+  const zappa = addShow({ venue: 'זאפה הרצליה', calendar_summary: 'הופעה זאפה הרצליה', date: '2099-10-01', start_time: '18:00' });
+  addShow({ venue: 'Gray Club', location: 'Gray, Modiin', date: '2099-10-02', start_time: '18:30' });
+  const written = addShow({ venue: 'זאפה ירושלים', date: '2099-10-03', start_time: '17:00', calendar_description: 'עלייה לבמה 22:00\nבלאנס 17:30' });
+  const wedding = addShow({ venue: 'חתונה פרטית בגריי', date: '2099-10-04', start_time: '19:00' });
+  addShow({ venue: 'בארבי', date: '2099-10-05', start_time: '20:00' });
+
+  const crew = () => board.crewBoard(board.setBoardEnabled('crew', true)).shows;
+  const night = (date: string) => crew().find((s) => s.date === date)!;
+  const hours = (date: string) => {
+    const s = night(date);
+    return [s.soundcheck_time, s.doors_time, s.stage_time];
+  };
+  assert.deepEqual(hours('2099-10-01'), ['18:00', '19:30', '21:30']);
+  assert.deepEqual(hours('2099-10-02'), ['18:30', '20:00', '21:30']);
+  // What the description says beats both the calendar start and the club's usual hour.
+  assert.deepEqual(hours('2099-10-03'), ['17:30', '19:30', '22:00']);
+  assert.ok(night('2099-10-04').is_private);
+  assert.deepEqual(hours('2099-10-04'), ['19:00', null, null]);
+  assert.deepEqual(hours('2099-10-05'), ['20:00', null, null]);
+
+  // Typed by hand for one show: a private event's stage time, a club night that opens late.
+  board.updateBoardItem(`show:${wedding}`, { stage_time: '22.30' });
+  board.updateBoardItem(`show:${zappa}`, { doors_time: '20:00' });
+  assert.equal(night('2099-10-04').stage_time, '22:30');
+  assert.throws(() => board.updateBoardItem(`show:${wedding}`, { stage_time: '25:00' }), /שעה לא תקינה/);
+
+  const pub = board.publicBoard(board.setBoardEnabled('public', true)).shows;
+  const doors = (date: string) => pub.find((s) => s.date === date)?.doors_time;
+  assert.equal(doors('2099-10-01'), '20:00');
+  assert.equal(doors('2099-10-02'), '20:00');
+  assert.equal(doors('2099-10-05'), null); // no known doors time: no time, never the balance
+  assert.ok(!pub.some((s) => s.date === '2099-10-04'));
+  const item = board.boardItems().find((i) => i.key === `show:${zappa}`)!;
+  assert.equal(item.auto_hours.doors_time, '19:30');
+  assert.equal(item.hours.doors_time, '20:00');
+});
+
+test('venue hours are the owner\'s to edit, and a work at the club gets them too', () => {
+  const defaults = board.boardSettings().venue_hours;
+  assert.deepEqual(defaults.map((h) => [h.doors, h.stage]), [['19:30', '21:30'], ['20:00', '21:30']]);
+  assert.throws(() => board.updateBoardSettings({ venue_hours: [{ keywords: 'בארבי', doors: '7pm', stage: null }] }), /שעה לא תקינה/);
+  const saved = board.updateBoardSettings({
+    venue_hours: [...defaults, { keywords: 'בארבי', doors: '20.30', stage: '' }, { keywords: 'ריק', doors: '', stage: '' }],
+  }).venue_hours;
+  assert.deepEqual(saved[2], { keywords: 'בארבי', doors: '20:30', stage: null });
+  assert.equal(saved.length, 3);
+
+  const client = uuid();
+  db.prepare("INSERT INTO clients (id, name) VALUES (?, 'לקוח שעות')").run(client);
+  db.prepare("INSERT INTO works (id, client_id, date, description, amount, start_time) VALUES (?, ?, '2099-11-01', 'קרניבנד בבארבי', 0, '18:00')").run(uuid(), client);
+  const pub = board.publicBoard(board.setBoardEnabled('public', true)).shows;
+  assert.equal(pub.find((s) => s.date === '2099-11-01')?.doors_time, '20:30');
+  board.updateBoardSettings({ venue_hours: defaults });
+});

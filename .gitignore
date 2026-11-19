@@ -13,3 +13,22 @@ Thumbs.db
 
 # The owner's signature and other branding images — uploaded in the app, not kept in git
 branding/
+
+# Your own books, never the repository's: receipt PDFs, parsed ledgers, accountant packages,
+# the tax profile and the deadline calendar. Copy the *.example.json files to start.
+bills/
+havila/
+expenses_*.json
+invoices_*.csv
+docs_*.json
+freelancer-profile.json
+deadline-calendar.json
+
+# Generated knowledge graph (run `graphify .` to rebuild locally)
+graphify-out/
+
+# Impeccable design-skill archive (critique snapshots, live-mode state) — local only
+.impeccable/
+
+# Settings → שרת: the key deploy/setup-ops.sh generates on the VM
+deploy/ops-key/

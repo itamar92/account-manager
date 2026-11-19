@@ -2,8 +2,8 @@ import express, { Router } from 'express';
 import { requireAuth, requireOwner } from './auth.js';
 import { getVatPercent } from './db.js';
 import { regenerateLink, sendQuote } from './quoteLink.js';
-import { linkQuoteToShow, markSignedSeen, settleShowAmount, showsOnDate } from './quoteShow.js';
-import { calendarDraft, calendarReady, createQuoteEvent, updateQuoteEvent } from './quoteCalendar.js';
+import { linkQuoteToShow, markSignedSeen, settleShowAmount, showsForPicker, showsOnDate } from './quoteShow.js';
+import { calendarDraft, calendarReady, quoteEventLink, refreshQuoteEvent } from './quoteCalendar.js';
 import {
   FileError, MAX_IMAGE_BYTES, brandingImage, isBrandingKind, removeBrandingImage, saveBrandingImage,
 } from './quoteFiles.js';
@@ -14,10 +14,10 @@ import {
 } from './quotes.js';
 
 /**
- * The quotes section, mounted at /api/moonlight/quotes.
+ * The quotes section, mounted at /api/band/quotes.
  *
  * Every route here is `requireAuth`, not `requireOwner`, and that is deliberate: this is the one
- * part of Moonlight the band members write to as well as read. Selling a show is something every
+ * part of the band workspace the band members write to as well as read. Selling a show is something every
  * member does, so a quote is theirs to make, edit and send exactly as it is the owner's — see
  * docs/QUOTES-DESIGN.md. Tightening these to owner-only would not be a fix; it would take the
  * feature away from the people it was built for.
@@ -64,9 +64,9 @@ quoteRouter.post('/templates', handle((req, res) => {
   res.json(getQuote(id));
 }));
 
-/** Another copy of a template the system comes with: `{ key }`, or Moonlight's own quote. */
+/** Another copy of a template the system comes with: `{ key }`, or the built-in quote. */
 quoteRouter.post('/templates/builtin', handle((req, res) => {
-  res.json(getQuote(createBuiltinTemplate(String(req.body?.key ?? 'moonlight'), userId(req))));
+  res.json(getQuote(createBuiltinTemplate(String(req.body?.key ?? 'standard'), userId(req))));
 }));
 
 quoteRouter.get('/packages', handle((_req, res) => {
@@ -105,7 +105,10 @@ quoteRouter.put('/settings', handle((req, res) => {
 
 /** The shows on a date, so the editor can offer «יש הופעה בתאריך הזה — לשייך?». */
 quoteRouter.get('/show-candidates', handle((req, res) => {
-  res.json({ shows: showsOnDate(String(req.query.date ?? ''), String(req.query.quote_id ?? '')) });
+  const date = String(req.query.date ?? '');
+  const quoteId = String(req.query.quote_id ?? '');
+  // ?all=1 is «שיוך להופעה קיימת»: every show it could be, not only those on the quote's date.
+  res.json({ shows: req.query.all ? showsForPicker(quoteId, date) : showsOnDate(date, quoteId) });
 }));
 
 // ---- the logo and the signature ----
@@ -229,19 +232,21 @@ quoteRouter.post('/:id/show-amount', handle((req, res) => {
 
 /**
  * The quote's calendar event. Anyone who edits quotes can hold a date with one, since that is
- * part of making the quote; the event goes on the band rule's calendar, and the calendar sync
- * makes the show from it — the one way a show comes into being.
+ * part of making the quote; the event is saved in Google on the band rule's calendar, and the
+ * calendar sync makes the show from it — the one way a show comes into being.
  */
 quoteRouter.get('/:id/calendar', handleAsync(async (req, res) => {
   res.json(await calendarDraft(req.params.id));
 }));
 
-quoteRouter.post('/:id/calendar', handleAsync(async (req, res) => {
-  res.json(await createQuoteEvent(req.params.id, req.body || {}));
+/** Google Calendar's «new event» page, filled in; the event is saved there, not by the app. */
+quoteRouter.post('/:id/calendar/link', handle((req, res) => {
+  res.json(quoteEventLink(req.params.id, req.body || {}));
 }));
 
-quoteRouter.put('/:id/calendar', handleAsync(async (req, res) => {
-  res.json(await updateQuoteEvent(req.params.id, req.body || {}));
+/** Finds the event saved from that link (or reads the quote's event again) and syncs the show. */
+quoteRouter.post('/:id/calendar/refresh', handleAsync(async (req, res) => {
+  res.json(await refreshQuoteEvent(req.params.id));
 }));
 
 quoteRouter.post('/:id/save-as-template', handle((req, res) => {

@@ -264,7 +264,7 @@ export function MorningIssueModal({ invoiceId, pending, open, onClose, onIssued 
           <DocumentPreview draft={draft} form={form} docTypeLabel={docTypeLabel} />
           {!draft.configured && (
             <div className="text-sm text-warn">
-              Morning לא מוגדר — חסרים GREEN_INVOICE_ID / GREEN_INVOICE_SECRET
+              Morning לא מוגדר — הזינו מפתח API בהגדרות → חיבורים
             </div>
           )}
           <p className="text-xs text-muted">

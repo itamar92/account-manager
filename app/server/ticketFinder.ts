@@ -1,6 +1,7 @@
-import { db, getSetting, setSetting, uuid } from './db.js';
+import { db, getBandName, getSetting, setSetting, uuid } from './db.js';
 import { eventDate, listEvents, type CalendarEvent } from './calendarClient.js';
 import { listRules } from './calendarRules.js';
+import { updateBoardItem } from './showBoard.js';
 
 /**
  * Finds where a show's tickets are sold.
@@ -35,8 +36,8 @@ export type Fetcher = (url: string) => Promise<Page>;
 
 export type SourceStatus = 'ok' | 'empty' | 'unreadable' | 'error';
 
-/** What the band is called on a sale page. Coldplay is left out: other bands play it too. */
-export const DEFAULT_KEYWORDS = ['Moonlight', 'מונלייט'];
+/** What the band is called on a sale page until the owner says otherwise: its name (Settings → כללי). */
+export const defaultKeywords = () => [getBandName()];
 
 const KEYWORDS_SETTING = 'ticket_keywords';
 const LAST_AUTO_RUN_SETTING = 'ticket_search_last_auto';
@@ -60,7 +61,7 @@ export class TicketError extends Error {
 
 export function getKeywords(): string[] {
   const list = splitKeywords(getSetting(KEYWORDS_SETTING, ''));
-  return list.length ? list : DEFAULT_KEYWORDS;
+  return list.length ? list : defaultKeywords();
 }
 
 export function setKeywords(input: unknown): string[] {
@@ -685,6 +686,49 @@ export async function searchSource(
   return { status: 'error', message: lastError || 'לא ניתן לטעון את הדף', events };
 }
 
+// ---------- handing a link to the rest of the app ----------
+
+type LinkTarget = { eventId?: string | null; calendarEventId?: string | null };
+
+const workFor = (calendarEventId: string) =>
+  db.prepare('SELECT id FROM works WHERE calendar_event_id = ?').get(calendarEventId) as { id: string } | undefined;
+
+/**
+ * A confirmed link becomes the show's ticket link everywhere else. The show boards, the campaign
+ * wizard and the ticket check read band_events.ticket_url; a work keeps its link on its board
+ * entry. Only an empty one is filled — a link somebody typed is theirs — and it is saved through
+ * the boards' own updateBoardItem, so where each kind lives is decided in one place.
+ */
+function shareLink(target: LinkTarget, url: string) {
+  try {
+    if (target.eventId) {
+      const show = db.prepare('SELECT ticket_url FROM band_events WHERE id = ?')
+        .get(target.eventId) as { ticket_url: string | null } | undefined;
+      if (show && !show.ticket_url) updateBoardItem(`show:${target.eventId}`, { ticket_url: url });
+    } else if (target.calendarEventId) {
+      const work = workFor(target.calendarEventId);
+      if (!work) return;
+      const item = db.prepare('SELECT ticket_url FROM show_board_items WHERE item_key = ?')
+        .get(`work:${work.id}`) as { ticket_url: string | null } | undefined;
+      if (!item?.ticket_url) updateBoardItem(`work:${work.id}`, { ticket_url: url });
+    }
+  } catch { /* a link the boards refuse stays on the ticket pages only */ }
+}
+
+/** Takes a link back off its show when it is rejected or gone — only while it is still the one there. */
+function unshareLink(target: LinkTarget, url: string) {
+  if (target.eventId) {
+    db.prepare('UPDATE band_events SET ticket_url = NULL WHERE id = ? AND ticket_url = ?').run(target.eventId, url);
+  } else if (target.calendarEventId) {
+    const work = workFor(target.calendarEventId);
+    if (work) {
+      db.prepare(
+        "UPDATE show_board_items SET ticket_url = NULL, updated_at = datetime('now') WHERE item_key = ? AND ticket_url = ?"
+      ).run(`work:${work.id}`, url);
+    }
+  }
+}
+
 // ---------- matching to shows ----------
 
 interface ShowRow { id: string; venue: string; location: string | null; date: string }
@@ -710,7 +754,7 @@ function placeOverlap(a: string, b: string): number {
  * too, it is taken; when it is the only show that day but the hall says nothing, it is offered
  * for the band to confirm. No show that day leaves the page unassigned.
  *
- * `hint` is the name the band gave the source. A source called «זאפה חיפה» says where its
+ * `hint` is the name the band gave the source. A source called «המועדון בחיפה» says where its
  * shows are even when its pages don't.
  */
 export function matchShow(
@@ -760,7 +804,11 @@ export function recordFound(
         refresh.run(ev.title, ev.time, ev.venue, ev.price, ev.availability, sourceId, row.id);
         if (!row.event_id && row.status !== 'rejected') {
           const m = matchShow(ev, shows, hint);
-          if (m.event_id) { assign.run(m.event_id, m.status, row.id); matched++; }
+          if (m.event_id) {
+            assign.run(m.event_id, m.status, row.id);
+            matched++;
+            if (m.status === 'confirmed') shareLink({ eventId: m.event_id }, ev.url);
+          }
         }
         continue;
       }
@@ -768,6 +816,7 @@ export function recordFound(
       insert.run(uuid(), m.event_id, sourceId, ev.url, ev.title, ev.date, ev.time, ev.venue, ev.price, ev.availability, m.status);
       added++;
       if (m.event_id) matched++;
+      if (m.event_id && m.status === 'confirmed') shareLink({ eventId: m.event_id }, ev.url);
     }
   })();
   return { added, matched };
@@ -804,9 +853,9 @@ export const loadCalendarGigs: GigLoader = async () => {
 
 /**
  * The calendar entry a listed show is, if any. It has to be on the same date, and it has to
- * say so: either one of the words the owner gave for this band («קרני»), or the city, the hall
+ * say so: either one of the words the owner gave for this band (its name, say), or the city, the hall
  * or the show — «נתניה» in the calendar against «נתניה · QUEEN · היכל תרבות נתניה» on the site.
- * A Moonlight show elsewhere the same evening says neither.
+ * The owner's own band playing elsewhere the same evening says neither.
  */
 export function matchCalendar(ev: FoundEvent, gigs: CalendarGig[], calendarWords: string[]): CalendarGig | null {
   let best: CalendarGig | null = null;
@@ -872,12 +921,17 @@ export async function recordCalendarFound(
       ).run(uuid(), sourceId, ev.url, ev.title, ev.date, ev.time, ev.venue, ev.price, ev.availability, gig.id, gig.title);
       added++;
     }
+    for (const { ev, gig } of kept) shareLink({ calendarEventId: gig.id }, ev.url);
     const mine = db.prepare(
-      `SELECT id, url, event_date FROM band_event_ticket_links
+      `SELECT id, url, event_date, calendar_event_id FROM band_event_ticket_links
        WHERE source_id = ? AND calendar_event_id IS NOT NULL AND event_date >= ? AND status != 'rejected'`
-    ).all(sourceId, today) as Array<{ id: string; url: string; event_date: string }>;
+    ).all(sourceId, today) as Array<{ id: string; url: string; event_date: string; calendar_event_id: string }>;
     const drop = db.prepare('DELETE FROM band_event_ticket_links WHERE id = ?');
-    for (const r of mine) if (!keys.has(`${r.url}|${r.event_date}`)) drop.run(r.id);
+    for (const r of mine) {
+      if (keys.has(`${r.url}|${r.event_date}`)) continue;
+      drop.run(r.id);
+      unshareLink({ calendarEventId: r.calendar_event_id }, r.url);
+    }
   })();
   return { added, kept: kept.length };
 }
@@ -1066,6 +1120,10 @@ export function updateLink(id: string, body: any) {
     status = body.status;
   }
   db.prepare('UPDATE band_event_ticket_links SET event_id = ?, status = ? WHERE id = ?').run(eventId, status, id);
+  // Moved off a show, or turned down: the show stops advertising it. Confirmed on one: it starts.
+  if (row.event_id && (row.event_id !== eventId || status === 'rejected')) unshareLink({ eventId: row.event_id }, row.url);
+  if (!eventId && status === 'rejected') unshareLink({ calendarEventId: row.calendar_event_id }, row.url);
+  if (eventId && status === 'confirmed') shareLink({ eventId }, row.url);
   return db.prepare(`${LINK_SELECT} WHERE l.id = ?`).get(id);
 }
 
@@ -1105,5 +1163,6 @@ export async function addLinkByHand(eventId: string, rawUrl: string, fetcher: Fe
     ).run(id, eventId, finalUrl, info?.title || null, date, info?.time ?? null, info?.venue ?? null,
       info?.price ?? null, info?.availability ?? null);
   }
+  shareLink({ eventId }, finalUrl);
   return db.prepare(`${LINK_SELECT} WHERE l.id = ?`).get(id);
 }

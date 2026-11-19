@@ -1,13 +1,23 @@
 import { db, uuid, getVatPercent, setSetting, getSetting } from './db.js';
-import { eventDate, isCalendarConfigured, listEvents, type CalendarEvent } from './calendarClient.js';
+import { eventDate, eventStartTime, isCalendarConfigured, listEvents, type CalendarEvent } from './calendarClient.js';
 import {
-  cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type MatchVerdict,
+  cleanTitle, evaluate, listRules, overrideMap, type CalendarRule, type EventOverride, type MatchVerdict,
 } from './calendarRules.js';
 import {
   ensureExpenseRow, eventSharesTotal, expenseRowForEvent, expenseTotal, getEvent, syncExpenseLabel,
-} from './moonlight.js';
+} from './band.js';
 import { setEventAttendees } from './assignments.js';
 import { linkQuotesByCalendar } from './quoteShow.js';
+import { claimQuoteEvents, markedQuoteId } from './quoteEventMark.js';
+import { looksPrivate, refreshPrivate } from './showPrivacy.js';
+
+/** Who a synced show's money is received by, by default: the person whose books these are. */
+function ownerName(): string | null {
+  const owner = db
+    .prepare("SELECT name FROM users WHERE role = 'owner' ORDER BY created_at LIMIT 1")
+    .get() as { name: string } | undefined;
+  return owner?.name ?? null;
+}
 
 export interface RuleSyncResult {
   ruleId: string;
@@ -129,11 +139,21 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
   const guests = (event.attendees ?? [])
     .filter((a) => a.email && a.responseStatus !== 'declined')
     .map((a) => a.email!);
+  // «פרטי» on the event, or the mark of the quote it was saved from: a private booking.
+  const calendarPrivate = looksPrivate(event.summary, event.description) || !!markedQuoteId(event) ? 1 : 0;
   const existing = db.prepare('SELECT * FROM band_events WHERE calendar_event_id = ?').get(event.id) as any;
 
+  // When it starts and what its description says, for the show boards (server/showBoard.ts).
+  const startTime = eventStartTime(event);
+  const description = event.description?.trim() || null;
+  const summary = event.summary?.trim() || null;
+
   if (existing) {
-    db.prepare('UPDATE band_events SET venue = ?, date = ?, location = ? WHERE id = ?')
-      .run(existing.venue_locked ? existing.venue : title, date, location, existing.id);
+    db.prepare(
+      `UPDATE band_events SET venue = ?, date = ?, location = ?, calendar_private = ?, start_time = ?,
+         calendar_description = ?, calendar_summary = ? WHERE id = ?`
+    ).run(existing.venue_locked ? existing.venue : title, date, location, calendarPrivate, startTime, description, summary, existing.id);
+    refreshPrivate(existing.id);
     const updated = getEvent(existing.id);
     ensureExpenseRow(updated);
     syncExpenseLabel(updated);
@@ -148,8 +168,11 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
     // Adopted by date rather than by name: the name on the row was typed by someone, so it
     // stays and is locked, exactly as a rename after the fact would be.
     const keepName = !!orphan.venue_locked || normalizeName(orphan.venue) !== normalizeName(title);
-    db.prepare('UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ? WHERE id = ?')
-      .run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, orphan.id);
+    db.prepare(
+      `UPDATE band_events SET calendar_event_id = ?, venue = ?, location = ?, venue_locked = ?, calendar_private = ?,
+         start_time = ?, calendar_description = ?, calendar_summary = ? WHERE id = ?`
+    ).run(event.id, keepName ? orphan.venue : title, location, keepName ? 1 : 0, calendarPrivate, startTime, description, summary, orphan.id);
+    refreshPrivate(orphan.id);
     const linked = getEvent(orphan.id);
     ensureExpenseRow(linked);
     syncExpenseLabel(linked);
@@ -160,9 +183,11 @@ function applyBandEvent(event: CalendarEvent, date: string, title: string, tally
 
   const id = uuid();
   db.prepare(
-    `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver)
-     VALUES (?, ?, ?, ?, ?, ?)`
-  ).run(id, title, date, event.id, location, 'איתמר');
+    `INSERT INTO band_events (id, venue, date, calendar_event_id, location, receiver, calendar_private,
+       start_time, calendar_description, calendar_summary)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, title, date, event.id, location, ownerName(), calendarPrivate, startTime, description, summary);
+  refreshPrivate(id);
   ensureExpenseRow(getEvent(id));
   setEventAttendees(id, guests);
   tally.created++;
@@ -199,8 +224,17 @@ function applyPersonalWork(
     return { amount, vat, total: round2(amount + vat) };
   };
   const existing = db.prepare('SELECT * FROM works WHERE calendar_event_id = ?').get(event.id) as any;
+  // What the public show board needs, kept up to date even on a work that is already billed: none
+  // of it is bookkeeping. See server/showBoard.ts.
+  const boardFields = (workId: string) => db.prepare(
+    'UPDATE works SET start_time = ?, calendar_rule_id = ?, calendar_private = ?, calendar_summary = ? WHERE id = ?'
+  ).run(
+    eventStartTime(event), rule.id, looksPrivate(event.summary, event.description) ? 1 : 0,
+    event.summary?.trim() || null, workId
+  );
 
   if (existing) {
+    boardFields(existing.id);
     // Locked once billed — changing a line on an issued invoice is not the sync's call.
     if (existing.status !== 'unpaid') {
       tally.skipped++;
@@ -223,6 +257,7 @@ function applyPersonalWork(
   // reached it. Link it instead of adding a duplicate line to the table.
   const orphan = findOrphanWork(clientId, date, title);
   if (orphan) {
+    boardFields(orphan.id);
     // An already-billed row is linked and nothing more, which is enough to stop the event
     // being drawn again as a second, unbilled copy of work you have already invoiced.
     if (orphan.status !== 'unpaid') {
@@ -239,11 +274,13 @@ function applyPersonalWork(
   }
 
   const price = priceOf(fixedAmount);
+  const workId = uuid();
   db.prepare(
     `INSERT INTO works (id, client_id, date, description, amount, vat_amount, total, status,
        calendar_event_id, location, source)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, 'calendar')`
-  ).run(uuid(), clientId, date, title, price.amount, price.vat, price.total, event.id, location);
+  ).run(workId, clientId, date, title, price.amount, price.vat, price.total, event.id, location);
+  boardFields(workId);
   tally.created++;
 }
 
@@ -285,6 +322,29 @@ function applyCancellation(event: CalendarEvent, rule: CalendarRule, tally: Rule
 }
 
 /**
+ * Whether a rule that did not draw an event because of a manual override should remove the
+ * row its target holds for that event.
+ *
+ * An «exclude» removes it: that is the point of excluding. An event pinned to another rule is
+ * different. Rules of the same kind share one row per event (works and band_events are both
+ * keyed by the calendar event), so that row is the pinned rule's, and deleting it here would undo
+ * the pin on every sync — which is how a show added by hand to the shows rule kept vanishing
+ * whenever a second rule over the same calendar ran after it. Only a pin to a rule of the
+ * other kind leaves this kind's row stale, so only then does it go.
+ */
+export function missDropsRow(
+  rule: CalendarRule,
+  override: EventOverride | undefined,
+  targetOf: (ruleId: string) => CalendarRule['target'] | undefined
+): boolean {
+  if (!override) return false;
+  if (override.action === 'exclude') return true;
+  if (!override.rule_id || override.rule_id === rule.id) return false;
+  const pinnedTarget = targetOf(override.rule_id);
+  return !!pinnedTarget && pinnedTarget !== rule.target;
+}
+
+/**
  * Runs every enabled rule and writes the events each one draws to its target.
  *
  * Rules are independent: one calendar failing does not stop the others, and its error is
@@ -301,6 +361,9 @@ export async function pullShowsFromCalendar(
   );
   const byCalendar = await fetchCalendars(rules, monthsBack, monthsAhead);
   const overrides = overrideMap();
+  // Every rule, not only the ones running now: a pin may point at a rule outside this run.
+  const targets = new Map(listRules().map((r) => [r.id, r.target]));
+  const targetOf = (id: string) => targets.get(id);
   const results: RuleSyncResult[] = [];
 
   for (const rule of rules) {
@@ -335,7 +398,9 @@ export async function pullShowsFromCalendar(
         if (!verdict.matched) {
           // An event excluded after it was already drawn should lose its row, so the
           // correction takes effect without hunting the row down by hand.
-          if (verdict.reason === 'manual') applyCancellation(event, rule, tally);
+          if (verdict.reason === 'manual' && missDropsRow(rule, overrides.get(event.id), targetOf)) {
+            applyCancellation(event, rule, tally);
+          }
           continue;
         }
         tally.matched++;
@@ -344,6 +409,8 @@ export async function pullShowsFromCalendar(
         if (rule.target === 'band') applyBandEvent(event, date, title, tally);
         else applyPersonalWork(event, date, title, rule, tally);
       }
+      // A quote's «אופציה» saved in Google from the quote's link is tied back to the quote here.
+      if (rule.target === 'band') claimQuoteEvents(rule.calendar_id, events ?? []);
     });
     tx();
     results.push(tally);

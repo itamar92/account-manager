@@ -27,17 +27,17 @@
       "credentials_env": ["HOTMOBILE_PHONE", "HOTMOBILE_PASSWORD"]
     },
     "water": {
-      "name": "Mei Hod Hasharon",
-      "portal": "https://www.mei-hh.co.il",
-      "portal_note": "Verify URL — Hod Hasharon water corp. May also be accessed via municipality site.",
+      "name": "Your water corporation",
+      "portal": "https://example.com/water-portal",
+      "portal_note": "Replace with your local water corporation's portal. May also be accessed via the municipality site.",
       "login": "account number + ID",
       "deduct_pct": 0.15,
       "collect_frequency": "bi-monthly",
       "credentials_env": ["WATER_ACCOUNT", "WATER_ID"]
     },
     "arnona": {
-      "name": "Hod Hasharon Municipality",
-      "portal": "https://www.hod-hasharon.muni.il",
+      "name": "Your municipality",
+      "portal": "https://example.com/municipality-portal",
       "login": "ID + property account OR gov.il identity",
       "deduct_pct": 0.15,
       "collect_frequency": "bi-monthly",

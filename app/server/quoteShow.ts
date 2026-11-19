@@ -1,7 +1,8 @@
 import { db } from './db.js';
-import { ensureExpenseRow, getEvent, recomputeEvent } from './moonlight.js';
+import { ensureExpenseRow, getEvent, recomputeEvent } from './band.js';
 import { QuoteError } from './quotes.js';
 import { isOptionTitle } from './quoteOption.js';
+import { refreshPrivate } from './showPrivacy.js';
 
 /**
  * A signed quote and the show it is for — see docs/QUOTES-DESIGN.md, «Signing and the show».
@@ -56,9 +57,16 @@ function fillAmounts(show: any, quote: any) {
   writeAmounts(show.id, quote);
 }
 
+/**
+ * Points the quote at a show, or at none. A show with a quote behind it is a private booking, so
+ * both the show it leaves and the show it reaches have that worked out again.
+ */
 function setLink(quoteId: string, showId: string | null, status: ShowLinkStatus | null) {
+  const before = (db.prepare('SELECT show_id FROM band_quotes WHERE id = ?').get(quoteId) as any)?.show_id ?? null;
   db.prepare('UPDATE band_quotes SET show_id = ?, show_link_status = ?, show_amount_ok = 0 WHERE id = ?')
     .run(showId, status, quoteId);
+  if (before && before !== showId) refreshPrivate(before);
+  refreshPrivate(showId);
 }
 
 /** The show the quote's own calendar event became, once the sync has made it. */
@@ -131,6 +139,7 @@ export function linkQuotesByCalendar() {
   for (const row of rows) {
     if (row.status === 'signed') afterSigning(row.id);
     else db.prepare('UPDATE band_quotes SET show_id = ? WHERE id = ?').run(row.event_id, row.id);
+    refreshPrivate(row.event_id);
   }
 }
 
@@ -143,21 +152,43 @@ export interface ShowCandidate {
   location: string | null;
   amount_pre_vat: number;
   amount_with_vat: number;
+  calendar_event_id: string | null;
   /** The quote already behind this show, if any. */
   taken_by: string | null;
 }
+
+const CANDIDATE_COLUMNS = (quoteParam = '?') =>
+  `e.id, e.venue, e.date, e.location, e.amount_pre_vat, e.amount_with_vat, e.calendar_event_id,
+   (SELECT COALESCE(q.quote_number, q.client_name) FROM band_quotes q
+    WHERE q.id != ${quoteParam} AND q.is_template = 0 AND q.status != 'cancelled'
+      AND (q.show_id = e.id OR (q.calendar_event_id IS NOT NULL AND q.calendar_event_id = e.calendar_event_id))
+    LIMIT 1) AS taken_by`;
 
 /** The shows on a date, for the editor's «יש הופעה בתאריך הזה — לשייך?». */
 export function showsOnDate(date: string, quoteId?: string): ShowCandidate[] {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return [];
   return db.prepare(
-    `SELECT e.id, e.venue, e.date, e.location, e.amount_pre_vat, e.amount_with_vat,
-       (SELECT COALESCE(q.quote_number, q.client_name) FROM band_quotes q
-        WHERE q.id != ? AND q.is_template = 0 AND q.status != 'cancelled'
-          AND (q.show_id = e.id OR (q.calendar_event_id IS NOT NULL AND q.calendar_event_id = e.calendar_event_id))
-        LIMIT 1) AS taken_by
-     FROM band_events e WHERE e.date = ? ORDER BY e.created_at`
+    `SELECT ${CANDIDATE_COLUMNS()} FROM band_events e WHERE e.date = ? ORDER BY e.created_at`
   ).all(quoteId ?? '', date) as ShowCandidate[];
+}
+
+/** How far back the «שיוך להופעה קיימת» list reaches: a quote signed after the show is rare. */
+const PICKER_DAYS_BACK = 60;
+const PICKER_LIMIT = 200;
+
+/**
+ * Every show a quote could be for, for «שיוך להופעה קיימת»: the shows already on the calendar
+ * from two months back onwards, whatever their date — the quote's date may be missing, or typed
+ * differently from the show's. Those on the quote's own date come first, then the nearest to it.
+ */
+export function showsForPicker(quoteId: string, date?: string | null): ShowCandidate[] {
+  const anchor = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+  return db.prepare(
+    `SELECT ${CANDIDATE_COLUMNS()} FROM band_events e
+     WHERE e.date >= date('now', ?) OR e.date = COALESCE(?, '')
+     ORDER BY CASE WHEN ? IS NULL THEN 0 ELSE abs(julianday(e.date) - julianday(?)) END, e.date
+     LIMIT ${PICKER_LIMIT}`
+  ).all(quoteId, `-${PICKER_DAYS_BACK} days`, anchor, anchor, anchor) as ShowCandidate[];
 }
 
 /**

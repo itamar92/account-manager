@@ -83,5 +83,5 @@ export function brandingImage(kind: BrandingKind): { id: string; mime: string; d
 export function brandingUrl(kind: BrandingKind): string | null {
   const id = getSetting(settingKey(kind), '');
   if (!id || !db.prepare('SELECT 1 FROM band_quote_files WHERE id = ?').get(id)) return null;
-  return `/api/moonlight/quotes/branding/${kind}?v=${id}`;
+  return `/api/band/quotes/branding/${kind}?v=${id}`;
 }

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { get, nis } from '../api';
 import { Card, StatCard, StatusBadge, Empty, PageHeader } from '../ui';
 import { OverviewPanel } from './OverviewPanel';
+import { useAuth } from '../AuthContext';
 
 export function Dashboard() {
   const [data, setData] = useState<any>(null);
@@ -32,6 +33,7 @@ export function Dashboard() {
 /** Everything under the panel: the balances the year still carries, and the pointers out. */
 function DashboardRest({ data, year }: { data: any; year: number }) {
   const totals = data.yearTotals;
+  const bandName = useAuth().branding.band_name;
 
   return (
     <>
@@ -39,7 +41,7 @@ function DashboardRest({ data, year }: { data: any; year: number }) {
         <StatCard label="חשבוניות פתוחות (גבייה)" value={nis(data.openInvoices.total)} sub={`${data.openInvoices.count} חשבוניות`} accent="text-warn" />
         <StatCard label={`התקבל ב-${year}`} value={nis(data.paidYtd.total)} accent="text-pos" />
         <StatCard label="עבודות שטרם חויבו" value={nis(data.unpaidWorks.total)} sub={`${data.unpaidWorks.count} עבודות`} accent="text-accent" />
-        <StatCard label="Moonlight — רווח מצטבר" value={nis(data.band.totalProfit)} sub={`${data.band.upcomingEvents} הופעות קרובות`} accent="text-accent" />
+        <StatCard label={`${bandName} — רווח מצטבר`} value={nis(data.band.totalProfit)} sub={`${data.band.upcomingEvents} הופעות קרובות`} accent="text-accent" />
       </div>
 
       {/* items-start so the shorter card keeps its own height instead of stretching to match. */}
@@ -94,11 +96,11 @@ function DashboardRest({ data, year }: { data: any; year: number }) {
       </div>
 
       {/* The band's money detail — member split, shows awaiting payment, supplier debts —
-          lives on the Moonlight summary tab; here only the headline figure above. */}
+          lives on the band summary tab; here only the headline figure above. */}
       <Card>
         <div className="flex items-center justify-between">
-          <h2 className="ser text-lg">Moonlight Finance</h2>
-          <Link to="/moonlight/summary" className="text-sm text-accent hover:underline">
+          <h2 className="ser text-lg">כספי {bandName}</h2>
+          <Link to="/band/summary" className="text-sm text-accent hover:underline">
             לחלוקה בין החברים, כספים בדרך וחובות לספקים ←
           </Link>
         </div>

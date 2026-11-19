@@ -1,11 +1,11 @@
-# Deploying Account Manager to `im-tools.org`
+# Deploying Account Manager to your own domain
 
 Oracle Cloud Always Free VM running the app in Docker, exposed through a
 Cloudflare Tunnel. No open ports, no public IP, no certificate to renew.
 
 ```
 browser ──https──▶ Cloudflare edge ──tunnel──▶ cloudflared ──▶ app:3000
-                    (im-tools.org)              (on the VM, outbound only)
+                    (your-domain.com)           (on the VM, outbound only)
 ```
 
 ## Why this shape
@@ -83,7 +83,7 @@ In **Cloudflare Zero Trust → Networks → Tunnels → Create a tunnel** (Cloud
 1. Name it `account-manager`. Copy the **token** from the install command shown —
    that single value is all the VM needs.
 2. Under **Public Hostnames**, add:
-   - Subdomain: *(blank)* · Domain: `im-tools.org` · Path: *(blank)*
+   - Subdomain: *(blank)* · Domain: `your-domain.com` · Path: *(blank)*
    - Service: `HTTP` → `app:3000`
 
    `app` is the compose service name; cloudflared resolves it on the compose
@@ -94,7 +94,7 @@ In **Cloudflare Zero Trust → Networks → Tunnels → Create a tunnel** (Cloud
 
 ```bash
 sudo mkdir -p /opt/account-manager && sudo chown $USER /opt/account-manager
-git clone https://github.com/itamar92/account-manager.git /opt/account-manager
+git clone https://github.com/<your-github-user>/account-manager.git /opt/account-manager
 cd /opt/account-manager/deploy
 cp .env.example .env && chmod 600 .env
 $EDITOR .env          # TUNNEL_TOKEN + SEED_* are required
@@ -104,21 +104,22 @@ docker compose logs -f
 
 The first build compiles `better-sqlite3` from source for ARM64 and takes a few
 minutes. On first start the app creates and seeds the database inside the
-`am-data` volume, importing `invoices_2026.csv` and the Moonlight data.
+`am-data` volume with a single owner account (`SEED_OWNER_EMAIL`, `SEED_OWNER_PASSWORD`).
+Everything else arrives through the integrations or is typed in.
 
-`im-tools.org` should now serve the app over HTTPS.
+Your domain should now serve the app over HTTPS.
 
 ### Set the passwords before you start
 
-`SEED_OWNER_PASSWORD` and `SEED_BAND_PASSWORD` are read **only** when the
+`SEED_OWNER_EMAIL` and `SEED_OWNER_PASSWORD` are read **only** when the
 database is first created. The app now refuses to start in production if they
-are unset, rather than seeding the defaults that are written down in the repo.
+is unset, rather than seeding the default that is written down in the repo.
 To change a password afterwards, do it in the app — editing `.env` later has no
 effect.
 
 ## 4a. The AI agent (optional)
 
-**Moonlight → יועץ קמפיינים** asks an AI agent whether the band's ad spend was worth it. It
+**הלהקה → יועץ קמפיינים** asks an AI agent whether the band's ad spend was worth it. It
 reaches that agent **over SSH**, not over an HTTP API: the agent is a command-line tool on a
 machine where it is already logged in, and the app opens a session, writes the prompt to its
 stdin and reads the answer back.
@@ -213,12 +214,82 @@ that key has:
 this app collected from Meta, and an agent summarising that text has no business also holding
 Bash and Edit on the VM the app runs on; `--strict-mcp-config` with no config keeps a stray MCP
 server out of an unattended run for the same reason. The wrapper also caps the prompt at 1 MB
-and stops the run at 110 s, under the app's own 120 s ceiling, so an overrun comes back as a
-message rather than as a dropped connection.
+and stops the run at 110 s (290 s with the Meta tools below), under the app's own 300 s ceiling,
+so an overrun comes back as a message rather than as a dropped connection.
 
 It is a **copy**, owned by root: a `git pull` on the VM does not change what the key can run, and
 the agent account cannot rewrite its own restriction. `sudo deploy/setup-claude-agent.sh` again
 is what installs a new version.
+
+### Optional: Meta's Ads Manager connector, read tools only
+
+The advisor's prompt carries campaign-level figures from the app's own Meta sync. Meta's official
+MCP server goes a level below — ad sets, ads, audiences, conversions, the pixel — and the advisor
+can use it to check what the extract cannot show. It is **off** until the wrapper is told which of
+its tools are reads, because the same server can also create, edit and switch on campaigns.
+
+1. **Add and sign in to the server as the agent account**, once (§4a's login has to exist first):
+
+   ```bash
+   sudo -u aiagent -i
+   set -a; . ~/.config/am-agent/env; set +a        # only if the login is a setup-token
+   claude mcp add --transport http --scope user meta-ads https://mcp.facebook.com/ads
+   claude                                          # /mcp → meta-ads → Authenticate
+   ```
+
+   The sign-in URL opens in a browser on your own machine; the page it ends on
+   (`http://localhost:<port>/callback?…`) cannot load there, so copy its address and, from a
+   second SSH session on the VM, `curl "<that address>"`. Keep the name `meta-ads` — the wrapper
+   only knows that one — and do not answer "always allow" to any tool prompt in that session: a
+   saved allow rule would let an unattended run call that tool too.
+
+2. **List the read tools** — `/mcp` → meta-ads → View tools — and put the reporting ones in
+   `/home/aiagent/.config/am-agent/env`, each by its full name, separated by spaces:
+
+   ```
+   AM_AGENT_META_TOOLS="mcp__meta-ads__<tool> mcp__meta-ads__<tool> …"
+   AM_AGENT_META_URL=https://mcp.facebook.com/ads     # exactly what `claude mcp get meta-ads` shows
+   ```
+
+   Only tools that read: insights, lists, getters, diagnostics. Anything that creates, updates,
+   duplicates, pauses, activates or deletes stays off the list. The wrapper refuses a wildcard or
+   the bare server name — the list has to name tools one by one.
+
+   A list that covers what the advisor's prompts ask for — ad set and ad settings and metrics,
+   Meta's own recommendations and alerts, delivery errors, change history and audiences:
+
+   ```
+   AM_AGENT_META_TOOLS="mcp__meta-ads__ads_get_ad_accounts mcp__meta-ads__ads_get_ad_entities
+     mcp__meta-ads__ads_get_field_context mcp__meta-ads__ads_get_opportunity_score
+     mcp__meta-ads__ads_insights_performance_trend mcp__meta-ads__ads_insights_anomaly_signal
+     mcp__meta-ads__ads_get_errors mcp__meta-ads__ads_account_get_activity_logs
+     mcp__meta-ads__ads_get_ad_account_custom_audiences mcp__meta-ads__ads_get_creatives"
+   ```
+
+   Check each name against what `/mcp` lists — the server's tool names can change.
+
+3. **Install the wrapper** that knows about it: `sudo deploy/setup-claude-agent.sh --skip-install`
+   from the checkout (it leaves the login and the env file alone).
+
+4. **Raise the app's ceiling** if `deploy/.env` still says `AGENT_TIMEOUT_MS=120000` — it has to
+   be above the wrapper's 290 s, so `300000` — or set it in Settings → סוכן AI. Then
+   **בדיקת חיבור** answers with a second line, `meta-ads: N read tools allowed`.
+
+What the run gets is the one server, through a config the wrapper writes for that run
+(`--strict-mcp-config` still keeps every other server out), and `--permission-mode dontAsk`, which
+refuses any call not on the list. The prompt tells the agent the same — read, never change — and
+to treat the app's extract as the authority on shows, tickets and money. A run that reads Meta
+can outlast Cloudflare's 100 s; the tab then keeps waiting for the answer instead of showing the
+524. To switch it off, comment `AM_AGENT_META_TOOLS` out again — no reinstall needed.
+
+### The ticket check (web)
+
+The advisor's «בדיקת כרטיסים» reads the show's page on the club's site. That run, and only that
+run, gets `WebSearch` and `WebFetch` — no Meta server, no other tool — and its prompt holds only the
+band's name and the show, so a web page with instructions in it has nothing in the run to reach.
+It is on by default after `setup-claude-agent.sh --skip-install` installs the new wrapper;
+`AM_AGENT_WEB=0` in the env file turns it off, and `AM_AGENT_WEB_TIMEOUT` (170 s) bounds it.
+**בדיקת חיבור** says `web: ticket checks allowed` when it is on.
 
 ### Point the app at it
 
@@ -302,12 +373,12 @@ The app's MCP server (`/mcp`, `app/README.md`) exposes the whole dataset as read
 Create a key in **Settings → מפתחות API**, then:
 
 ```bash
-claude mcp add --transport http account-manager https://im-tools.org/mcp \
+claude mcp add --transport http account-manager https://your-domain.com/mcp \
   --header "X-API-Key: am_…" --scope user
 claude              # /mcp shows the server as connected, or names the HTTP status if not
 ```
 
-The URL is the public one even from the VM: the container publishes no port, so `im-tools.org`
+The URL is the public one even from the VM: the container publishes no port, so your domain
 through the tunnel is the only way in. The key lands in `~/.claude.json` in the clear — revoke it
 in the same settings page if the account is ever compromised, and give the VM its own key so
 revoking it costs nothing elsewhere.
@@ -316,30 +387,16 @@ If Cloudflare Access is in front (§7), `/mcp` needs the bypass policy described
 Access answers with a 302 to its login page and the server shows as `failed` with an HTML parse
 error rather than a clean 401.
 
-## 4c. Google Calendar: write access for price quotes
+## 4c. Google Calendar and price quotes
 
-The calendar sync only reads. A price quote also **writes**: it holds its date with an
-«אופציה» event on the band's calendar and sends the invitations, and the sync makes the show
-from that event. That needs the refresh token in `.env` to carry the `calendar.events` scope as
-well as `calendar.readonly`. A token issued read-only still syncs, and the quote's dialog answers
-with a message naming `calendar.events`.
+The app only ever reads the calendar, so the refresh token needs just `calendar.readonly`.
+A price quote holds its date with an «אופציה» event, but the app does not write it: «שריון
+ביומן כאופציה» opens Google Calendar's own new-event page filled in (title, date, time, place,
+guests, and a line `am-quote:…` in the description). Save it there, on the calendar the band
+rule reads, and let Google send the invitations. Then «בדיקה ביומן» in the quote — or the next
+calendar sync — finds the event by that line, ties it to the quote and makes the show from it.
 
-To issue one with both:
-
-1. **Google Cloud Console** → the project that holds `GOOGLE_CLIENT_ID` → **OAuth consent screen**
-   → **Data access**: add `.../auth/calendar.readonly` and `.../auth/calendar.events`. If the
-   consent screen is still in **Testing**, Google expires its refresh tokens after 7 days, so
-   publish it.
-2. The same client → **Authorized redirect URIs**: add `https://developers.google.com/oauthplayground`.
-3. **[OAuth 2.0 Playground](https://developers.google.com/oauthplayground)** → the gear → *Use your
-   own OAuth credentials* → the client ID and secret. In step 1, enter
-   `https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events`,
-   authorize with the account whose calendar holds the shows, and in step 2 exchange the code.
-4. Put the new refresh token in `deploy/.env` as `GOOGLE_REFRESH_TOKEN`, then
-   `docker compose up -d` in `deploy/`.
-
-To check it: open a quote → «יומן והופעה» → «שריון ביומן כאופציה». An error naming
-`calendar.events` means the old token is still the one in use.
+Don't delete the `am-quote:` line from the event's description: it is how the quote finds it.
 
 ## 5. Backups
 
@@ -396,8 +453,8 @@ crontab -e
 ## 7. Optional: put Cloudflare Access in front
 
 This app holds your invoicing data behind one password. Zero Trust → Access →
-Applications, self-hosted, `im-tools.org`, policy `emails: itamar92@gmail.com` +
-the band addresses. Free up to 50 users.
+Applications, self-hosted, your domain, policy `emails:` your own address plus
+the band members' addresses. Free up to 50 users.
 
 One catch: **exclude `/api/v1` and `/mcp`**, or the `X-API-Key` calls behind them —
 the Morning integration and the MCP server that Claude Desktop connects to — will
@@ -407,7 +464,7 @@ service-token policy if you want them authenticated at the edge too.
 **Clients' quote links need the same.** A client opening a quote from WhatsApp or an email has
 no Access login, so add a Bypass policy for `/q/*`, `/api/public/*` and `/assets/*` (the page's
 script and styles). The alternative is a second public hostname on the same tunnel, such as
-`quotes.im-tools.org`, left outside Access, with `PUBLIC_BASE_URL=https://quotes.im-tools.org` in
+`quotes.your-domain.com`, left outside Access, with `PUBLIC_BASE_URL=https://quotes.your-domain.com` in
 `.env` so the links the app writes point there.
 
 The symptom is specific and worth recognising: Access answers an unauthenticated
@@ -424,12 +481,36 @@ cd deploy && docker compose up -d --build
 
 The database is in a named volume, untouched by rebuilds.
 
+### From the app: Settings → שרת
+
+A **הפעלה מחדש** (restart) and an **עדכון ופריסה מחדש** (redeploy `master`) button, so neither
+needs an SSH session. One-time setup on the VM:
+
+```bash
+cd /opt/account-manager && git pull
+sudo deploy/setup-ops.sh
+cd deploy && docker compose up -d --build
+```
+
+The container cannot restart itself without the Docker socket, which would be root on the VM. So
+the app does what it does for the AI agent (§4a): it SSHes to the host with a key that opens one
+command. `setup-ops.sh` creates an `amops` account whose only key is forced to
+`sudo -n /usr/local/sbin/am-ops` — a root-owned copy of `deploy/ops.sh` that matches the request
+against `status`, `logs`, `restart` and `redeploy` and never executes it. The key pair is
+generated on the VM, written with the pinned host key to `deploy/ops-key/` (git-ignored), and
+mounted read-only into the container, so there is nothing to paste into the app.
+
+Restart and redeploy run detached on the host (they stop the container that asked for them), one
+at a time; the page follows the job and shows its output. Redeploy does the same steps as the
+workflow below — fetch `master`, `reset --hard`, `up -d --build` — and a failed fetch or build
+leaves the running container in place. Re-run `sudo deploy/setup-ops.sh` to install a changed
+`ops.sh`; `--new-key` rotates the key.
+
 ## Automatic deploys
 
 `.github/workflows/deploy.yml` runs exactly that update over SSH when `master`
-changes something the image is built from — `app/`, `deploy/`, `invoices_2026.csv`
-or the workflows themselves. A commit touching only the Python scripts, the JSON
-ledgers or the docs does not redeploy. **Run workflow** on the Actions tab
+changes something the image is built from — `app/`, `deploy/` or the workflows
+themselves. A commit touching only the Python scripts or the docs does not redeploy. **Run workflow** on the Actions tab
 redeploys the current `master` on demand.
 
 It typechecks and builds the commit first (the same job every pull request runs),

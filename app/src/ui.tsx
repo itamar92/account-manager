@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import React from 'react';
 import { clsx } from 'clsx';
 import { ChevronDown } from 'lucide-react';
@@ -8,6 +9,70 @@ export function Card({ children, className }: { children: React.ReactNode; class
     <div className={clsx('bg-surface border border-line rounded-2xl p-4 md:p-5', className)}>
       {children}
     </div>
+  );
+}
+
+/**
+ * A card whose body folds away under its heading.
+ *
+ * The heading carries a `summary` — a few tags saying what is inside — so a closed section still
+ * tells you whether it is worth opening, which is the whole difference between folding a page and
+ * hiding it. `actions` sit beside the heading rather than inside its button, so a link there never
+ * also opens or closes the section.
+ */
+export function Section({ title, summary, open, onToggle, actions, children, className }: {
+  title: React.ReactNode;
+  summary?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const bodyId = React.useId();
+  return (
+    <section className={clsx('bg-surface border border-line rounded-2xl', className)}>
+      <div className="flex items-center gap-2 px-4 md:px-5">
+        {/* The heading holds the button, not the other way round, so a screen reader's list of
+            headings still finds every section. */}
+        <h2 className="flex-1 min-w-0">
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={open}
+            aria-controls={bodyId}
+            className="w-full min-h-14 flex flex-wrap items-center gap-x-3 gap-y-1.5 py-3 text-start"
+          >
+            {/* Pointing down when open, and towards the reading direction's end when closed. */}
+            <ChevronDown className={clsx('w-4 h-4 shrink-0 text-muted transition-transform', !open && 'rotate-90')} />
+            <span className="ser text-lg">{title}</span>
+            {summary && <span className="flex flex-wrap items-center gap-1.5 font-normal">{summary}</span>}
+          </button>
+        </h2>
+        {actions && <div className="shrink-0 flex items-center gap-2">{actions}</div>}
+      </div>
+      {open && <div id={bodyId} className="px-4 pb-4 md:px-5 md:pb-5">{children}</div>}
+    </section>
+  );
+}
+
+/** A small rounded label — a count, a status, a show — tinted by what it means. */
+export function Tag({ tone = 'neutral', children, className }: {
+  tone?: 'neutral' | 'pos' | 'warn' | 'neg' | 'accent';
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const tones = {
+    neutral: 'bg-soft border-line text-muted',
+    pos: 'bg-pos-soft border-pos/20 text-pos-ink',
+    warn: 'bg-warn-soft border-warn/25 text-warn-ink',
+    neg: 'bg-neg-soft border-neg/20 text-neg-ink',
+    accent: 'bg-accent-soft border-accent/20 text-accent-ink',
+  };
+  return (
+    <span className={clsx('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', tones[tone], className)}>
+      {children}
+    </span>
   );
 }
 
@@ -178,7 +243,7 @@ export function PeriodBadge({ status }: { status: string }) {
 }
 
 export function Button({
-  children, onClick, variant = 'primary', type = 'button', disabled, className,
+  children, onClick, variant = 'primary', type = 'button', disabled, className, title,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
@@ -186,6 +251,8 @@ export function Button({
   type?: 'button' | 'submit';
   disabled?: boolean;
   className?: string;
+  /** Says why a disabled button is waiting, on hover. */
+  title?: string;
 }) {
   const styles = {
     primary: 'bg-accent text-white hover:brightness-110',
@@ -197,8 +264,10 @@ export function Button({
       type={type}
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={clsx(
-        'px-4 py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed',
+        // The press shows on the way down, not after the click lands.
+        'px-4 py-2.5 rounded-xl text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100',
         styles[variant],
         className
       )}
@@ -211,7 +280,7 @@ export function Button({
 /** The one field style, shared by every input, textarea and select on the app. */
 export const fieldClass =
   'w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm text-ink placeholder:text-ghost ' +
-  'focus:outline-none focus:border-accent focus:bg-surface transition-colors';
+  'focus:outline-none focus:border-accent focus:bg-surface focus:ring-2 focus:ring-accent/20 transition-colors';
 
 export function Input({ label, ...props }: React.InputHTMLAttributes<HTMLInputElement> & { label?: string }) {
   return (
@@ -295,9 +364,14 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
   size?: keyof typeof modalWidths;
 }) {
   if (!open) return null;
-  return (
+  // Rendered on <body>: an ancestor with an entrance animation becomes the containing block of
+  // anything fixed inside it, and the dialog would cover only that part of the screen.
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-[rgba(26,22,45,.45)] p-0 md:p-4" onClick={onClose}>
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={clsx(
           'bg-surface rounded-t-2xl md:rounded-2xl w-full max-h-[90vh] overflow-y-auto p-5 md:p-6 shadow-[0_28px_60px_rgba(20,24,32,.30)]',
           modalWidths[size]
@@ -308,6 +382,7 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
           <h2 className="ser text-xl">{title}</h2>
           <button
             onClick={onClose}
+            aria-label="סגירה"
             className="bg-soft rounded-lg w-8 h-8 text-ink-2 hover:text-ink leading-none shrink-0"
           >
             ✕
@@ -315,7 +390,8 @@ export function Modal({ title, open, onClose, children, size = 'md' }: {
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body
   );
 }
 
