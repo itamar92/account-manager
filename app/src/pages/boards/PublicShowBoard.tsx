@@ -7,7 +7,8 @@ import { byMonth, dayNumber, monthHeading, monthShort, relativeDay, weekday, typ
 interface PublicShow {
   id: string;
   date: string;
-  time: string | null;
+  /** When the doors open — never the calendar's own time, which is the band's balance. */
+  doors_time: string | null;
   title: string;
   place: Place | null;
   region: string | null;
@@ -211,7 +212,11 @@ function ShowCard({ show }: { show: PublicShow }) {
           <h3 className="text-lg font-bold leading-snug">{show.title}</h3>
         </div>
         <div className="mt-1.5 space-y-1 text-sm text-white/70">
-          {show.time && <div className="flex items-center gap-1.5"><Clock size={14} /> <span dir="ltr">{show.time}</span></div>}
+          {show.doors_time && (
+            <div className="flex items-center gap-1.5">
+              <Clock size={14} /> פתיחת דלתות <span dir="ltr" className="text-white/85 font-semibold">{show.doors_time}</span>
+            </div>
+          )}
           {show.place && (
             <div className="flex items-start gap-1.5">
               <MapPin size={14} className="mt-0.5 shrink-0" />

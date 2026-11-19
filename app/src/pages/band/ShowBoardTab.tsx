@@ -4,10 +4,12 @@ import { get, post, put } from '../../api';
 import { Button, Card, Input, Switch, Tag, Textarea } from '../../ui';
 import { fullDate, type Place } from '../boards/boardShared';
 
-interface Logistics { call_time: string | null; soundcheck_time: string | null; stage_time: string | null; parking: string | null }
+interface Logistics { call_time: string | null; soundcheck_time: string | null; doors_time: string | null; stage_time: string | null; parking: string | null }
+interface Hours { call_time: string | null; soundcheck_time: string | null; doors_time: string | null; stage_time: string | null }
 interface Override {
   public_title: string | null; ticket_url: string | null; hidden: boolean;
-  call_time: string | null; soundcheck_time: string | null; parking: string | null; notes: string | null;
+  call_time: string | null; soundcheck_time: string | null; doors_time: string | null; stage_time: string | null;
+  parking: string | null; notes: string | null;
   region: string | null;
   act: string | null;
 }
@@ -18,11 +20,14 @@ interface Item {
   auto_act: string | null; act: string | null;
   is_private: boolean; is_option: boolean; hidden: boolean; on_public: boolean; off_reason: string | null;
   override: Override; parsed: Logistics | null;
+  /** Before the owner's corrections (calendar start = balance, the club's hours), and in force. */
+  auto_hours: Hours; hours: Hours;
 }
 interface Reminder { keywords: string; text: string }
+interface VenueHours { keywords: string; doors: string | null; stage: string | null }
 interface Settings {
   public_title: string; crew_title: string; include_band: boolean;
-  excluded_clients: string[]; reminders: Reminder[];
+  excluded_clients: string[]; reminders: Reminder[]; venue_hours: VenueHours[];
   acts: Array<{ name: string; keywords: string }>;
 }
 interface Admin {
@@ -91,6 +96,8 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
   });
   const setReminder = (i: number, patch: Partial<Reminder>) =>
     setSettings({ ...settings, reminders: settings.reminders.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
+  const setVenueHours = (i: number, patch: Partial<VenueHours>) =>
+    setSettings({ ...settings, venue_hours: settings.venue_hours.map((h, j) => (j === i ? { ...h, ...patch } : h)) });
 
   return (
     <div className="space-y-5">
@@ -187,6 +194,46 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
           </div>
         </div>
 
+        <div>
+          <div className="text-[13px] text-muted mb-1">שעות לפי מקום</div>
+          <p className="text-[12px] text-faint mb-2">
+            שעת ההתחלה של האירוע ביומן היא הבלאנס. בלוח הציבורי מוצגת שעת פתיחת הדלתות, ובלוח הפנימי גם העלייה לבמה.
+            באירוע פרטי השעות לא נלקחות מכאן — כותבים אותן בהופעה עצמה למטה.
+          </p>
+          <div className="space-y-2">
+            {settings.venue_hours.map((h, i) => (
+              <div key={i} className="flex flex-wrap md:flex-nowrap items-end gap-2">
+                <label className="flex-1 min-w-40">
+                  <span className="block text-[12px] text-faint mb-1">מילים במקום או בשם</span>
+                  <input className="w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm"
+                    placeholder="זאפה, Zappa" value={h.keywords}
+                    onChange={(e) => setVenueHours(i, { keywords: e.target.value })} />
+                </label>
+                <label className="w-28">
+                  <span className="block text-[12px] text-faint mb-1">פתיחת דלתות</span>
+                  <input className="w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm" dir="ltr"
+                    inputMode="numeric" placeholder="19:30" value={h.doors ?? ''}
+                    onChange={(e) => setVenueHours(i, { doors: e.target.value })} />
+                </label>
+                <label className="w-28">
+                  <span className="block text-[12px] text-faint mb-1">עלייה לבמה</span>
+                  <input className="w-full bg-soft border border-line rounded-lg px-3 py-2 text-sm" dir="ltr"
+                    inputMode="numeric" placeholder="21:30" value={h.stage ?? ''}
+                    onChange={(e) => setVenueHours(i, { stage: e.target.value })} />
+                </label>
+                <button className="p-2 text-muted hover:text-neg" title="מחיקה"
+                  onClick={() => setSettings({ ...settings, venue_hours: settings.venue_hours.filter((_, j) => j !== i) })}>
+                  <Trash2 size={16} />
+                </button>
+              </div>
+            ))}
+            <button className="inline-flex items-center gap-1.5 text-sm text-accent font-semibold"
+              onClick={() => setSettings({ ...settings, venue_hours: [...settings.venue_hours, { keywords: '', doors: '', stage: '' }] })}>
+              <Plus size={15} /> מקום
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-center gap-3">
           <Button onClick={saveSettings}>שמירה</Button>
           {savedNote && <span className="text-sm text-pos">{savedNote}</span>}
@@ -196,7 +243,8 @@ export function ShowBoardTab({ onError }: { onError: (message: string) => void }
       <Card>
         <h2 className="ser text-lg mb-1">ההופעות הקרובות</h2>
         <p className="text-[13px] text-muted mb-3">
-          הגעה, בלאנס וחניה נקראים מתיאור האירוע ביומן (למשל «הגעה 17:30», «בלאנס 18:00», «חניה: …»). אפשר לתקן כאן.
+          הבלאנס הוא שעת ההתחלה ביומן. הגעה, דלתות, עלייה לבמה וחניה נקראים מתיאור האירוע (למשל «הגעה 17:30»,
+          «עלייה לבמה 22:30», «חניה: …»), ואם אין — דלתות ובמה משעות המקום. באירוע פרטי כותבים את העלייה לבמה כאן.
         </p>
         {!data.items.length && <div className="text-center text-faint py-8">אין הופעות קרובות ביומן.</div>}
         <ul className="divide-y divide-line">
@@ -258,29 +306,24 @@ function LinkCard({ kind, title, description, token, onToggle, onRotate }: {
 function ItemRow({ item, regions, acts, open, onToggle, onSave }: {
   item: Item; regions: string[]; acts: string[]; open: boolean; onToggle: () => void; onSave: (patch: Partial<Override>) => void;
 }) {
-  const [form, setForm] = useState({
+  const fromItem = () => ({
     public_title: item.override.public_title ?? '',
     ticket_url: item.ticket_url ?? '',
     act: item.override.act ?? '',
     call_time: item.override.call_time ?? '',
     soundcheck_time: item.override.soundcheck_time ?? '',
+    doors_time: item.override.doors_time ?? '',
+    stage_time: item.override.stage_time ?? '',
     parking: item.override.parking ?? '',
     notes: item.override.notes ?? '',
   });
-  useEffect(() => {
-    setForm({
-      public_title: item.override.public_title ?? '',
-      ticket_url: item.ticket_url ?? '',
-      act: item.override.act ?? '',
-      call_time: item.override.call_time ?? '',
-      soundcheck_time: item.override.soundcheck_time ?? '',
-      parking: item.override.parking ?? '',
-      notes: item.override.notes ?? '',
-    });
-  }, [item]);
+  const [form, setForm] = useState(fromItem);
+  useEffect(() => { setForm(fromItem()); }, [item]);
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
     setForm({ ...form, [k]: e.target.value });
   const p = item.parsed;
+  const auto = item.auto_hours;
+  const stageHint = auto.stage_time ?? (item.is_private ? 'אירוע פרטי — לכתוב' : 'למשל 21:30');
 
   return (
     <li className="py-3">
@@ -317,20 +360,26 @@ function ItemRow({ item, regions, acts, open, onToggle, onSave }: {
               </select>
             </label>
           </div>
-          {item.source === 'band' && (
+          {item.source === 'band' ? (
             <>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <Input label="הגעה" placeholder={p?.call_time ?? 'למשל 17:30'} value={form.call_time} onChange={set('call_time')} />
-                <Input label="בלאנס" placeholder={p?.soundcheck_time ?? 'למשל 18:30'} value={form.soundcheck_time} onChange={set('soundcheck_time')} />
-                <div className="col-span-2">
-                  <Input label="חניה" placeholder={p?.parking ?? 'איפה חונים'} value={form.parking} onChange={set('parking')} />
-                </div>
+                <Input label="הגעה" dir="ltr" placeholder={auto.call_time ?? 'למשל 17:30'} value={form.call_time} onChange={set('call_time')} />
+                <Input label="בלאנס" dir="ltr" placeholder={auto.soundcheck_time ?? 'למשל 18:30'} value={form.soundcheck_time} onChange={set('soundcheck_time')} />
+                <Input label="פתיחת דלתות" dir="ltr" placeholder={auto.doors_time ?? 'למשל 20:00'} value={form.doors_time} onChange={set('doors_time')} />
+                <Input label="עלייה לבמה" dir="ltr" placeholder={stageHint} value={form.stage_time} onChange={set('stage_time')} />
               </div>
+              <Input label="חניה" placeholder={p?.parking ?? 'איפה חונים'} value={form.parking} onChange={set('parking')} />
               <Textarea label="הוראות מיוחדות ללהקה" rows={2} value={form.notes} onChange={set('notes')} />
             </>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Input label="פתיחת דלתות (בלוח הציבורי)" dir="ltr" placeholder={auto.doors_time ?? 'למשל 20:00'}
+                value={form.doors_time} onChange={set('doors_time')} />
+            </div>
           )}
           <div className="flex flex-wrap items-center gap-3">
-            <Button onClick={() => onSave(item.source === 'band' ? form : { public_title: form.public_title, ticket_url: form.ticket_url, act: form.act })}>שמירה</Button>
+            <Button onClick={() => onSave(item.source === 'band' ? form
+              : { public_title: form.public_title, ticket_url: form.ticket_url, act: form.act, doors_time: form.doors_time })}>שמירה</Button>
             {!item.is_private && !item.is_option && (
               <Switch label="הסתרה מהלוח הציבורי" checked={item.hidden} onChange={(v) => onSave({ hidden: v })} />
             )}

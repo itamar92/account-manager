@@ -18,6 +18,10 @@ import { israelDate } from './campaignTasks.js';
  *    sound check starts, where to park, and the reminders the venue calls for («זאפה» → bring the
  *    wireless microphone).
  *
+ * A show's calendar event starts at the balance. The time fans see is when the doors open, and
+ * the band's board adds when to go on stage — both from the club's usual hours (זאפה, גריי), or
+ * typed per show for a private event, which keeps hours of its own (see autoHours).
+ *
  * Everything starts from what the calendar sync stored. The owner can correct any of it per
  * show (show_board_items): a nicer name, a ticket link, hide it, or the logistics typed by hand.
  * Money never appears on either board, and of the calendar description only the lines about
@@ -66,6 +70,23 @@ const DEFAULT_REMINDERS: VenueReminder[] = [
   { keywords: 'זאפה, Zappa, גריי, Gray', text: 'להביא מיקרופון אלחוטי' },
 ];
 
+/**
+ * A club's usual night: when its doors open (the time fans are told) and when the band goes on.
+ * The calendar event itself starts at the balance, so neither can be read off it.
+ */
+export interface VenueHours {
+  /** Comma-separated words; the first rule with any of them in the show's name or place applies. */
+  keywords: string;
+  doors: string | null;
+  stage: string | null;
+}
+
+/** Editable in «לוחות הופעות». A private event at the same club keeps its own hours. */
+const DEFAULT_VENUE_HOURS: VenueHours[] = [
+  { keywords: 'זאפה, Zappa', doors: '19:30', stage: '21:30' },
+  { keywords: 'גריי, Gray', doors: '20:00', stage: '21:30' },
+];
+
 export interface BoardSettings {
   public_title: string;
   crew_title: string;
@@ -81,6 +102,7 @@ export interface BoardSettings {
    */
   excluded_clients: string[];
   reminders: VenueReminder[];
+  venue_hours: VenueHours[];
   /** Acts typed by hand: a name and the words in a calendar title that mean it. */
   acts: ActDef[];
 }
@@ -109,6 +131,7 @@ export function boardSettings(): BoardSettings {
     personal_rules: readJson<string[] | null>('show_board_rules', null),
     excluded_clients: readJson<string[]>('show_board_excluded_clients', []),
     reminders: readJson<VenueReminder[]>('crew_board_reminders', DEFAULT_REMINDERS),
+    venue_hours: readJson<VenueHours[]>('show_board_venue_hours', DEFAULT_VENUE_HOURS),
     acts: readJson<ActDef[]>('show_board_acts', []),
   };
 }
@@ -135,6 +158,13 @@ export function updateBoardSettings(patch: Partial<BoardSettings>): BoardSetting
       .filter((r) => r.keywords && r.text)
       .slice(0, 30);
     setSetting('crew_board_reminders', JSON.stringify(list));
+  }
+  if (patch.venue_hours !== undefined) {
+    const list = (Array.isArray(patch.venue_hours) ? patch.venue_hours : [])
+      .map((h) => ({ keywords: cleanText(h?.keywords, 300), doors: cleanTime(h?.doors), stage: cleanTime(h?.stage) }))
+      .filter((h) => h.keywords && (h.doors || h.stage))
+      .slice(0, 30);
+    setSetting('show_board_venue_hours', JSON.stringify(list));
   }
   if (patch.acts !== undefined) {
     const list = (Array.isArray(patch.acts) ? patch.acts : [])
@@ -243,6 +273,7 @@ export function descriptionLines(description: string | null | undefined): string
 export interface Logistics {
   call_time: string | null;
   soundcheck_time: string | null;
+  doors_time: string | null;
   stage_time: string | null;
   parking: string | null;
 }
@@ -251,6 +282,7 @@ const TIME = '(\\d{1,2})[:.](\\d{2})';
 
 const CALL_WORDS = 'הגעה|להגיע|מגיעים|הגעת|נפגשים|התכנסות|call\\s*time|load[\\s-]*in';
 const SOUNDCHECK_WORDS = "בלאנס|באלאנס|בלנס|סאונד\\s*צ['׳]?ק|סאונדצ['׳]?ק|בדיקת\\s*סאונד|sound\\s*check|soundcheck";
+const DOORS_WORDS = 'פתיחת\\s*דלתות|דלתות|doors';
 const STAGE_WORDS = 'עלייה\\s*לבמה|עליה\\s*לבמה|עולים|תחילת\\s*(?:ה)?הופעה|תחילת\\s*מופע|stage\\s*time|on\\s*stage';
 const PARKING_WORDS = 'חניה|חנייה|חניון|לחנות|parking';
 
@@ -268,8 +300,8 @@ function timeAfter(lines: string[], words: string): string | null {
 
 /**
  * The logistics a band writes into a show's calendar description — «הגעה 17:30», «בלאנס 18:00»,
- * «חניה בחניון הבימה» — picked out of it line by line. Nothing else is read: a description is
- * also where the fee and the promoter's phone get written down.
+ * «פתיחת דלתות 20:00», «עלייה לבמה 22:30», «חניה בחניון הבימה» — picked out of it line by line.
+ * Nothing else is read: a description is also where the fee and the promoter's phone get written down.
  */
 export function parseLogistics(description: string | null | undefined): Logistics {
   const lines = descriptionLines(description);
@@ -277,6 +309,7 @@ export function parseLogistics(description: string | null | undefined): Logistic
   return {
     call_time: timeAfter(lines, CALL_WORDS),
     soundcheck_time: timeAfter(lines, SOUNDCHECK_WORDS),
+    doors_time: timeAfter(lines, DOORS_WORDS),
     stage_time: timeAfter(lines, STAGE_WORDS),
     // "חניה: חניון ארלוזורוב" reads better without its label; "יש חניה מאחורי המועדון" keeps it.
     parking: parkingLine ? parkingLine.replace(/^(?:חניה|חנייה|parking)\s*[:\-–]\s*/iu, '').slice(0, 300) : null,
@@ -293,6 +326,39 @@ export function remindersFor(reminders: VenueReminder[], ...texts: Array<string 
     if (words.some((w) => haystack.includes(w)) && !out.includes(r.text)) out.push(r.text);
   }
   return out;
+}
+
+/** The first venue's hours whose words appear in the show's name or place. */
+export function venueHoursFor(rules: VenueHours[], ...texts: Array<string | null | undefined>): VenueHours | null {
+  const haystack = texts.filter(Boolean).join(' ').toLowerCase();
+  if (!haystack) return null;
+  return rules.find((r) => r.keywords.split(',').map((w) => w.trim().toLowerCase()).filter(Boolean)
+    .some((w) => haystack.includes(w))) ?? null;
+}
+
+export interface Hours {
+  call_time: string | null;
+  soundcheck_time: string | null;
+  doors_time: string | null;
+  stage_time: string | null;
+}
+
+/**
+ * A night's hours before anything typed by hand. The calendar event starts at the balance — that
+ * is how shows are entered — and a time written in the description says each one more exactly.
+ * Doors and stage otherwise come from the club's usual hours, except at a private event: a
+ * wedding or a company night keeps its own hours, written per show.
+ */
+export function autoHours(
+  startTime: string | null | undefined, parsed: Logistics | null, venue: VenueHours | null, isPrivate: boolean
+): Hours {
+  const club = isPrivate ? null : venue;
+  return {
+    call_time: parsed?.call_time ?? null,
+    soundcheck_time: parsed?.soundcheck_time ?? startTime ?? null,
+    doors_time: parsed?.doors_time ?? club?.doors ?? null,
+    stage_time: parsed?.stage_time ?? club?.stage ?? null,
+  };
 }
 
 // ---------------------------------------------------------------- acts
@@ -388,6 +454,8 @@ export interface BoardItemOverride {
   hidden: boolean;
   call_time: string | null;
   soundcheck_time: string | null;
+  doors_time: string | null;
+  stage_time: string | null;
   parking: string | null;
   notes: string | null;
   region: Region | null;
@@ -402,6 +470,8 @@ function overrides(): Map<string, BoardItemOverride> {
     hidden: !!r.hidden,
     call_time: r.call_time ?? null,
     soundcheck_time: r.soundcheck_time ?? null,
+    doors_time: r.doors_time ?? null,
+    stage_time: r.stage_time ?? null,
     parking: r.parking ?? null,
     notes: r.notes ?? null,
     region: isRegion(r.region) ? r.region : null,
@@ -410,8 +480,8 @@ function overrides(): Map<string, BoardItemOverride> {
 }
 
 const EMPTY_OVERRIDE: BoardItemOverride = {
-  public_title: null, ticket_url: null, hidden: false, call_time: null, soundcheck_time: null, parking: null, notes: null,
-  region: null, act: null,
+  public_title: null, ticket_url: null, hidden: false, call_time: null, soundcheck_time: null, doors_time: null,
+  stage_time: null, parking: null, notes: null, region: null, act: null,
 };
 
 /** A link someone typed, or null: only http(s), so the page never renders a javascript: href. */
@@ -455,6 +525,8 @@ export function updateBoardItem(key: string, patch: Record<string, unknown>) {
   if ('hidden' in patch) next.hidden = !!patch.hidden;
   if ('call_time' in patch) next.call_time = cleanTime(patch.call_time);
   if ('soundcheck_time' in patch) next.soundcheck_time = cleanTime(patch.soundcheck_time);
+  if ('doors_time' in patch) next.doors_time = cleanTime(patch.doors_time);
+  if ('stage_time' in patch) next.stage_time = cleanTime(patch.stage_time);
   if ('parking' in patch) next.parking = optionalText(patch.parking, 300);
   if ('act' in patch) next.act = optionalText(patch.act, 60);
   if ('region' in patch) next.region = isRegion(patch.region) ? patch.region : null;
@@ -467,14 +539,15 @@ export function updateBoardItem(key: string, patch: Record<string, unknown>) {
   }
 
   db.prepare(
-    `INSERT INTO show_board_items (item_key, public_title, ticket_url, hidden, call_time, soundcheck_time, parking, notes,
-       region, act, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    `INSERT INTO show_board_items (item_key, public_title, ticket_url, hidden, call_time, soundcheck_time, doors_time,
+       stage_time, parking, notes, region, act, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(item_key) DO UPDATE SET public_title = excluded.public_title, ticket_url = excluded.ticket_url,
        hidden = excluded.hidden, call_time = excluded.call_time, soundcheck_time = excluded.soundcheck_time,
+       doors_time = excluded.doors_time, stage_time = excluded.stage_time,
        parking = excluded.parking, notes = excluded.notes, region = excluded.region, act = excluded.act, updated_at = excluded.updated_at`
-  ).run(key, next.public_title, next.ticket_url, next.hidden ? 1 : 0, next.call_time, next.soundcheck_time, next.parking, next.notes,
-    next.region, next.act);
+  ).run(key, next.public_title, next.ticket_url, next.hidden ? 1 : 0, next.call_time, next.soundcheck_time, next.doors_time,
+    next.stage_time, next.parking, next.notes, next.region, next.act);
   return boardItems().find((item) => item.key === key) ?? null;
 }
 
@@ -511,6 +584,21 @@ export interface BoardItem {
   override: BoardItemOverride;
   /** Band shows only: what the calendar description says, before anything typed by hand. */
   parsed: Logistics | null;
+  /** The night's hours before the owner's corrections (see autoHours), and the ones in force. */
+  auto_hours: Hours;
+  hours: Hours;
+}
+
+function hoursOf(o: BoardItemOverride, auto: Hours): { auto_hours: Hours; hours: Hours } {
+  return {
+    auto_hours: auto,
+    hours: {
+      call_time: o.call_time ?? auto.call_time,
+      soundcheck_time: o.soundcheck_time ?? auto.soundcheck_time,
+      doors_time: o.doors_time ?? auto.doors_time,
+      stage_time: o.stage_time ?? auto.stage_time,
+    },
+  };
 }
 
 function regionOf(o: BoardItemOverride, ...texts: Array<string | null | undefined>) {
@@ -546,6 +634,8 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
     const offReason = option ? 'אופציה — עוד לא נסגר' : isPrivate ? 'אירוע פרטי'
       : o.hidden ? 'הוסתר ידנית'
         : !settings.include_band ? `הופעות ${bandName} לא מוצגות` : null;
+    const parsed = parseLogistics(s.calendar_description);
+    const venueHours = venueHoursFor(settings.venue_hours, s.venue, s.calendar_summary, s.location);
     items.push({
       key, source: 'band', source_label: bandName, date: s.date, time: s.start_time ?? null,
       name: s.venue, auto_title: auto, title: o.public_title || auto,
@@ -553,7 +643,7 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       ...regionOf(o, s.location, auto, s.venue),
       ...actOf(o, finder, bandName, s.calendar_summary, s.venue),
       is_private: isPrivate, is_option: option, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
-      override: o, parsed: parseLogistics(s.calendar_description),
+      override: o, parsed, ...hoursOf(o, autoHours(s.start_time, parsed, venueHours, isPrivate)),
     });
   }
 
@@ -590,6 +680,8 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
       ...actOf(o, finder, rule?.name ?? null, w.calendar_summary, w.description),
       is_private: isPrivate, is_option: option, hidden: o.hidden, on_public: !offReason, off_reason: offReason,
       override: o, parsed: null,
+      ...hoursOf(o, autoHours(w.start_time, null,
+        venueHoursFor(settings.venue_hours, w.description, w.calendar_summary, w.location), isPrivate)),
     });
   }
 
@@ -605,7 +697,11 @@ export function boardItems(options: { from?: string } = {}): BoardItem[] {
   });
 }
 
-/** What the friends' link answers. Nothing on it but the name, the time, the place and the tickets. */
+/**
+ * What the friends' link answers. Nothing on it but the name, when the doors open, the place and
+ * the tickets. Never the calendar's own time: that is the balance, and a fan who came then would
+ * stand outside a closed door. A show with no known doors time shows no time at all.
+ */
 export function publicBoard(token: string) {
   if (!sameToken(token, boardToken('public'))) throw new BoardError('הקישור הזה כבר לא פעיל', 404);
   const settings = boardSettings();
@@ -616,7 +712,7 @@ export function publicBoard(token: string) {
       .map((item) => ({
         id: item.key.split(':')[1].slice(0, 8),
         date: item.date,
-        time: item.time,
+        doors_time: item.hours.doors_time,
         title: item.title,
         place: item.place,
         region: item.region,
@@ -665,12 +761,10 @@ export function crewBoard(token: string) {
   const shows = boardItems({ from }).filter((item) => item.source === 'band').map((item) => {
     const id = item.key.split(':')[1];
     const row = db.prepare('SELECT * FROM band_events WHERE id = ?').get(id) as any;
-    const parsed = item.parsed ?? { call_time: null, soundcheck_time: null, stage_time: null, parking: null };
     const crew = staff(id);
     return {
       id: id.slice(0, 8),
       date: item.date,
-      time: item.time,
       // The band knows a private show by the name it has in the books; the public name is for fans.
       title: item.is_private ? withoutOptionWord(item.name) : item.title,
       act: item.act,
@@ -679,10 +773,8 @@ export function crewBoard(token: string) {
       status: item.is_option ? 'option' : 'confirmed',
       past: item.date < today,
       place: item.place,
-      call_time: item.override.call_time ?? parsed.call_time,
-      soundcheck_time: item.override.soundcheck_time ?? parsed.soundcheck_time,
-      stage_time: parsed.stage_time,
-      parking: item.override.parking ?? parsed.parking,
+      ...item.hours,
+      parking: item.override.parking ?? item.parsed?.parking ?? null,
       notes: item.override.notes,
       reminders: remindersFor(settings.reminders, row?.venue, row?.calendar_summary, row?.location),
       sound_company: crew.find((c) => c.role_key === 'sound_company')?.name ?? null,
