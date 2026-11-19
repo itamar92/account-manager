@@ -1,13 +1,13 @@
 {
   ".claude/launch.json": {
-    "mtime": 1790893208.4528284,
-    "seen": 1790945278.225292,
-    "ast_hash": "0e2b7d4e2382c6459cde93b6755eca21",
-    "semantic_hash": "0e2b7d4e2382c6459cde93b6755eca21"
+    "mtime": 1795079152.9339256,
+    "seen": 1795079171.2584162,
+    "ast_hash": "2028a53d83a1abe7c6b0616f145ba8a8",
+    "semantic_hash": ""
   },
   ".claude/settings.json": {
-    "mtime": 1790943824.8463395,
-    "seen": 1790945278.2252958,
+    "mtime": 1790949397.981135,
+    "seen": 1795078124.052041,
     "ast_hash": "3b541b9935fcf0831355da956f897645",
     "semantic_hash": "3b541b9935fcf0831355da956f897645"
   },
@@ -240,10 +240,10 @@
     "semantic_hash": "1c4fe4cecf95746d5ba032fa5e32ea08"
   },
   "app/server.ts": {
-    "mtime": 1790931170.4538574,
-    "seen": 1790945278.225321,
-    "ast_hash": "02f37cf46c968301929de4839e18eb84",
-    "semantic_hash": "02f37cf46c968301929de4839e18eb84"
+    "mtime": 1795077872.9897861,
+    "seen": 1795078124.052096,
+    "ast_hash": "6a0b9aa759f7a02d29d9759fe2daba83",
+    "semantic_hash": ""
   },
   "app/server/agentClient.ts": {
     "mtime": 1790777303.9405804,
@@ -312,10 +312,10 @@
     "semantic_hash": "4f956e63ba4b991cb49251502d9c7d0d"
   },
   "app/server/db.ts": {
-    "mtime": 1790931170.4546459,
-    "seen": 1790945278.2253282,
-    "ast_hash": "8a420a043a0f549c502d30c91aa06c1d",
-    "semantic_hash": "8a420a043a0f549c502d30c91aa06c1d"
+    "mtime": 1795078793.7716222,
+    "seen": 1795079171.2584891,
+    "ast_hash": "9ad5bf01ee381328994b468b0ed0f32e",
+    "semantic_hash": ""
   },
   "app/server/docTypes.ts": {
     "mtime": 1790777303.94485,
@@ -528,10 +528,10 @@
     "semantic_hash": "2b1c41747da14ad402c457721f0e62ef"
   },
   "app/server/routes.ts": {
-    "mtime": 1790928319.100357,
-    "seen": 1790945278.2253492,
-    "ast_hash": "02bd454b38ffc047316a8cc5084730fb",
-    "semantic_hash": "02bd454b38ffc047316a8cc5084730fb"
+    "mtime": 1795078955.898875,
+    "seen": 1795079171.258533,
+    "ast_hash": "b7f505c656cfeecca95ba71e29578b09",
+    "semantic_hash": ""
   },
   "app/server/secrets.ts": {
     "mtime": 1790777303.949884,
@@ -804,16 +804,16 @@
     "semantic_hash": "d35c268b666f045ec9b7052471f12045"
   },
   "app/src/pages/moonlight/ShowDetail.tsx": {
-    "mtime": 1790928319.104766,
-    "seen": 1790945278.225375,
-    "ast_hash": "fea682ea14176f8c8b46519c45933819",
-    "semantic_hash": "fea682ea14176f8c8b46519c45933819"
+    "mtime": 1795077957.947787,
+    "seen": 1795078124.0522182,
+    "ast_hash": "c48f5b99d52226ee4b8d1fdd25be0762",
+    "semantic_hash": ""
   },
   "app/src/pages/moonlight/ShowsTab.tsx": {
-    "mtime": 1790777303.9611466,
-    "seen": 1790945278.225375,
-    "ast_hash": "ab0598046cfa2659e9492a7994b9b80a",
-    "semantic_hash": "ab0598046cfa2659e9492a7994b9b80a"
+    "mtime": 1795077967.3130064,
+    "seen": 1795078124.052219,
+    "ast_hash": "6c02f1130d4f9d13358db5ff265df862",
+    "semantic_hash": ""
   },
   "app/src/pages/moonlight/SummaryTab.tsx": {
     "mtime": 1790928319.1050544,
@@ -1020,8 +1020,8 @@
     "semantic_hash": "98d5145711df094293aa0948af5059d4"
   },
   ".claude/CLAUDE.md": {
-    "mtime": 1790943824.8458326,
-    "seen": 1790945278.225395,
+    "mtime": 1790949397.9808748,
+    "seen": 1795078124.0522618,
     "ast_hash": "9b31786b637be3c13978bec4c2330752",
     "semantic_hash": "9b31786b637be3c13978bec4c2330752"
   },
@@ -1128,8 +1128,8 @@
     "semantic_hash": "0ca337b52322e1afe0147917eec85fb2"
   },
   "CLAUDE.md": {
-    "mtime": 1790943824.8461673,
-    "seen": 1790945278.225407,
+    "mtime": 1790949397.9854991,
+    "seen": 1795078124.052285,
     "ast_hash": "82efb97a359f5c7290bf2513d14686be",
     "semantic_hash": "82efb97a359f5c7290bf2513d14686be"
   },
@@ -1200,8 +1200,8 @@
     "semantic_hash": "bcef51b9e4be819c1f36650a8117c801"
   },
   "graphify-out/converted/\u05d3\u05d5\u05d7_\u05e9\u05e0\u05ea\u05d9_\u05e2\u05d5\u05e1\u05e7_\u05d6\u05e2\u05d9\u05e8_2025_eea5449b.md": {
-    "mtime": 1790944098.735924,
-    "seen": 1790945278.2254138,
+    "mtime": 1790949398.0176377,
+    "seen": 1795078124.052303,
     "ast_hash": "e878b27ae5f06f431eb34108bf18a2d8",
     "semantic_hash": "e878b27ae5f06f431eb34108bf18a2d8"
   },
@@ -1342,5 +1342,59 @@
     "seen": 1790945278.225491,
     "ast_hash": "9387d94afdd113d4fabcd1a1aa70e8af",
     "semantic_hash": "9387d94afdd113d4fabcd1a1aa70e8af"
+  },
+  "app/server/ticketFinder.test.ts": {
+    "mtime": 1795079043.2997608,
+    "seen": 1795079171.258541,
+    "ast_hash": "db11cac1da9ac66350d3d68b8dca88f9",
+    "semantic_hash": ""
+  },
+  "app/server/ticketFinder.ts": {
+    "mtime": 1795078948.7252111,
+    "seen": 1795079171.258542,
+    "ast_hash": "76e29483ed3bca34a90cee929bed1220",
+    "semantic_hash": ""
+  },
+  "app/src/pages/moonlight/TicketLinks.tsx": {
+    "mtime": 1795077957.6917777,
+    "seen": 1795078124.052226,
+    "ast_hash": "e3b1796be8c7eb16bedb2ac93d48dbe6",
+    "semantic_hash": ""
+  },
+  "app/src/pages/moonlight/TicketSourcesModal.tsx": {
+    "mtime": 1795079011.664368,
+    "seen": 1795079171.258601,
+    "ast_hash": "fdff5667daad8cf9d99c029c1873cdbf",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/invoice-collector-rulings-and-golive.md": {
+    "mtime": 1795032185.0,
+    "seen": 1795078124.052298,
+    "ast_hash": "682fff688a9d62439a6f0f281897f94b",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/plans/2026-11-18-invoice-collector.md": {
+    "mtime": 1794959735.0,
+    "seen": 1795078124.052299,
+    "ast_hash": "1521f9e9028e886cd0e546c67842bbd9",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/specs/2026-11-18-invoice-collector-design.md": {
+    "mtime": 1794959121.0,
+    "seen": 1795078124.0523,
+    "ast_hash": "4f8b5373b87eb634199843037f7d27d4",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/account-manager-collector-panel-demo.jpg": {
+    "mtime": 1795017211.0,
+    "seen": 1795078124.052338,
+    "ast_hash": "a03cc63ca95d91a5d825e44fbd11c1ce",
+    "semantic_hash": ""
+  },
+  "docs/superpowers/invoice-collector-attention-demo.jpg": {
+    "mtime": 1795010241.0,
+    "seen": 1795078124.052338,
+    "ast_hash": "7282ae9e0b8a267208e34de4e4d5144e",
+    "semantic_hash": ""
   }
 }

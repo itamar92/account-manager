@@ -6,6 +6,7 @@ import { Button, Combobox, Empty, FilterBar, PageHeader, Pill, PeriodSelect, Sea
 import {
   eventLabel, expenseRowTotal, moneyReceived, paymentStatusLabel, showHref, type PeriodTabProps,
 } from './shared';
+import { TicketSourcesModal } from './TicketSourcesModal';
 
 const HEB_MONTHS = ['ינו', 'פבר', 'מרץ', 'אפר', 'מאי', 'יונ', 'יול', 'אוג', 'ספט', 'אוק', 'נוב', 'דצמ'];
 
@@ -61,6 +62,7 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
   const chosen: Filter | null = FILTERS.some(([key]) => key === raw) ? (raw as Filter) : null;
   const search = params.get('q') ?? '';
   const [syncing, setSyncing] = useState(false);
+  const [ticketsOpen, setTicketsOpen] = useState(false);
 
   // Replace rather than push: «back» should leave the list, not walk back through every filter
   // that was tried on the way to the one being read.
@@ -139,6 +141,7 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
         }
         actions={isOwner && (
           <>
+            <Button variant="ghost" onClick={() => setTicketsOpen(true)}>קישורי כרטיסים</Button>
             <Button variant="ghost" disabled={syncing} onClick={syncCalendar}>
               {syncing ? 'מסנכרן…' : 'משיכה מהיומן'}
             </Button>
@@ -146,6 +149,10 @@ export function ShowsTab({ events, period, isOwner, onError, reload, onNewEvent 
           </>
         )}
       />
+
+      {isOwner && (
+        <TicketSourcesModal open={ticketsOpen} onClose={() => setTicketsOpen(false)} onChange={reload} />
+      )}
 
       <FilterBar>
         {FILTERS.map(([key, label]) => (

@@ -13,6 +13,7 @@ import {
 import { backfillSupplierAliases } from './server/supplierNames.js';
 import { seedBuiltinTemplates } from './server/quotes.js';
 import { publicQuoteRouter } from './server/publicQuotes.js';
+import { scheduleDailyTicketSearch } from './server/ticketFinder.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -36,6 +37,8 @@ backfillSupplierAliases();
 // Moonlight's own quote, as the template a new quote starts from, and its Eilat versions. Each
 // once: a band that deletes one has chosen to, and «תבניות» adds it back on request.
 seedBuiltinTemplates();
+// Looks for each show's sale page once a day, on the pages the band set as ticket sources.
+scheduleDailyTicketSearch();
 
 const app = express();
 app.use(express.json({ limit: '1mb' }));

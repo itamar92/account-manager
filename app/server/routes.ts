@@ -30,6 +30,10 @@ import {
 } from './calendarRules.js';
 import { listCalendars } from './calendarClient.js';
 import {
+  addLinkByHand, calendarLinks, createSource, deleteSource, getKeywords, linksForShow, listSources, runTicketSearch,
+  setKeywords, unassignedLinks, updateLink, updateSource,
+} from './ticketFinder.js';
+import {
   BUSINESS_TYPES, DEFAULT_COMMISSION_PERCENT, FUND_PAYER, FUND_TRANSFERRED,
   activeBandMembers, bandMemberByKey,
   deleteEventCascade, deleteExpenseRow, eventShares, eventSharesTotal, listBandMembers,
@@ -1282,12 +1286,57 @@ router.get('/moonlight/events/:id', requireAuth, handle((req, res) => {
   res.json({
     event: { ...withShares(event), label: eventLabel(event.venue, event.date) },
     quotes,
+    ticket_links: linksForShow(event.id),
     expenses: expense,
     outstanding: expenseOutstanding(expense),
     assignments,
     missing: missingRoles(event.id),
     suppliers,
   });
+}));
+
+// ---------- where the tickets are sold (server/ticketFinder.ts) ----------
+
+/**
+ * The pages the finder looks on, its search words, sale pages found for dates with no show, and
+ * the owner's gigs with other bands. Owner-only: those gigs come off the owner's own calendar.
+ */
+router.get('/moonlight/ticket-sources', requireOwner, handle((_req, res) => {
+  res.json({
+    sources: listSources(), keywords: getKeywords(), unassigned: unassignedLinks(), calendar: calendarLinks(),
+  });
+}));
+
+router.post('/moonlight/ticket-sources', requireOwner, handle((req, res) => {
+  res.json({ source: createSource(req.body) });
+}));
+
+router.put('/moonlight/ticket-sources/:id', requireOwner, handle((req, res) => {
+  res.json({ source: updateSource(req.params.id, req.body) });
+}));
+
+// The links it found stay: they are still where the tickets are sold.
+router.delete('/moonlight/ticket-sources/:id', requireOwner, handle((req, res) => {
+  deleteSource(req.params.id);
+  res.json({ ok: true });
+}));
+
+router.put('/moonlight/ticket-keywords', requireOwner, handle((req, res) => {
+  res.json({ keywords: setKeywords(req.body?.keywords) });
+}));
+
+/** Searches now — every active source, or the one named. Takes a few seconds per source. */
+router.post('/moonlight/ticket-sources/run', requireOwner, handleAsync(async (req, res) => {
+  res.json({ result: await runTicketSearch({ sourceId: req.body?.source_id || undefined }) });
+}));
+
+router.post('/moonlight/events/:id/ticket-links', requireOwner, handleAsync(async (req, res) => {
+  res.json({ link: await addLinkByHand(req.params.id, req.body?.url) });
+}));
+
+/** Confirm, reject, or put on a show: { status } and/or { event_id }. */
+router.put('/moonlight/ticket-links/:id', requireOwner, handle((req, res) => {
+  res.json({ link: updateLink(req.params.id, req.body) });
 }));
 
 /**
