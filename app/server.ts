@@ -19,6 +19,7 @@ import { publicBoardRouter, showBoardRouter } from './server/showBoardRoutes.js'
 import { publicCampaignTaskRouter, startReminderScheduler } from './server/campaignTasks.js';
 import { notificationsRouter, startNotificationScheduler } from './server/notifications.js';
 import { startNightlySync } from './server/nightlySync.js';
+import { scheduleDailyTicketSearch } from './server/ticketFinder.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const isProd = process.env.NODE_ENV === 'production';
@@ -120,6 +121,8 @@ async function start() {
   startNotificationScheduler();
   // Morning, Google Calendar and Meta pulled every night at 03:00 Israel time (Settings → חיבורים).
   startNightlySync();
+  // Each show's sale page, looked for once a day on the pages set as ticket sources.
+  scheduleDailyTicketSearch();
 }
 
 start();

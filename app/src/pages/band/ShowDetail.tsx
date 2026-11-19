@@ -10,6 +10,7 @@ import {
   PRIVATE_SKIPPED_LINES, roleName, showReturn, useBandMembers, useExpenseCategories, useSupplierRoles,
 } from './shared';
 import { fetchTransferRates, splitTransfer } from './transfer';
+import { TicketLinks } from './TicketLinks';
 
 /**
  * The cost lines of a show are the band's own list (ספקים וחברים → שורות עלות), read from the
@@ -226,6 +227,13 @@ export function ShowDetail() {
                 : <>הצעת מחיר <span className="num">{quote.quote_number}</span> · טרם נחתמה</>}
             </Link>
           )}
+          <TicketLinks
+            eventId={event.id}
+            links={data.ticket_links ?? []}
+            isOwner={isOwner}
+            onChange={load}
+            onError={setError}
+          />
         </div>
 
         <div className="flex flex-wrap gap-x-7 gap-y-4 text-start">

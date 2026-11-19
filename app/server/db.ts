@@ -1581,6 +1581,63 @@ db.exec(`
     ON supplier_payment_lines(payment_id);
 `);
 
+/**
+ * Where a show's tickets are sold (server/ticketFinder.ts).
+ *
+ * A source is a page the band points the finder at — a venue's listing on a ticketing site, or
+ * a site's search address with {q} where the search words go. Nothing about a site is coded:
+ * the finder reads whatever links on the page carry the band's name and checks each one, so a
+ * new site is a new row here rather than new code. What the last run made of it is kept on the
+ * row, because a site that can't be read has to say so somewhere the band will see it.
+ *
+ * A link is one sale page for one date. It names its show when one is on that date; one with
+ * no show is still kept, since a venue selling a date the band has no show on is worth knowing.
+ * 'rejected' is remembered so the next run does not offer the same wrong page again.
+ */
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ticket_sources (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1,
+    last_run_at TEXT,
+    last_status TEXT,                     -- 'ok' | 'empty' | 'unreadable' | 'error'
+    last_message TEXT,
+    last_found INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS band_event_ticket_links (
+    id TEXT PRIMARY KEY,
+    event_id TEXT REFERENCES band_events(id) ON DELETE SET NULL,
+    source_id TEXT REFERENCES ticket_sources(id) ON DELETE SET NULL,
+    url TEXT NOT NULL,
+    title TEXT,
+    event_date TEXT NOT NULL DEFAULT '',  -- YYYY-MM-DD, as the sale page gives it; '' unknown
+    event_time TEXT,                      -- HH:MM
+    venue TEXT,
+    price REAL,
+    availability TEXT,                    -- 'available' | 'limited' | 'sold_out'
+    status TEXT NOT NULL DEFAULT 'suggested' CHECK (status IN ('suggested','confirmed','rejected')),
+    first_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_ticket_links_url_date
+    ON band_event_ticket_links(url, event_date);
+  CREATE INDEX IF NOT EXISTS idx_ticket_links_event ON band_event_ticket_links(event_id);
+`);
+// A source is either a page selling the band among others — read for the band's search words
+// and matched to its shows — or another band's own site, where every dated link is a show and
+// only the dates on the owner's own calendar are kept (all_shows = 1, match_to = 'calendar').
+// calendar_words are what that band's entries in the calendar say, when not the city or hall.
+addColumnIfMissing('ticket_sources', 'all_shows', 'INTEGER NOT NULL DEFAULT 0');
+addColumnIfMissing('ticket_sources', 'match_to', "TEXT NOT NULL DEFAULT 'shows'");
+addColumnIfMissing('ticket_sources', 'calendar_words', 'TEXT');
+// The calendar entry a link was kept for, when it belongs to a gig rather than a band show.
+addColumnIfMissing('band_event_ticket_links', 'calendar_event_id', 'TEXT');
+addColumnIfMissing('band_event_ticket_links', 'calendar_title', 'TEXT');
+
 seedDefaultCalendarRules();
 
 export const uuid = () => randomUUID();
